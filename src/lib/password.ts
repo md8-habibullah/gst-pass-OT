@@ -20,8 +20,10 @@ const SETS = {
 } as const;
 const AMBIGUOUS = /[0O1lI|`'"]/g;
 
+export type Rng = (a: Uint32Array<ArrayBuffer>) => Uint32Array<ArrayBuffer>;
+
 /** Uniform integer in [0, max) without modulo bias. */
-export function randomBelow(max: number, rng: (a: Uint32Array) => Uint32Array = (a) => crypto.getRandomValues(a)): number {
+export function randomBelow(max: number, rng: Rng = (a) => crypto.getRandomValues(a)): number {
   if (!Number.isInteger(max) || max <= 0 || max > 0x1_0000_0000) throw new RangeError("max out of range");
   const limit = Math.floor(0x1_0000_0000 / max) * max;
   const buf = new Uint32Array(1);
@@ -31,7 +33,7 @@ export function randomBelow(max: number, rng: (a: Uint32Array) => Uint32Array = 
   }
 }
 
-export function generatePassword(opts: GenOptions, rng?: (a: Uint32Array) => Uint32Array): string {
+export function generatePassword(opts: GenOptions, rng?: Rng): string {
   const classes = (Object.keys(SETS) as (keyof typeof SETS)[])
     .filter((k) => opts[k])
     .map((k) => (opts.avoidAmbiguous ? SETS[k].replace(AMBIGUOUS, "") : SETS[k]));

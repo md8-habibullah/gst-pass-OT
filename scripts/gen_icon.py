@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the placeholder app icon (1024x1024 PNG, stdlib only) to assets/app-icon.png.
 
-A dark rounded square with a teal keyhole. Replace assets/app-icon.png with real artwork any
+A deep-marine rounded square with a brass keyhole (the Strongroom palette). Replace assets/app-icon.png with real artwork any
 time, then run `npm run tauri icon assets/app-icon.png` to regenerate src-tauri/icons/*.
 """
 import pathlib
@@ -10,8 +10,8 @@ import zlib
 
 SIZE = 1024
 OUT = pathlib.Path(__file__).resolve().parent.parent / "assets" / "app-icon.png"
-BG = (15, 23, 42)       # slate-900
-FG = (45, 212, 191)     # teal-400
+BG = (14, 29, 37)       # pane #0E1D25 (UI_DESIGN_SYSTEM.md)
+FG = (226, 178, 89)     # brass #E2B259
 
 
 def inside_rounded_square(x, y, r=224):

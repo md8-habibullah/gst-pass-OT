@@ -11,7 +11,7 @@ Verified against the official Tauri v2 prerequisites page (checked 2026-11-23). 
 
 ## 2. Linux system dependencies (from the Tauri docs)
 
-**Arch / CachyOS / Manjaro** (the dev machine; `webkit2gtk-4.1` is currently **missing** here, run this once):
+**Arch / CachyOS / Manjaro** (the dev machine; `webkit2gtk-4.1` 2.54.3 and the rest were installed on 2026-11-23; on a fresh machine run this once):
 ```
 sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
 ```
@@ -91,7 +91,7 @@ Android memory note: Argon2id at 64 MiB × 4 passes is acceptable on typical dev
 
 ## 5. Verifying crypto without GUI libraries
 
-`src-tauri` cannot compile until `webkit2gtk-4.1` is installed. The crypto module has no GUI dependency, so:
+The full `src-tauri` crate needs `webkit2gtk-4.1` (installed on the dev machine, so `cargo test` there covers everything). On a machine without the GUI stack, the crypto module has no GUI dependency, so:
 ```
 python3 scripts/crypto-harness.py            # builds a bare crate that includes src-tauri/src/crypto, runs cargo test
 python3 scripts/crypto-harness.py clippy     # clippy on the same crate

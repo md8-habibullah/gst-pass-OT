@@ -42,19 +42,15 @@ body {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   pointer-events: none;
   background-image:
-    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.2) 1.1px, transparent 1.7px),
-    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.2) 1.1px, transparent 1.7px);
+    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.34) 1.2px, transparent 1.9px),
+    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.34) 1.2px, transparent 1.9px);
   background-size: 32px 55.4256px;
   background-position: 0 0, 16px 27.7128px;
-  -webkit-mask-image: radial-gradient(120% 95% at 12% 0%, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 85%);
-  mask-image: radial-gradient(120% 95% at 12% 0%, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 85%);
-}
-#root > * {
-  position: relative;
-  z-index: 1;
+  -webkit-mask-image: radial-gradient(130% 100% at 14% 0%, #000 0%, rgb(0 0 0 / 0.6) 50%, rgb(0 0 0 / 0.12) 100%);
+  mask-image: radial-gradient(130% 100% at 14% 0%, #000 0%, rgb(0 0 0 / 0.6) 50%, rgb(0 0 0 / 0.12) 100%);
 }
 
 ::selection {
@@ -128,14 +124,18 @@ button:disabled {
   &:hover:not(:disabled) {
     filter: brightness(1.06);
   }
+  &:disabled[aria-busy="true"] {
+    cursor: progress;
+  }
   &:active:not(:disabled) {
     transform: translateY(1px);
     box-shadow: var(--shadow-key-down);
     filter: brightness(0.97);
   }
-  &:disabled {
-    filter: grayscale(0.75) brightness(0.7);
-    box-shadow: none;
+  &:disabled:not([aria-busy="true"]) {
+    background: rgb(226 178 89 / 0.15);
+    color: rgb(237 195 120 / 0.7);
+    box-shadow: inset 0 0 0 1px rgb(226 178 89 / 0.22);
   }
 }
 
@@ -169,5 +169,36 @@ button:disabled {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Item detail header: actions on their own row above the identity on narrow panes (so the title
+   never gets squeezed), a single row once the pane is wide enough. Container-based, so the medium
+   layout's narrower detail pane benefits too. */
+.detail-root {
+  container-type: inline-size;
+}
+.detail-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "back actions"
+    "ident ident";
+  align-items: center;
+  row-gap: 0.75rem;
+}
+.detail-head > [data-slot="back"] { grid-area: back; justify-self: start; margin-left: -0.5rem; }
+.detail-head > [data-slot="ident"] { grid-area: ident; }
+.detail-head > [data-slot="actions"] { grid-area: actions; }
+@container (min-width: 34rem) {
+  .detail-head {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "back ident actions";
+    align-items: start;
+    column-gap: 1rem;
+  }
+  .detail-head:not([data-back]) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "ident actions";
   }
 }

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { charClass, DEFAULT_GEN, estimateStrength, generatePassword, randomBelow } from "./password";
+import { charClass, DEFAULT_GEN, estimateStrength, generatePassword, randomBelow, type Rng } from "./password";
 
 /** Deterministic rng that replays a fixed list of 32-bit values. */
 function replay(values: number[]) {
   let i = 0;
-  return (a: Uint32Array) => {
+  const rng: Rng = (a) => {
     a[0] = values[i++ % values.length]!;
     return a;
   };
+  return rng;
 }
 
 describe("randomBelow", () => {

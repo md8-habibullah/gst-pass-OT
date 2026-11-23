@@ -26,7 +26,16 @@ interface VaultStatus {
   exists: boolean;                    // a vault file with a key bundle exists
   unlocked: boolean;
   capabilities: { quickUnlock: boolean; biometric: boolean };  // false until Phase 3
+  damagedItems: number;               // additive (Phase 2): items that failed authentication at unlock and were
+                                      // skipped instead of locking the whole vault; 0 normally. The UI shows a
+                                      // warning toast after unlock when this is > 0. Optional in the TS type
+                                      // because the preview backend omits it.
 }
+
+// Planned for Phase 3 (not implemented; the UI hides PIN / biometric entry points because the real backend
+// lacks the optional methods): quick_unlock_set_pin, quick_unlock_pin(pin), quick_unlock_biometric,
+// quick_unlock_clear, lock-timer settings. The TypeScript `Backend` interface already declares the two unlock
+// calls as optional (`quickUnlockPin?`, `quickUnlockBiometric?`).
 
 interface ItemSummary {               // list rows; no secrets
   id: string; type: ItemType; title: string;

@@ -92,19 +92,56 @@ export async function refresh(): Promise<void> {
   }));
 }
 
-async function enter(): Promise<void> {
+/** Loads the vault contents after a successful unlock but stays on the lock screen so it can play its exit. */
+async function preload(): Promise<void> {
   await refresh();
+  const damaged = (await be().status()).damagedItems ?? 0;
+  if (damaged > 0) {
+    pushToast({
+      kind: "error",
+      ttlMs: 15_000,
+      text: `${damaged === 1 ? "One item" : `${damaged} items`} failed its integrity check and ${damaged === 1 ? "was" : "were"} left out. ${damaged === 1 ? "It" : "They"} may be damaged or tampered with. Everything else is intact.`,
+    });
+  }
+}
+
+/** Called by the lock screen once its unlock animation has finished. */
+export function enterApp(): void {
   patch({ phase: "ready", justUnlocked: true, filter: "all", query: "", selectedId: null });
 }
 
 export async function createVault(password: string): Promise<void> {
   await be().createVault(password);
-  await enter();
+  await preload();
 }
 
 export async function unlock(password: string): Promise<void> {
   await be().unlock(password);
-  await enter();
+  await preload();
+}
+
+/** Quick unlock (Phase 3 in the core): only the preview backend implements these today. */
+export async function unlockWithPin(pin: string): Promise<void> {
+  const b = be();
+  if (!b.quickUnlockPin) throw new Error("PIN unlock is not available yet.");
+  await b.quickUnlockPin(pin);
+  await preload();
+}
+
+export async function unlockWithBiometric(): Promise<void> {
+  const b = be();
+  if (!b.quickUnlockBiometric) throw new Error("Biometric unlock is not available yet.");
+  await b.quickUnlockBiometric();
+  await preload();
+}
+
+export function quickUnlockAvailable(): { pin: boolean; biometric: boolean } {
+  const { capabilities } = app.get();
+  const b = backend;
+  return {
+    pin: Boolean(capabilities.quickUnlock && b?.quickUnlockPin),
+    biometric: Boolean(capabilities.biometric && b?.quickUnlockBiometric),
+  };
 }
 
 export async function lockVault(): Promise<void> {

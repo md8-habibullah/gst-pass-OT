@@ -17,6 +17,8 @@ export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
   capabilities: { quickUnlock: boolean; biometric: boolean };
+  /** Items that failed authentication at unlock and were skipped (additive; the preview backend omits it). */
+  damagedItems?: number;
 }
 
 export interface ItemSummary {
@@ -166,6 +168,10 @@ export interface Backend {
   restoreVersion(id: string, version: number, password: string): Promise<ItemSummary>;
 
   totpNow(id: string): Promise<TotpNow>;
+
+  /** Phase 3 in the Rust core (not implemented there yet). Only the preview backend provides them. */
+  quickUnlockPin?(pin: string): Promise<void>;
+  quickUnlockBiometric?(): Promise<void>;
 }
 
 /** Field schemas per item type (must match the contract and the Rust validation). */

@@ -1,8 +1,8 @@
 # STORAGE_AND_SYNC — item storage, version history, trash, multi-S3 sync
 
-Design for Phases 2 and 4. Nothing in this file is implemented yet (Phase 1 is crypto only). All blobs are envelopes from `CRYPTO_SPEC.md` §7.
+Design for Phases 2 and 4. Status legend: **[impl]** implemented and tested (Phase 2: local storage, history, trash) · **[plan]** designed, not yet implemented (Phase 4: S3 sync, mirrors, conflicts, tombstone upload). All blobs are envelopes from `CRYPTO_SPEC.md` §7. The IPC surface over this layer is `IPC_CONTRACT.md`.
 
-## 1. Object model
+## 1. Object model [impl]
 
 Every item (login, TOTP, secure note, media entry) is identified by a random UUIDv4 (lowercase, hyphenated). Each item has:
 
@@ -31,7 +31,7 @@ Every item (login, TOTP, secure note, media entry) is identified by a random UUI
 
 `deleted/deletedAt` live **inside** the ciphertext, so the bucket cannot tell trash from active items.
 
-## 2. Object layout (S3 keys and local mirror of them)
+## 2. Object layout (S3 keys and local mirror of them) [impl locally, S3 upload is plan]
 
 | Key | Content | Mutability |
 |-----|---------|------------|
@@ -44,7 +44,7 @@ Every item (login, TOTP, secure note, media entry) is identified by a random UUI
 
 Additions beyond the original spec: `meta/keybundle.json` (needed so a new device can unlock after the first pull) and `tombstones/`.
 
-## 3. Version history rules
+## 3. Version history rules [impl]
 
 * An update **never** overwrites previous data. Saving produces: (1) a new snapshot `versions/<id>/<n+1>_<ts>.enc`, then (2) the new latest state with `version = n+1`.
 * Every state change bumps `version`, including trash/restore, so sync can compare a single integer. Those events appear in the timeline as lifecycle entries with unchanged content.
@@ -52,7 +52,7 @@ Additions beyond the original spec: `meta/keybundle.json` (needed so a new devic
 * **Restore this version** = create a new snapshot `n+1` whose content equals the old one (`event = restoredFromVersion`, `restoredFrom = k`). History stays linear; nothing is rewritten.
 * Two devices creating the same `n+1` offline produce two snapshot files (different timestamps). Both are kept; the conflict flow (§5) decides what becomes latest.
 
-## 4. Trash lifecycle
+## 4. Trash lifecycle [impl locally; deleting on S3 is plan]
 
 1. **Delete** → new version with `deleted = true, deletedAt = <ms>`, `event = trashed`. No data removed.
 2. **No auto-purge.** Items stay in Trash until the user acts.
@@ -60,7 +60,7 @@ Additions beyond the original spec: `meta/keybundle.json` (needed so a new devic
 4. **Restore** → new version with `deleted = false`, `event = restored`; full access returns.
 5. **Permanent delete** is hidden behind a double confirmation: step 1 warning modal; step 2 re-enter Master Password **and** type the item name or `CONFIRM`. Then, in order: write `tombstones/<id>.enc` to the primary (and mirrors), delete `items/`, `versions/<id>/`, referenced `attachments/`, `conflicts/` for that id on primary and every mirror, then purge local rows. Tombstones exist because otherwise another device that still holds the item would re-upload it ("resurrection").
 
-## 5. Local database (Phase 2)
+## 5. Local database (Phase 2) [impl]
 
 SQLite via `rusqlite` (bundled). It stores **only opaque envelopes** plus sync bookkeeping, so the file needs no SQLCipher. Titles/tags are searched from an in-memory index built after unlock.
 
@@ -78,7 +78,7 @@ SQLite via `rusqlite` (bundled). It stores **only opaque envelopes** plus sync b
 Local plaintext leakage (accepted, documented): item ids, versions, timestamps, blob sizes, dirty flags, S3 target ids/status. Titles, URLs, usernames, trash state and S3 credentials are inside ciphertext.
 Writes are transactional: snapshot + latest + outbox rows commit together or not at all. The app is fully usable offline; the outbox drains when a network is available.
 
-## 6. Sync protocol
+## 6. Sync protocol [plan]
 
 **First-time setup requires internet:** fetch `meta/keybundle.json`, unlock, then pull everything. After that, the app runs offline.
 
@@ -100,7 +100,7 @@ Support differs between providers (AWS S3 added conditional writes in 2024; B2, 
 
 **Tombstones** win over any later non-tombstoned state for the same id.
 
-## 7. Mirrors (primary + N)
+## 7. Mirrors (primary + N) [plan]
 
 * The **primary** is the source of truth for conflicts. Mirrors only replicate; they never merge.
 * Each mirror has its own outbox cursor. Every successful primary write enqueues a copy job per mirror (same key, same bytes). Jobs are idempotent (plain PUT; immutable keys use `If-None-Match: *` and treat 412 as success).
@@ -109,9 +109,48 @@ Support differs between providers (AWS S3 added conditional writes in 2024; B2, 
 * Recovery: "promote mirror to primary" re-verifies every object by authentication before switching. A periodic reconcile job lists mirror keys and re-enqueues anything missing.
 * Cost note: aws-sdk-s3 is large to compile (the dev machine has ~7 GB RAM); evaluate `rust-s3` vs `aws-sdk-s3` with a spike at the start of Phase 4, including conditional-header support.
 
-## 8. Security notes for sync
+## 8. Security notes for sync [plan]
 
 * The bucket sees: object keys (UUIDs), sizes, timestamps, update frequency, number of items/versions. It does not see content, titles, trash state, or credentials.
 * S3 target credentials are stored only locally, sealed with a `meta` sub-key; exporting them requires the Master-Password Re-Prompt. They are never written to the bucket.
 * Every downloaded object is authenticated before use; a malicious bucket can delete or roll back data but cannot forge or silently alter it. Keep at least one mirror on a different provider for resilience against deletion.
 * Attachments: one-shot envelope up to 64 MiB in v1; larger files need the chunked envelope (Phase 5).
+
+## 9. Phase 2 implementation notes [impl]
+
+What shipped in `src-tauri/src/storage/` and `src-tauri/src/commands/` (sections 1-5 above; sections 6-8 are still plan).
+
+### Schema as built (`PRAGMA user_version = 1`, `application_id = 0x504D5631`)
+
+- `meta(key, value)` holds `bundle` (the key-bundle JSON, so the vault is self-contained locally), `device_id`, `created_at`.
+- `items(id PK, version, ts, blob, remote_etag, base_version, dirty)` is the latest sealed state (`KeyPurpose::Item`, header itemId = id, version = n).
+- `versions(item_id, version, ts, blob, uploaded)`, PK `(item_id, version, ts)`, are immutable snapshots (`KeyPurpose::Version`). Rows are only ever inserted.
+- `attachments`, `conflicts`, `tombstones` exist with the §5 columns. They are `ON DELETE CASCADE` from `items`, except `tombstones`, which is standalone. Attachments and conflicts are not written yet (Phase 3+).
+- `targets` and `outbox` are **not created yet**. They belong to the sync phase, and a migration v2 adds them.
+- `items`, `versions`, `attachments` and `conflicts` are ordinary rowid tables, not `WITHOUT ROWID`, because blob-heavy rows are faster that way. `meta` and `tombstones` are small and keyed by text, so they are `WITHOUT ROWID`.
+- Pragmas: `journal_mode=WAL` (verified), `synchronous=FULL`, `foreign_keys=ON`, `secure_delete=ON`, `trusted_schema=OFF`, `cell_size_check=ON`.
+- Migrations run in one transaction and are idempotent. A file with another `application_id`, a newer `user_version`, or a non-SQLite file is refused.
+
+### Writes
+
+`commit_state` writes the snapshot and the latest row in **one transaction**, with `version = previous + 1` and a check that the previous version matches. A duplicate snapshot rolls everything back. Restore-from-version writes a **new** version (`event = restored`, `restoredFrom = n`), so history stays linear and old snapshots stay byte-identical. `purge` deletes every row for the id (items, cascade rows, versions), inserts the tombstone, then checkpoints the WAL with `TRUNCATE`.
+
+### Index
+
+Built at unlock by opening every `items` blob. Active items keep an `ItemSummary` (title, type, tags, folder, favorite, subtitle, hasTotp, version, updatedAt). Trashed items keep only `title` and `deletedAt`, so trash listing cannot leak other fields. An item that fails authentication is skipped and counted in `VaultStatus.damagedItems`. This is an additive field, and one tampered row does not lock the whole vault. The index lives only inside the unlocked session and is dropped on lock.
+
+### Re-prompt guard and edit tokens
+
+- Gated commands (`item_reveal`, `item_begin_edit`, `history_get`, `history_restore`, `item_purge`, `vault_change_password`) run Argon2id on the supplied password **every call**. The password is never cached. Verification runs **outside** the session lock, so a slow KDF cannot block the UI's other calls.
+- Edit tokens are 32 random bytes, base64url. They are single-use, bound to `(item id, version at begin)`, have a TTL (default 600 s), and are wiped on lock. At most 16 are outstanding (the oldest is dropped first). The presented token is compared in constant time against every outstanding one. Unknown, expired, or locked-away tokens fail with `token_invalid` and change nothing. A real token presented for a different item or version is burned and fails with `token_invalid`. A real token is also consumed on success and on `version_conflict`, `in_trash` or `not_found`. A save rejected for `invalid_input` keeps the token, so the person can fix the form without re-entering the password.
+- `item_update` also checks `expectedVersion` against the stored version (`version_conflict`).
+- A poisoned session mutex resets the session to Locked.
+
+### Deviations from the contract (all additive or internal)
+
+1. `VaultStatus.damagedItems` is an extra field, described above.
+2. `targets` and `outbox` are not created in Phase 2, because nothing writes them yet.
+3. UUIDv4 ids are generated from `crypto::rng` with a strict canonical-form validator, and no `uuid` crate is used.
+4. The vault bundle is stored in `meta.bundle` so the vault file is self-contained.
+
+Not a deviation, but worth knowing: command arguments are camelCase exactly as in `IPC_CONTRACT.md`. Tauri rejects snake_case names, and a mock-runtime test pins this.

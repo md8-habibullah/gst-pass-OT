@@ -123,8 +123,8 @@ src/
 
 `src/backend/index.ts` picks the Tauri backend when `isTauri()` is true. The **preview backend** (in-memory, fake password check, real TOTP maths) is loaded only in development outside Tauri, behind `import.meta.env.DEV`, so it is not part of production bundles. It exists to iterate on the design in a normal browser and to drive screenshots; it is **not secure** and says so.
 
-Dev-only deep links for screenshots (preview backend only): `?vault=unlocked`, `&open=<n>` (nth item), `&sheet=edit|new|reprompt`, `&filter=trash|codes|settings`.
+Dev-only deep links for screenshots (preview backend only): `?vault=unlocked|locked`, `&open=<n>` (nth item), `&sheet=edit|new|reprompt`, `&filter=trash|codes|settings`, `&history` (opens the version timeline). Motion animations do not finish under a short headless virtual-time budget; use a budget of about 20 s when a sheet or timeline must be fully open in a screenshot.
 
 ## 9. CSP
 
-`style-src 'self'` blocks `<style>` blocks and HTML `style=""` attributes, not styles set through the CSSOM. React's `style` prop and Motion animate via CSSOM and are expected to work; this is verified in the real WebKitGTK window (see `CHANGELOG_AND_STATE.md`). Never add inline `<script>`/`<style>` tags or `dangerouslySetInnerHTML`.
+`style-src 'self'` blocks `<style>` blocks and HTML `style=""` attributes, not styles set through the CSSOM. React's `style` prop and Motion animate via CSSOM. Verified so far in the real WebKitGTK window: the first-run screen (bundled fonts, lattice, glass, the SVG ring) renders correctly under the strict CSP. Not yet verified there: running Motion transitions (sheets, layout animations, the unlock moment); that is part of the manual smoke test in `CHANGELOG_AND_STATE.md`. Never add inline `<script>`/`<style>` tags or `dangerouslySetInnerHTML`.

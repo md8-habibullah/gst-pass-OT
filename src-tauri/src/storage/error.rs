@@ -85,9 +85,9 @@ impl From<CryptoError> for StorageError {
                 "A stored item failed its integrity check: the data is damaged or was modified."
                     .into(),
             ),
-            CryptoError::KeyMismatch | CryptoError::MalformedBundle(_) => Self::Crypto(
-                "The vault's key material failed its integrity check.".into(),
-            ),
+            CryptoError::KeyMismatch | CryptoError::MalformedBundle(_) => {
+                Self::Crypto("The vault's key material failed its integrity check.".into())
+            }
             CryptoError::KdfOutOfMemory => Self::Crypto(
                 "Not enough memory to check the master password on this device.".into(),
             ),

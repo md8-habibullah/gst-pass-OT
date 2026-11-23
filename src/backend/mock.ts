@@ -36,7 +36,6 @@ interface Stored {
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const clone = <T,>(v: T): T => structuredClone(v);
 const MIN = 60_000;
-const DAY = 24 * 60 * MIN;
 
 let vaultPassword: string | null = null;
 let unlocked = false;
@@ -119,7 +118,7 @@ function snapshot(s: Stored, event: VersionEvent, prev: ItemDraft | null, restor
   s.history.push({ version: s.version, timestamp: ts, event, changedFields: diff(prev, s.draft), restoredFrom, draft: clone(s.draft) });
 }
 
-function seedItem(minsAgo: number, draft: ItemDraft, edits: { minsAgo: number; patch: Partial<ItemDraft["fields"]>; title?: string }[] = []): Stored {
+function seedItem(minsAgo: number, draft: ItemDraft, edits: { minsAgo: number; patch: Record<string, string>; title?: string }[] = []): Stored {
   const created = Date.now() - minsAgo * MIN;
   const s: Stored = { id: crypto.randomUUID(), createdAt: created, updatedAt: created, version: 1, deleted: false, deletedAt: null, draft: clone(draft), history: [] };
   snapshot(s, "created", null, null, created);
@@ -145,7 +144,7 @@ function seed() {
       { minsAgo: 60 * 24 * 41, patch: { password: "t7Rw-Nq4!zYb2uHc" } },
       { minsAgo: 60 * 26, patch: { password: "kX9#mQ2vTz!8pLd4", url: "https://github.com/login" } },
     ]),
-    seedItem(60 * 24 * 12, login("Fastmail", { username: "marlowe@fastmail.example", password: "violet-anchor-Quench-71", url: "https://app.fastmail.com", totp: "JBSWY3DPEHPK3PXP" }, { tags: ["personal"] })),
+    seedItem(60 * 24 * 12, login("Fastmail", { username: "marlowe@fastmail.example", password: "violet-anchor-Quench-71", url: "https://app.fastmail.com", totp: "ONSWG4TFOQYTEMZU" }, { tags: ["personal"] })),
     seedItem(60 * 5, login("Hetzner Cloud", { username: "ops@marlowe.example", password: "Hq4$vN8wLr2^TmZx", url: "https://console.hetzner.cloud", totp: "otpauth://totp/Hetzner:ops?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Hetzner&period=30&digits=6" }, { tags: ["work", "infra"] }), [
       { minsAgo: 60 * 5, patch: { notes: "Project: edge-cluster. Billing alerts go to ops@." } },
     ]),
@@ -258,6 +257,15 @@ export const previewBackend: Backend = {
     unlocked = true;
   },
   async lock() { unlocked = false; tokens.clear(); },
+  async quickUnlockPin(pin) {
+    await delay(350);
+    if (pin !== PREVIEW_PIN) err("wrong_password", "That PIN is not right.");
+    unlocked = true;
+  },
+  async quickUnlockBiometric() {
+    await delay(800);
+    unlocked = true;
+  },
   async changePassword(oldPassword, newPassword) {
     requireUnlocked(); await verify(oldPassword);
     if (newPassword.length < 8) err("invalid_input", "Use at least 8 characters.");
@@ -348,4 +356,5 @@ export const previewBackend: Backend = {
 };
 
 export const PREVIEW_PASSWORD = "preview-vault-1";
+export const PREVIEW_PIN = "246810";
 export type { ItemType };
