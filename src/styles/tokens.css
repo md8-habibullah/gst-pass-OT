@@ -1,0 +1,83 @@
+/* Strongroom design tokens. Spec: ai-docs/UI_DESIGN_SYSTEM.md §2. Contrast ratios are documented there. */
+@theme {
+  --color-*: initial;
+
+  /* surfaces */
+  --color-marine: #08141a;
+  --color-pane: #0e1d25;
+  --color-raised: #152a34;
+  --color-hover: #1b3541;
+  --color-hairline: rgb(190 230 240 / 0.1);
+  --color-hairline-strong: rgb(190 230 240 / 0.18);
+
+  /* text */
+  --color-frost: #e6f0f2;
+  --color-mist: #9bb2b9;
+  --color-fog: #8aa1a8;
+
+  /* the key (accent) */
+  --color-brass: #e2b259;
+  --color-brass-hi: #edc378;
+  --color-brass-lo: #cc9a45;
+  --color-on-brass: #231905;
+
+  /* state */
+  --color-verdigris: #52d3b8;
+  --color-ember: #f0737a;
+  --color-danger: #c23b44;
+  --color-white: #fff;
+  --color-transparent: transparent;
+
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* radius is tiered by hierarchy: controls 8, rows/panels 14, sheets/shells 22 */
+  --radius-*: initial;
+  --radius-sm: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
+  --radius-full: 9999px;
+
+  /* tactile elevation: top highlight + dark bottom edge + teal ambient shadow */
+  --shadow-*: initial;
+  --shadow-e1: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 1px 0 rgb(0 0 0 / 0.35);
+  --shadow-e2: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 0 rgb(0 0 0 / 0.45), 0 8px 20px -12px rgb(2 10 14 / 0.75);
+  --shadow-e3: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 1px 0 rgb(0 0 0 / 0.5), 0 18px 40px -16px rgb(2 10 14 / 0.85);
+  --shadow-e4: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 28px 70px -20px rgb(2 10 14 / 0.95), 0 0 0 1px rgb(190 230 240 / 0.08);
+  --shadow-key: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 0 rgb(0 0 0 / 0.18), 0 1px 0 rgb(0 0 0 / 0.5), 0 8px 18px -8px rgb(226 178 89 / 0.5);
+  --shadow-key-down: inset 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 0 rgb(0 0 0 / 0.4);
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-shake: shake 0.38s var(--ease-out);
+  --animate-rise: rise 0.34s var(--ease-out) both;
+  --animate-pulse-once: pulse-once 0.5s var(--ease-out);
+  --animate-spin-slow: spin 2.4s linear infinite;
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-once {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.06); }
+    100% { transform: scale(1); }
+  }
+}
+
+:root {
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 340ms;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}

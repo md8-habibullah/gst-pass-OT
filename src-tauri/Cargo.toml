@@ -1,0 +1,79 @@
+# Keep ONE dependency per line and keep the section layout simple:
+# scripts/crypto-harness.py derives a GUI-free test crate from this file by line filtering.
+# Versions were checked against crates.io on 2026-11-23 (see ai-docs/ARCHITECTURE.md §2).
+
+[package]
+name = "passman"
+version = "0.1.0"
+description = "Post-quantum, zero-knowledge password, TOTP, note and media vault"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "passman_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.7", features = [] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+base64 = "0.23.1"
+zeroize = { version = "1.9.2", features = ["derive"] }
+subtle = "2.6.1"
+getrandom = { version = "0.4.3", features = ["sys_rng"] }
+rand_core = "0.10.1"
+argon2 = { version = "0.6.0", default-features = false, features = ["zeroize"] }
+ml-kem = { version = "0.3.4", features = ["zeroize"] }
+x25519-dalek = { version = "3.0.0", features = ["static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+hkdf = "0.13.0"
+hmac = { version = "0.13.0", features = ["zeroize"] }
+sha2 = { version = "0.11.1", features = ["zeroize"] }
+unicode-normalization = "0.1.26"
+totp-rs = { version = "6.0.0", default-features = false, features = ["std", "otpauth", "zeroize"] }
+# Phase 2 storage: SQLite compiled in (no system lib). It only ever holds opaque envelopes, so no SQLCipher.
+rusqlite = { version = "0.43.0", default-features = false, features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+# `test` enables tauri::test (mock runtime) so the real command argument mapping is tested.
+tauri = { version = "2.12.7", features = ["test"] }
+
+# Optimize only the crypto crates in dev/test builds, so Argon2id (64 MiB) and ML-KEM
+# are not painfully slow without making the whole Tauri tree heavy to compile.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.dev.package.ml-kem]
+opt-level = 3
+
+[profile.dev.package.module-lattice]
+opt-level = 3
+
+[profile.dev.package.sha3]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.chacha20]
+opt-level = 3
+
+[profile.dev.package.poly1305]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

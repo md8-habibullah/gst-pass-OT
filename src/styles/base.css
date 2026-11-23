@@ -1,0 +1,173 @@
+/* Ground, lattice texture, focus, scrollbars and the tactile utilities. Spec: UI_DESIGN_SYSTEM.md §1-2. */
+
+:root {
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-marine);
+  color: var(--color-frost);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 450;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (min-width: 1100px) and (pointer: fine) {
+  body {
+    font-size: 14.5px;
+    line-height: 21px;
+  }
+}
+
+/* The ground: a triangular lattice (spacing 32px) that fades away from the top-left corner.
+   It is the nod to lattice-based ML-KEM, and gives the glass panes something real to blur. */
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.2) 1.1px, transparent 1.7px),
+    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.2) 1.1px, transparent 1.7px);
+  background-size: 32px 55.4256px;
+  background-position: 0 0, 16px 27.7128px;
+  -webkit-mask-image: radial-gradient(120% 95% at 12% 0%, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 85%);
+  mask-image: radial-gradient(120% 95% at 12% 0%, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 85%);
+}
+#root > * {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: rgb(226 178 89 / 0.32);
+  color: var(--color-frost);
+}
+
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* thin scrollbars that match the panes (desktop) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(155 178 185 / 0.28) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(155 178 185 / 0.24);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Glass pane: frosted, hairline edge, lit from above. */
+@utility glass {
+  background: rgb(15 32 41 / 0.58);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+  border: 1px solid var(--color-hairline);
+  box-shadow: var(--shadow-e2);
+}
+@utility glass-strong {
+  background: rgb(12 27 35 / 0.82);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid var(--color-hairline-strong);
+  box-shadow: var(--shadow-e4);
+}
+
+/* Machined key button: tone shift for material, sinks 1px when pressed. */
+@utility key-surface {
+  background: linear-gradient(180deg, #ecc271 0%, var(--color-brass) 52%, #d4a24c 100%);
+  color: var(--color-on-brass);
+  box-shadow: var(--shadow-key);
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), filter var(--dur-fast);
+  &:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: var(--shadow-key-down);
+    filter: brightness(0.97);
+  }
+  &:disabled {
+    filter: grayscale(0.75) brightness(0.7);
+    box-shadow: none;
+  }
+}
+
+/* Secret pill: frosted so the value is physically behind glass. */
+@utility frosted {
+  background: rgb(155 178 185 / 0.1);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px rgb(190 230 240 / 0.08);
+}
+
+@utility pressable {
+  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast), box-shadow var(--dur-fast);
+  &:active:not(:disabled) {
+    transform: translateY(1px) scale(0.985);
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
