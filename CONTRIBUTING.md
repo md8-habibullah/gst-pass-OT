@@ -95,15 +95,25 @@ Linux bundles and the Android APK, so a change that only breaks packaging is cau
 
 ## Releases (maintainers)
 
-1. Update `CHANGELOG.md`; bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`
-   (and `Cargo.lock` by building once). CI refuses a tag whose version does not match all three.
-2. Tag the commit `vX.Y.Z` and push the tag. The `ci.yml` workflow builds every variant and opens a **draft** release.
-3. Review the draft (notes, checksums, the list of files), then publish it by hand.
-4. The bundle identifier `dev.habibullah.hexis` is final (decision D9 in `ARCHITECTURE.md`): an Android `applicationId`
+A release is made by raising the version on `main`. Nobody tags or publishes by hand.
+
+1. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - date` (and add a new empty `## [Unreleased]` above it); bump
+   the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` (and `Cargo.lock`
+   by building once) and `packaging/arch/PKGBUILD`.
+2. Merge or push that to `main`. The `ci.yml` workflow sees that `vX.Y.Z` has no tag yet, builds every variant from a clean
+   cache, runs every test and, **only if every job passes**, tags that commit, **publishes** the release (notes, downloads
+   table with checksums, the changelog section) and asks the site to rebuild its signed apt and rpm repositories. A version
+   with a suffix such as `0.3.0-rc1` is published as a pre-release.
+3. CI stops early, before building anything, if the versions in the three files differ or `CHANGELOG.md` has no section for
+   the version. A push that does not raise the version is an ordinary build (it only refreshes the rolling `nightly`).
+4. To hold a release back, do not raise the version on `main`. To redo a release that was published by mistake and that nobody
+   has installed yet: `gh release delete vX.Y.Z --cleanup-tag --yes`, then `gh workflow run CI` (it publishes again from `main`).
+   This rewrites a public release, so keep it for mistakes.
+5. The bundle identifier `dev.habibullah.hexis` is final (decision D9 in `ARCHITECTURE.md`): an Android `applicationId`
    cannot change once the app has been distributed, and the desktop data folder is named after it.
-5. The release description (install commands, downloads table with checksums, the changelog section) is written by
-   `scripts/release_notes.py` from `CHANGELOG.md`; add a `## [X.Y.Z] - date` section there before you tag.
-6. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
+6. The release description (install commands, downloads table with checksums, the changelog section) is written by
+   `scripts/release_notes.py` from the `## [X.Y.Z] - date` section of `CHANGELOG.md`.
+7. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
 
 ### Who can build and release an Android app
 
@@ -113,10 +123,11 @@ Linux bundles and the Android APK, so a change that only breaks packaging is cau
   by that one run. That is on purpose: a copy of the project must not be able to impersonate the official app. A fork that
   wants its own releases creates its own key (`scripts/github-setup.sh android-key` in its own repository) and should
   change the bundle identifier, because two different keys cannot share one app on a phone.
-* **A collaborator with write access** never touches the key. They push a version tag; CI signs with the repository's
-  secrets and opens a draft release; a maintainer publishes it. A tag build fails, rather than publishing a `-testkey`
-  file, when the key is missing. Give write access only to people you would trust with the key: anyone who can change a
-  workflow on a branch of this repository can make it reveal the secrets.
+* **A collaborator with write access** never touches the key. A change that raises the version and reaches `main` makes CI
+  sign with the repository's secrets and publish the release. A build that would publish fails, rather than publishing a
+  `-testkey` file, when the key is missing. Give write access, and the right to merge to `main`, only to people you would
+  trust with the key and with the power to publish: anyone who can change a workflow on a branch of this repository can
+  make it reveal the secrets.
 * **The key itself** is made once by the owner with `scripts/github-setup.sh android-key`. It is stored in GitHub as an
   encrypted secret (it can never be read back) and kept as a backup file outside the repository. If it is lost, phones
   that installed Hexis cannot be updated; they have to uninstall first, so restore from a backup afterwards.

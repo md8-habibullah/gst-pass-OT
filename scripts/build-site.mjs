@@ -302,7 +302,7 @@ function homeBody() {
 
 <section class="list">
   <h2>Built in the open</h2>
-  <p class="plain">Every push runs the type checks, unit tests, rustfmt, clippy and the full Rust test suite, then drives the real Rust core from a headless browser, and builds the Linux packages and the Android APK. Pushes to <code>main</code> publish a rolling nightly pre-release; a version tag opens a draft release. <a href="${relative("", "project/contributing")}">Contributing</a> · <a href="${relative("", "docs/state")}">What is verified, and what is not</a></p>
+  <p class="plain">Every push runs the type checks, unit tests, rustfmt, clippy and the full Rust test suite, then drives the real Rust core from a headless browser, and builds the Linux packages and the Android APK. Pushes to <code>main</code> publish a rolling nightly pre-release, and a push that raises the version publishes a release once every one of those checks has passed. <a href="${relative("", "project/contributing")}">Contributing</a> · <a href="${relative("", "docs/state")}">What is verified, and what is not</a></p>
 </section>
 `;
 }

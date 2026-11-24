@@ -94,7 +94,7 @@ secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALI
 (`scripts/github-setup.sh android-key` creates the key outside the repository, stores the first three as secrets and the public
 SHA-256 fingerprint of its certificate as the variable `ANDROID_CERT_SHA256`; the key password is the store password, so `ANDROID_KEY_PASSWORD`
 is optional). Pull-request runs never receive the secrets. Without a key the APK is signed with a throw-away key made inside that CI run and its
-file name ends in `-testkey`: it installs, but cannot be updated by a build signed with another key. A **version tag** build refuses that
+file name ends in `-testkey`: it installs, but cannot be updated by a build signed with another key. A build that **publishes a release** (a push to `main` whose version has no tag yet) refuses that
 fallback and fails (set the repository variable `ALLOW_TESTKEY_RELEASE` to `true` to override), so a release cannot silently ship a test key
 again. The release notes and the Download page print the fingerprint so a user can check a file with `apksigner verify --print-certs`. The
 keystore never lives in the repository (`*.jks`, `*.keystore`, `keystore.properties` are git-ignored).
@@ -235,19 +235,20 @@ the runner needed more than the 10 seconds `e2e/cdp.mjs` waited (the other eight
 
 | Workflow / job | Trigger | What it does |
 |---|---|---|
+| `ci.yml` `plan` | every push, every PR | seconds: is the version in `tauri.conf.json` new (no `vX.Y.Z` tag in the repository)? Only on `main`. If so, fails at once when `package.json` or `Cargo.toml` disagree with it or `CHANGELOG.md` has no section for it, and tells the other jobs it is a release build (clean cache, Android key required) |
 | `ci.yml` `checks` | every push, every PR | `scripts/verify_all.sh`: `tsc`, vitest, `vite build`, no dev-only strings in `dist/`, notification check, patch-script tests, `cargo fmt`, `clippy -D warnings`, `cargo test --locked` |
-| `ci.yml` `e2e` | after `checks` | `scripts/ci_e2e.sh`: builds the dev shim, starts Vite, runs every `e2e/*.mjs` against the real core in headless Chrome (`CHROME_BIN`) |
+| `ci.yml` `e2e` | every push, every PR (side by side with `checks`) | `scripts/ci_e2e.sh`: builds the dev shim, starts Vite, runs every `e2e/*.mjs` against the real core in headless Chrome (`CHROME_BIN`) |
 | `ci.yml` `site` | every push, every PR | builds the website and fails on a broken link or anchor or a third-party request |
-| `ci.yml` `linux` | after `checks` | `npm run tauri build -- --bundles deb,rpm,appimage` on `ubuntu-22.04` (old glibc), plus a `tar.gz`; artifacts kept 14 days |
+| `ci.yml` `linux` | every push, every PR (side by side with `checks`) | `npm run tauri build -- --bundles deb,rpm,appimage` on `ubuntu-22.04` (old glibc), plus a `tar.gz`; artifacts kept 14 days |
 | `ci.yml` `installer` | after `linux` | `scripts/test_installer_containers.sh`: builds signed apt and rpm repositories from that build with a throw-away key and runs the real `install.sh` in `ubuntu:22.04`, `ubuntu:24.04`, `debian:12`, `fedora:latest`, `opensuse/tumbleweed`, `archlinux:latest` (install, libraries resolve, starts under Xvfb, second run, uninstall) and in `alpine` and `ubuntu:20.04`, which it must refuse |
-| `ci.yml` `android` | after `checks` | the steps of section 4.2 with the release build, then align and sign; artifact kept 14 days |
+| `ci.yml` `android` | every push, every PR (side by side with `checks`) | the steps of section 4.2 with the release build, then align and sign; artifact kept 14 days |
 | `ci.yml` `nightly` | push to `main`, after `checks`, `linux`, `android` | deletes and recreates the `nightly` pre-release with all files and `SHA256SUMS` |
-| `ci.yml` `release` | tag `v*`, after everything including `e2e`, `site` and `installer` | verifies the tag equals the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, then creates a **draft** release |
+| `ci.yml` `release` | a push to `main` whose version has no tag yet, after every other job including `e2e`, `site` and `installer` | refuses if the tag appeared meanwhile, writes the notes (`scripts/release_notes.py`), then creates the tag at that commit and **publishes** the release (a version with a suffix is a pre-release), then starts `pages.yml` because a release made with the job token starts no workflow by itself |
 | `pages.yml` | push to `main` touching docs, `site/` or the installer; a **stable release published**; manual | builds the site with `SITE_URL` from `actions/configure-pages`; if a stable release and the `REPO_SIGNING_KEY` secret exist, also builds the signed apt and rpm repositories into the site (section 11); deploys it |
 
 Design choices: only GitHub's own actions are used (`checkout`, `setup-node`, `setup-java`, `cache`, `upload/download-artifact`, `configure-pages`,
-`upload-pages-artifact`, `deploy-pages`), so no third-party action can alter a build; tag builds never restore a cache; `permissions` default to read-only and
-only the publishing jobs get `contents: write`; a tag release is a draft so a human looks before anything is published. The `android` job accepts Google's SDK
+`upload-pages-artifact`, `deploy-pages`), so no third-party action can alter a build; a build that is going to publish a release never restores a cache; `permissions` default to read-only and
+only the publishing jobs get `contents: write`; a release is published without a human step (decision of 2026-11-24), so the guard rails are in the pipeline: it needs every job green (tests, e2e, the website, all installers, the signed Android build), it refuses an APK signed with a test key, it stops before building when the versions or the changelog disagree, it never moves or reuses a tag, and the tag is the only marker of "already released", so the same version cannot be published twice. Its tags are plain (not GPG-signed) tags made by GitHub Actions. The `android` job accepts Google's SDK
 licence on behalf of whoever owns the workflow (one commented line). Windows, macOS and iOS are not built: the Rust core has `#[cfg(unix)]` file-permission code
 and has never been compiled or tested there. Not done: build provenance attestations (need a public repository or a paid plan), an `aarch64` Linux build
 (arm runners are not free for private repositories), an AAB for Google Play, a scheduled dependency audit.

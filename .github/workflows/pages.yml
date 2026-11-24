@@ -4,7 +4,8 @@
 #
 # The site also carries what the one-line installer (install.sh) needs: the signed apt, rpm and pacman package repositories.
 # They are rebuilt on every deploy from the newest STABLE release (a published, non-pre-release GitHub release), so
-# publishing a release deploys them. Without a stable release, or without the REPO_SIGNING_KEY secret
+# publishing a release deploys them (a person publishing a release fires the `release` event; the release job of ci.yml,
+# whose token starts no workflow by itself, runs this workflow with `gh workflow run`). Without a stable release, or without the REPO_SIGNING_KEY secret
 # (scripts/github-setup.sh repo-key), the site is deployed without repositories and install.sh falls back to the
 # release files. Pages replaces the whole site on each deploy, which is why the repositories are rebuilt every time.
 name: Pages

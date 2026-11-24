@@ -2,6 +2,18 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, later): releases publish themselves
+
+**Decision (the owner's):** no manual tagging and no draft to review. Raising the version on `main` is the release. `ci.yml` changed as follows; the details are in `BUILD_TARGETS.md` section 9 and `CONTRIBUTING.md` "Releases".
+
+* New job `plan` (seconds): on `main`, a version in `src-tauri/tauri.conf.json` with no `vX.Y.Z` tag in the repository is a release build. The tag is the one marker of "already released" (it also covers a draft). It fails before any build when `package.json` or `Cargo.toml` disagree with the version or `CHANGELOG.md` has no `## [X.Y.Z]` section. Other pushes are ordinary builds.
+* A release build restores no cache and requires the Android release key (the old tag rules, moved from "ref is a tag" to "plan said release"). The tag trigger is gone from `on:`.
+* Job `release` needs every other job (checks, e2e, site, linux, installer, android). It re-checks that the tag still does not exist, writes the notes with `scripts/release_notes.py`, then `gh release create vX.Y.Z --target <sha>` (publishes, makes the tag, `--latest`; a suffixed version such as `0.3.0-rc1` is a pre-release). Its tags are plain tags made by GitHub Actions, not GPG-signed.
+* A release created with the job token starts no workflow, so `pages.yml` (which builds the signed apt/rpm repositories from the newest stable release) would not rebuild. The job therefore runs `gh workflow run pages.yml` itself (needs `actions: write`); a failure there is a warning, not a red run.
+* `gh workflow run CI` on `main` repeats a release whose tag and release were deleted (`workflow_dispatch` is allowed to plan one).
+* `scripts/github-setup.sh publish-release` stays for a release that exists only as a draft (the 0.2.0 one made by the old flow); `CONTRIBUTING.md`, `README.md`, the site paragraph and `pages.yml` comments were updated.
+* **Verified:** the workflow parses (PyYAML 6.0.2 in a throw-away venv) and the job graph is consistent; `bash -n` over every step; the `plan` script run against GitHub for five cases (this repo: tag exists, no release; a new version with its changelog section: release; same without the section: exit 1; mismatched versions: exit 1; a pull request: no release). **Not verified:** the `release` job and the Pages dispatch have never run, because running them publishes; the first real run is the next version bump.
+
 ## Update (2026-11-24, after the 0.2.0 push): the first CI run of the multi-S3 e2e, and a faster pipeline
 
 * **What failed:** the commit `3487630` went green everywhere except the end-to-end job, where only `e2e/real-multi-s3.mjs` failed ("did not become ready", every other e2e script passed, `real-sync` 26/26). The cause was the test, not the app: it signed its S3 requests with `curl --aws-sigv4`, and curl 7.81 (what Ubuntu 22.04 CI runners ship) leaves `x-amz-content-sha256` out of the signed headers, so the S3 server answered 403 to every probe; curl 8.x signs it, which is why it passed on the dev machine. Reproduced in an `ubuntu:22.04` container against the same server image.

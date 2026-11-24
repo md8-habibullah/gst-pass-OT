@@ -4,24 +4,25 @@
 #                                  time; artifacts are kept for 14 days). linux bundles -> installer: the one-line installer
 #                                  on real distributions. Nothing is published until every one of them has passed.
 #   push to main                  ... then replaces the rolling `nightly` pre-release with those artifacts
-#   push of a tag vX.Y.Z          ... then opens a DRAFT release for you to review and publish by hand
+#   push to main with a NEW version   (the version in src-tauri/tauri.conf.json has no `vX.Y.Z` tag yet)
+#                                  ... and, only when every job above has passed, tags that commit and PUBLISHES the release.
+#                                  Nothing is tagged or published by hand: raising the version on main is the release.
 #
 # Only GitHub's own actions are used (checkout, setup-node, setup-java, cache, upload/download-artifact) and the
 # preinstalled `gh` CLI: no third-party action runs in this pipeline, so nothing outside GitHub can alter a build.
-# Releases and caches are never shared between tag builds and branch builds: tag builds start from a clean cache.
+# Releases and caches are never shared: a build that is going to publish a release starts from a clean cache.
 name: CI
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
-  workflow_dispatch:
+  workflow_dispatch: # `gh workflow run CI` on main repeats a release whose tag and release were deleted
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A newer push replaces an unfinished run of the same branch, never a run on main or on a tag.
-  cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' }}
+  # A newer push replaces an unfinished run of the same branch, never a run on main.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -36,8 +37,54 @@ env:
 
 jobs:
   # ------------------------------------------------------------------------------------------------------------------
+  # Decides, in seconds, whether this run is going to publish a release: a push to main whose version has no tag yet.
+  # The tag is the marker, so a release made by hand (or a draft) counts too and is never made twice. When a release is
+  # planned, a version that disagrees between package.json, tauri.conf.json and Cargo.toml, or a CHANGELOG.md without a
+  # section for it, fails here, before anything is built.
+  plan:
+    name: Is this a new version?
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          release=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; }; then
+            if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" 2>&1); then
+              msg="v$version already has a tag: an ordinary build, nothing is published."
+            elif printf '%s' "$out" | grep -q "Not Found"; then
+              release=true
+              msg="v$version has no tag yet: if every job passes, this commit is tagged and published as release v$version."
+            else
+              echo "::error::could not tell whether v$version exists: $out"; exit 1
+            fi
+          else
+            msg="Not a push to main: an ordinary build, nothing is published."
+          fi
+          echo "$msg"; echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$release" = true ]; then
+            a=$(node -p "require('./package.json').version")
+            c=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+            echo "release=$version package.json=$a tauri.conf.json=$version Cargo.toml=$c"
+            [ "$version" = "$a" ] && [ "$version" = "$c" ] || { echo "::error::The version differs between package.json ($a), tauri.conf.json ($version) and Cargo.toml ($c). Make them the same, then push again."; exit 1; }
+            grep -qF "## [$version]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$version]' section. Rename '## [Unreleased]' to '## [$version] - $(date -u +%Y-%m-%d)' and push again."; exit 1; }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------------------------------------------------------------
   checks:
     name: Checks (types, tests, rustfmt, clippy, cargo test)
+    needs: plan
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -50,7 +97,7 @@ jobs:
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
       - name: Cargo cache
-        if: github.ref_type != 'tag'
+        if: needs.plan.outputs.release != 'true' # a build that publishes a release starts from a clean cache
         uses: actions/cache@v6
         with:
           path: |
@@ -66,6 +113,7 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   e2e:
     name: End-to-end (real Rust core, headless Chrome)
+    needs: plan
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
@@ -78,7 +126,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Cargo cache
-        if: github.ref_type != 'tag'
+        if: needs.plan.outputs.release != 'true' # a build that publishes a release starts from a clean cache
         uses: actions/cache@v6
         with:
           path: |
@@ -108,6 +156,7 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   linux:
     name: Linux bundles (deb, rpm, AppImage, tar.gz)
+    needs: plan
     runs-on: ubuntu-22.04 # the oldest glibc we support: bundles built here run on newer distributions
     timeout-minutes: 60
     env:
@@ -121,7 +170,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Cargo cache
-        if: github.ref_type != 'tag'
+        if: needs.plan.outputs.release != 'true' # a build that publishes a release starts from a clean cache
         uses: actions/cache@v6
         with:
           path: |
@@ -184,14 +233,16 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   android:
     name: Android APK (arm64)
+    needs: plan
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
+      IS_RELEASE: ${{ needs.plan.outputs.release }}
       NDK_VERSION: "28.2.13676358"
       BUILD_TOOLS: "36.0.0"
       # Release signing: created and stored by `scripts/github-setup.sh android-key`. Pull requests never receive the key
       # (a forked repository has no secrets at all). Without it the APK is signed with a throw-away key made by this run,
-      # which is fine for a test build but never for a version tag (see the signing step).
+      # which is fine for a test build but never for a build that publishes a release (see the signing step).
       KEYSTORE_B64: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
       KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
       KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
@@ -243,8 +294,8 @@ jobs:
             printf '%s' "$KEYSTORE_B64" | base64 -d > release.jks
             KS=release.jks; ALIAS="$KEY_ALIAS"; KS_PASS="$KEYSTORE_PASSWORD"; K_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"; SUFFIX=""
           else
-            if [ "$GITHUB_REF_TYPE" = tag ] && [ "${ALLOW_TESTKEY_RELEASE:-}" != true ]; then
-              echo "::error::This is a version tag but the Android release key is not in this repository's secrets. A release must not ship an APK signed with a throw-away key (phones could never update it). Run scripts/github-setup.sh android-key, then re-run this job. To publish anyway, set the repository variable ALLOW_TESTKEY_RELEASE to true."; exit 1
+            if [ "${IS_RELEASE:-}" = true ] && [ "${ALLOW_TESTKEY_RELEASE:-}" != true ]; then
+              echo "::error::This build would publish a release but the Android release key is not in this repository's secrets. A release must not ship an APK signed with a throw-away key (phones could never update it). Run scripts/github-setup.sh android-key, then re-run this job. To publish anyway, set the repository variable ALLOW_TESTKEY_RELEASE to true."; exit 1
             fi
             echo "No release key configured: signing with a throw-away key. The file name says so."
             KS_PASS=$(openssl rand -hex 24); echo "::add-mask::$KS_PASS"; K_PASS="$KS_PASS"; ALIAS=ci
@@ -299,40 +350,51 @@ jobs:
 
   # ------------------------------------------------------------------------------------------------------------------
   release:
-    name: Draft release for a version tag
-    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-    needs: [checks, e2e, site, linux, installer, android]
+    name: Publish the release
+    # Only when `plan` found a version without a tag, and only when every other job of this run has passed.
+    if: needs.plan.outputs.release == 'true'
+    needs: [plan, checks, e2e, site, linux, installer, android]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
-      contents: write
+      contents: write # creates the tag and the release
+      actions: write  # asks the Pages workflow to rebuild the site (see the last step)
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - name: The tag must match every version in the tree
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          a=$(node -p "require('./package.json').version")
-          b=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          c=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
-          echo "tag=$tag package.json=$a tauri.conf.json=$b Cargo.toml=$c"
-          [ "$tag" = "$a" ] && [ "$tag" = "$b" ] && [ "$tag" = "$c" ] || { echo "version mismatch"; exit 1; }
       - uses: actions/download-artifact@v8
         with: { path: files, merge-multiple: true }
-      - name: Checksums and draft release
+      - name: Checksums, tag and release
         env:
           GH_TOKEN: ${{ github.token }}
           APK_CERT: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
+          TAG="v$VERSION"
+          # `gh release create --target` only places a NEW tag. If the tag appeared while this run was building (a manual tag,
+          # a second run), the release would point at another commit than these files, so stop instead.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1); then
+            echo "::error::$TAG now exists, so this run will not publish it. Nothing was changed."; exit 1
+          fi
+          printf '%s' "$out" | grep -q "Not Found" || { echo "::error::could not check whether $TAG exists: $out"; exit 1; }
           cd files && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
-          VERSION=${GITHUB_REF_NAME#v}
           SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || echo "https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}")
           # title, install commands, a downloads table with checksums and the changelog section: scripts/release_notes.py
           # APK_CERT is the public SHA-256 fingerprint of the Android release certificate (repository variable ANDROID_CERT_SHA256)
           python3 scripts/release_notes.py --version "$VERSION" --repo "$GITHUB_REPOSITORY" --site "$SITE" --sums files/SHA256SUMS ${APK_CERT:+--apk-cert "$APK_CERT"} > notes.md
           cat notes.md
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --latest \
+          # A version with a suffix (0.3.0-rc1) is a pre-release: it never becomes "latest" and the package repositories ignore it.
+          kind=(--latest); case "$VERSION" in *-*) kind=(--prerelease) ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${kind[@]}" \
             --title "Hexis $VERSION" --notes-file notes.md files/*
-          echo "Draft created. Review it, then publish it from the Releases page (or: gh release edit $GITHUB_REF_NAME --draft=false)."
+          echo "Published $TAG at ${GITHUB_SHA::7}." | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Rebuild the site, which carries the apt and rpm repositories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A release made with this job's token starts no workflow by itself (a GitHub rule against loops), but a manual
+          # run of the Pages workflow is allowed. It builds the signed package repositories from the newest stable release.
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            || echo "::warning::The release is published, but the Pages workflow could not be started. Run it by hand: gh workflow run pages.yml"

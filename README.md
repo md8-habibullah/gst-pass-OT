@@ -104,8 +104,9 @@ curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh |
 An install from the package repository also updates with `apt upgrade`, `dnf upgrade`, `zypper update` or `pacman -Syu`;
 a tarball or AppImage install has a short `hexis-update` command next to the program.
 
-Every push to `main` builds all variants; a tag `vX.Y.Z` builds a draft release. Find the files on the
-[**Releases page**](../../releases) (the rolling `nightly` pre-release is the newest `main`).
+Every push to `main` builds all variants. A push that raises the version number is also published as a release, by CI, once
+every test has passed. Find the files on the [**Releases page**](../../releases) (the rolling `nightly` pre-release is the
+newest `main`).
 
 | Variant | File | Notes |
 |---|---|---|

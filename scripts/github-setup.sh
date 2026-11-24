@@ -8,7 +8,8 @@
 #   scripts/github-setup.sh status       read-only: Pages, latest runs, releases, and the live site (run after you have pushed)
 #   scripts/github-setup.sh android-key  create the Android release key and store it in GitHub as secrets (asks first; run it yourself)
 #   scripts/github-setup.sh repo-key     print the commands that create the package-repository signing key (apt/dnf) and store it
-#   scripts/github-setup.sh publish-release vX.Y.Z   show the draft release CI made for that tag and, after you confirm, publish it
+#   scripts/github-setup.sh publish-release vX.Y.Z   publish a release that exists only as a DRAFT (CI no longer makes drafts: it
+#                                                    publishes a new version by itself), after you confirm
 #
 # Needs the GitHub CLI (`gh`) signed in as the account that owns the repository:  gh auth status
 # Order matters (GitHub docs): the Pages source must be "GitHub Actions" BEFORE the first push that contains
@@ -84,7 +85,7 @@ EOF
     say "Repository: $R   (account: $(gh api user --jq .login))"
     gh release view "$tag" -R "$R" --json name,tagName,isDraft,isPrerelease,url,assets \
       --jq '"title: \(.name)\ntag: \(.tagName)  draft: \(.isDraft)  pre-release: \(.isPrerelease)\nurl: \(.url)\nfiles:\n" + ([.assets[] | "  \(.name)  \(.size) bytes"] | join("\n"))' \
-      || { say "No release $tag yet. Create the tag first; CI then opens a draft."; exit 1; }
+      || { say "No release $tag. CI publishes a release by itself when a push to main raises the version; see CONTRIBUTING.md."; exit 1; }
     read -r -p "Publish $tag (visible to everyone who can see the repository; it also starts the package-repository build)? [y/N] " ans
     [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
     gh release edit "$tag" -R "$R" --draft=false --latest && say "Published. Watch the site build: scripts/github-setup.sh status"
@@ -172,7 +173,7 @@ Done. The key is in GitHub, and CI now signs every APK with it (no "-testkey" in
 Now, by hand:
   1. Back up $ks and its password somewhere that is not this computer (a password manager's file storage, an
      encrypted drive). Never commit it; *.jks is git-ignored.
-  2. Nobody else needs the file. Collaborators push a tag and CI signs for them.
+  2. Nobody else needs the file. When a push to main raises the version, CI signs and publishes the release.
   3. Existing APKs signed with a throw-away key cannot be updated by this key: uninstall them first.
 EOF
     ;;
@@ -191,8 +192,8 @@ gpg --list-keys --with-fingerprint 'Hexis Releases'      # note the fingerprint;
 gh secret set REPO_SIGNING_KEY < ~/hexis-repo-signing-key.asc
 rm -rf "$GNUPGHOME"; unset GNUPGHOME
 
-# The repositories are published when a STABLE release exists: tag vX.Y.Z, let CI open the draft release, review it,
-# press "Publish release". That event rebuilds the site with the apt and rpm repositories inside it.
+# The repositories are published when a STABLE release exists. CI publishes one by itself when a push to main raises the
+# version, and then starts the Pages workflow, which rebuilds the site with the apt and rpm repositories inside it.
 EOF
     ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;
