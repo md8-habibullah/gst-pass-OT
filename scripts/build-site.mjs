@@ -22,6 +22,8 @@ const BRANCH = "main";
 const REPO_SLUG = REPO.split("/").slice(-2).join("/"); // owner/name, baked into install.sh
 const SITE_BASE = SITE_URL.replace(/\/$/, "");        // no trailing slash, baked into install.sh
 const KEY_FPR = (process.env.HEXIS_KEY_FPR || "").trim(); // set by pages.yml when the signed repositories are published
+const APK_CERT = (process.env.ANDROID_CERT_SHA256 || "").trim().toLowerCase().replace(/:/g, ""); // the public fingerprint of the Android release key (repository variable)
+if (APK_CERT && !/^[0-9a-f]{64}$/.test(APK_CERT)) throw new Error("ANDROID_CERT_SHA256 must be 64 hexadecimal digits");
 const INSTALL_CMD = `curl -fsS ${SITE_BASE}/install.sh | sh`;
 const errors = [];
 const warn = (m) => console.warn("warning:", m);
@@ -353,7 +355,7 @@ ${sh(`curl -fsS ${SITE_BASE}/install.sh | sh -s -- --uninstall`)}
 <h2 id="android">Android</h2>
 <p>Android 9 or newer, 64-bit ARM. The file is <code>hexis-&lt;version&gt;-android-arm64.apk</code> on the <a href="${rel}" rel="noopener noreferrer">Releases page</a>, and the installer fetches and checks it for you on any computer or in Termux:</p>
 ${sh(`curl -fsS ${SITE_BASE}/install.sh | sh -s -- --apk`)}
-<p>Then copy the file to the phone and open it (allow installs from your file manager when Android asks), or connect the phone with USB debugging on and run <code>adb install</code> with the file name. An APK with <code>-testkey</code> in its name was signed with a throw-away key made by one build: it installs, but a later build cannot update it in place. Release APKs are signed with the project's key. The QR scanner on Android uses Google's ML Kit, which Hexis's privacy page describes.</p>
+<p>Then copy the file to the phone and open it (allow installs from your file manager when Android asks), or connect the phone with USB debugging on and run <code>adb install</code> with the file name. Official APKs are signed with the project's release key, so each version can update the one before it.${APK_CERT ? ` Its certificate fingerprint (SHA-256) is <code>${APK_CERT}</code>; check a downloaded file with <code>apksigner verify --print-certs</code>.` : ""} An APK with <code>-testkey</code> in its name is a test build signed with a throw-away key made by one CI run: it installs, but a later build cannot update it in place. The QR scanner on Android uses Google's ML Kit, which Hexis's privacy page describes.</p>
 
 <h2 id="package-repositories-by-hand">Package repositories by hand</h2>
 <p>If you would rather not run a script, add the repository yourself. Debian, Ubuntu and relatives:</p>

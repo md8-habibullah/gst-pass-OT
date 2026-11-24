@@ -12,6 +12,7 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 * The repository moved to `post-quantum-passman-gst`. The website, the one-line installer and the package repositories now live at <https://md8-habibullah.github.io/post-quantum-passman-gst/>; GitHub does not redirect the old Pages address (`.../gst-pass-OT/`), so a machine that registered the package repository from there must run the installer once more. Links to `github.com/md8-habibullah/gst-pass-OT` still redirect. The product name is unchanged: Hexis.
 * The README, website, package descriptions, release notes and social preview now lead with multi-S3 sync (one bucket or several at once) instead of describing the app only as local-first.
+* `scripts/github-setup.sh android-key` now does the whole job: it creates the Android release key outside the repository, stores it in GitHub as encrypted secrets and publishes the certificate fingerprint as a variable. CI signs release APKs with it (no `-testkey` in the name), never gives it to pull-request builds, and a version tag build fails instead of shipping a throw-away-key APK. The fingerprint is printed in release notes and on the Download page.
 * `scripts/github-setup.sh apply` replaces the repository topics, and also enables secret scanning, push protection and Dependabot security updates; new `release-notes vX.Y.Z` rewrites a release description from this file.
 
 ## [0.1.0] - 2026-11-24

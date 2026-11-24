@@ -110,7 +110,7 @@ Every push to `main` builds all variants; a tag `vX.Y.Z` builds a draft release.
 | Linux, any distribution | `Hexis_<version>_amd64.AppImage` | `chmod +x` and run |
 | Linux, plain archive | `hexis-<version>-linux-x86_64.tar.gz` | the binary, desktop entry and icons |
 | Linux, Arch | [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD) | builds from the release source; the installer uses the signed pacman repository instead |
-| Android 9+ (arm64) | `hexis-<version>-android-arm64.apk` | sideload, or `... | sh -s -- --apk`. A `-testkey` suffix means a throw-away signing key (every build without the project's release key); it cannot update an app installed from another build |
+| Android 9+ (arm64) | `hexis-<version>-android-arm64.apk` | sideload, or `... | sh -s -- --apk`. Official files are signed with the project's release key (fingerprint in the release notes). A `-testkey` suffix means a build made without that key, for example in a fork; it cannot update an app installed from another build |
 
 Windows, macOS and iOS are not targets: the code has never been built or tested there.
 

@@ -105,6 +105,22 @@ Linux bundles and the Android APK, so a change that only breaks packaging is cau
    `scripts/release_notes.py` from `CHANGELOG.md`; add a `## [X.Y.Z] - date` section there before you tag.
 6. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
 
+### Who can build and release an Android app
+
+* **Anyone** can build an APK on their own computer (`npm run tauri android build`). It is signed with a debug key, so it
+  runs, but it is not an official build and cannot update one.
+* **A fork** has no access to this repository's secrets. Its CI builds a `-testkey` APK signed with a throw-away key made
+  by that one run. That is on purpose: a copy of the project must not be able to impersonate the official app. A fork that
+  wants its own releases creates its own key (`scripts/github-setup.sh android-key` in its own repository) and should
+  change the bundle identifier, because two different keys cannot share one app on a phone.
+* **A collaborator with write access** never touches the key. They push a version tag; CI signs with the repository's
+  secrets and opens a draft release; a maintainer publishes it. A tag build fails, rather than publishing a `-testkey`
+  file, when the key is missing. Give write access only to people you would trust with the key: anyone who can change a
+  workflow on a branch of this repository can make it reveal the secrets.
+* **The key itself** is made once by the owner with `scripts/github-setup.sh android-key`. It is stored in GitHub as an
+  encrypted secret (it can never be read back) and kept as a backup file outside the repository. If it is lost, phones
+  that installed Hexis cannot be updated; they have to uninstall first, so restore from a backup afterwards.
+
 ## Licence of contributions
 
 Contributions are licensed under the project's [MIT licence](LICENSE).

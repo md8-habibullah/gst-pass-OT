@@ -191,11 +191,14 @@ jobs:
     env:
       NDK_VERSION: "28.2.13676358"
       BUILD_TOOLS: "36.0.0"
-      # Release signing (optional). Without them the APK is signed with a throw-away key made by this run.
-      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # Release signing: created and stored by `scripts/github-setup.sh android-key`. Pull requests never receive the key
+      # (a forked repository has no secrets at all). Without it the APK is signed with a throw-away key made by this run,
+      # which is fine for a test build but never for a version tag (see the signing step).
+      KEYSTORE_B64: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+      KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+      KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
+      KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
+      ALLOW_TESTKEY_RELEASE: ${{ vars.ALLOW_TESTKEY_RELEASE }}
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
@@ -236,9 +239,15 @@ jobs:
           "$BT/zipalign" -f -p 4 "$APK" aligned.apk
           mkdir -p release-files
           if [ -n "${KEYSTORE_B64:-}" ]; then
+            if [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 is set but ANDROID_KEY_ALIAS or ANDROID_KEYSTORE_PASSWORD is missing. Run scripts/github-setup.sh android-key."; exit 1
+            fi
             printf '%s' "$KEYSTORE_B64" | base64 -d > release.jks
             KS=release.jks; ALIAS="$KEY_ALIAS"; KS_PASS="$KEYSTORE_PASSWORD"; K_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"; SUFFIX=""
           else
+            if [ "$GITHUB_REF_TYPE" = tag ] && [ "${ALLOW_TESTKEY_RELEASE:-}" != true ]; then
+              echo "::error::This is a version tag but the Android release key is not in this repository's secrets. A release must not ship an APK signed with a throw-away key (phones could never update it). Run scripts/github-setup.sh android-key, then re-run this job. To publish anyway, set the repository variable ALLOW_TESTKEY_RELEASE to true."; exit 1
+            fi
             echo "No release key configured: signing with a throw-away key. The file name says so."
             KS_PASS=$(openssl rand -hex 24); echo "::add-mask::$KS_PASS"; K_PASS="$KS_PASS"; ALIAS=ci
             keytool -genkeypair -keystore ephemeral.jks -storepass "$KS_PASS" -keypass "$K_PASS" -alias "$ALIAS" \
@@ -316,13 +325,15 @@ jobs:
       - name: Checksums and draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          APK_CERT: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
           cd files && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
           VERSION=${GITHUB_REF_NAME#v}
           SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || echo "https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}")
           # title, install commands, a downloads table with checksums and the changelog section: scripts/release_notes.py
-          python3 scripts/release_notes.py --version "$VERSION" --repo "$GITHUB_REPOSITORY" --site "$SITE" --sums files/SHA256SUMS > notes.md
+          # APK_CERT is the public SHA-256 fingerprint of the Android release certificate (repository variable ANDROID_CERT_SHA256)
+          python3 scripts/release_notes.py --version "$VERSION" --repo "$GITHUB_REPOSITORY" --site "$SITE" --sums files/SHA256SUMS ${APK_CERT:+--apk-cert "$APK_CERT"} > notes.md
           cat notes.md
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --latest \
             --title "Hexis $VERSION" --notes-file notes.md files/*

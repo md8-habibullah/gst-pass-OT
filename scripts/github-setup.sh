@@ -6,7 +6,7 @@
 #   scripts/github-setup.sh apply        make the settings below (asks once before it starts)
 #   scripts/github-setup.sh release-notes vX.Y.Z   rewrite the description of an existing release from CHANGELOG.md (after you confirm)
 #   scripts/github-setup.sh status       read-only: Pages, latest runs, releases, and the live site (run after you have pushed)
-#   scripts/github-setup.sh android-key  print the commands that create the Android release key and store it as secrets
+#   scripts/github-setup.sh android-key  create the Android release key and store it in GitHub as secrets (asks first; run it yourself)
 #   scripts/github-setup.sh repo-key     print the commands that create the package-repository signing key (apt/dnf) and store it
 #   scripts/github-setup.sh publish-release vX.Y.Z   show the draft release CI made for that tag and, after you confirm, publish it
 #
@@ -97,7 +97,8 @@ EOF
     root="$(cd "$(dirname "$0")/.." && pwd)"
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     gh release download "$tag" -R "$R" -p SHA256SUMS -D "$tmp" > /dev/null 2>&1 || { say "No release $tag with a SHA256SUMS file."; exit 1; }
-    python3 "$root/scripts/release_notes.py" --version "${tag#v}" --repo "$R" --site "${site%/}" --sums "$tmp/SHA256SUMS" --changelog "$root/CHANGELOG.md" > "$tmp/notes.md"
+    cert=$(gh variable get ANDROID_CERT_SHA256 -R "$R" 2> /dev/null || true)
+    python3 "$root/scripts/release_notes.py" --version "${tag#v}" --repo "$R" --site "${site%/}" --sums "$tmp/SHA256SUMS" --changelog "$root/CHANGELOG.md" ${cert:+--apk-cert "$cert"} > "$tmp/notes.md"
     say "---- the new description of $tag (from the CHANGELOG.md of this checkout) ----"; cat "$tmp/notes.md"; say "----"
     read -r -p "Replace the description of release $tag with this text? The tag and the files stay as they are. [y/N] " ans
     [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
@@ -127,18 +128,52 @@ EOF
     fi
     ;;
   android-key)
-    cat <<'EOF'
-# Create ONE release key, keep a backup of the file and both passwords somewhere safe (a lost key means no updates
-# for installed copies), and never commit it (*.jks and *.keystore are git-ignored).
-keytool -genkeypair -v -keystore hexis-release.jks -alias hexis -keyalg RSA -keysize 4096 -validity 10000
+    need keytool; need openssl
+    ks="${HEXIS_KEYSTORE:-$HOME/hexis-release.jks}"
+    say "Repository: $R   (account: $(gh api user --jq .login))"
+    cat <<EOF
 
-# Store it as repository secrets (read by the `android` job in .github/workflows/ci.yml):
-base64 -w0 hexis-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
-gh secret set ANDROID_KEYSTORE_PASSWORD
-gh secret set ANDROID_KEY_ALIAS --body hexis
-gh secret set ANDROID_KEY_PASSWORD
+This creates the ONE key that signs every official Hexis APK, then stores it in GitHub so CI signs releases by itself:
+  your backup copy of the key   $ks   (outside the repository, readable only by you)
+  encrypted secrets             ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
+  public repository variable    ANDROID_CERT_SHA256   (the fingerprint, so anyone can check that a download is genuine)
 
-# Afterwards, APKs from CI are signed with this key and lose the -testkey suffix.
+GitHub secrets can never be read back, not even by you. That file and its password are the only copy that exists.
+Lose them and phones that installed Hexis can no longer be updated; they would have to uninstall first.
+EOF
+    if [ -e "$ks" ]; then say "$ks already exists. This will not overwrite a key. Move it away or set HEXIS_KEYSTORE=another-path."; exit 1; fi
+    if gh secret list -R "$R" 2> /dev/null | grep -q '^ANDROID_KEYSTORE_BASE64'; then
+      say; say "A release key is already stored in $R. Replacing it means every phone with the old key can no longer update."
+      read -r -p "Type REPLACE to create a new key anyway: " ans; [ "$ans" = "REPLACE" ] || { say "Nothing changed."; exit 0; }
+    fi
+    read -r -p "Create the key and store it in $R? [y/N] " ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
+    read -r -s -p "Choose a password for the key (at least 12 characters; keep it in your password manager): " pw; echo
+    read -r -s -p "Again: " pw2; echo
+    [ "$pw" = "$pw2" ] || { say "The two passwords differ. Nothing changed."; exit 1; }
+    [ "${#pw}" -ge 12 ] || { say "Too short. Nothing changed."; exit 1; }
+    export HEXIS_KS_PASS="$pw"
+    (umask 077; keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias hexis -keyalg RSA -keysize 4096 -validity 10000 \
+        -dname "CN=Hexis" -storepass:env HEXIS_KS_PASS -keypass:env HEXIS_KS_PASS > /dev/null 2>&1) || { rm -f "$ks"; say "keytool failed; nothing was stored."; exit 1; }
+    chmod 600 "$ks"
+    # from the certificate itself, so it does not depend on how this Java version words keytool's listing
+    fp=$(keytool -exportcert -keystore "$ks" -alias hexis -storepass:env HEXIS_KS_PASS 2> /dev/null | openssl x509 -inform DER -noout -fingerprint -sha256 2> /dev/null | sed 's/.*=//' | tr -d ':' | tr 'A-F' 'a-f')
+    [ "${#fp}" -eq 64 ] || { say "Could not read the key's fingerprint; nothing was stored. The file $ks was created: delete it and try again."; exit 1; }
+    base64 "$ks" | tr -d '\n' | gh secret set ANDROID_KEYSTORE_BASE64 -R "$R"
+    printf '%s' "$pw" | gh secret set ANDROID_KEYSTORE_PASSWORD -R "$R"
+    printf '%s' hexis | gh secret set ANDROID_KEY_ALIAS -R "$R"
+    gh variable set ANDROID_CERT_SHA256 -R "$R" --body "$fp"
+    unset HEXIS_KS_PASS pw pw2
+    cat <<EOF
+
+Done. The key is in GitHub, and CI now signs every APK with it (no "-testkey" in the file name). Certificate fingerprint (SHA-256):
+  $fp
+
+Now, by hand:
+  1. Back up $ks and its password somewhere that is not this computer (a password manager's file storage, an
+     encrypted drive). Never commit it; *.jks is git-ignored.
+  2. Nobody else needs the file. Collaborators push a tag and CI signs for them.
+  3. Existing APKs signed with a throw-away key cannot be updated by this key: uninstall them first.
 EOF
     ;;
   repo-key)

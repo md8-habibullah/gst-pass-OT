@@ -52,8 +52,11 @@ def downloads_table(sums_text: str) -> str:
     return "\n".join(out)
 
 
-def build(version: str, repo: str, site: str, sums: str, changelog: str) -> str:
+def build(version: str, repo: str, site: str, sums: str, changelog: str, apk_cert: str = "") -> str:
     site = site.rstrip("/")
+    apk_cert = apk_cert.strip().lower().replace(":", "")
+    if apk_cert and not re.fullmatch(r"[0-9a-f]{64}", apk_cert):
+        raise ValueError("the Android certificate fingerprint must be 64 hexadecimal digits (SHA-256)")
     new = shift_headings(changelog_section(changelog, version)) or f"See [CHANGELOG.md](https://github.com/{repo}/blob/v{version}/CHANGELOG.md)."
     table = downloads_table(sums)
     parts = [
@@ -74,6 +77,10 @@ def build(version: str, repo: str, site: str, sums: str, changelog: str) -> str:
         parts += ["## Downloads", table,
                   "Check a download: `sha256sum -c SHA256SUMS --ignore-missing` (the file `SHA256SUMS` is attached too). "
                   "The installer does this check for you."]
+        if apk_cert and "android" in table:
+            parts += ["The Android app is signed with the project's release key. Its certificate fingerprint (SHA-256) is "
+                      f"`{apk_cert}`; check a downloaded file with `apksigner verify --print-certs <file>.apk`. "
+                      "Every official release carries this same certificate, which is what lets one version update the previous one."]
     parts += [
         "## Update and remove",
         "```sh\n"
@@ -100,6 +107,7 @@ def main() -> int:
     ap.add_argument("--site", required=True)
     ap.add_argument("--sums", help="a SHA256SUMS file of the attachments")
     ap.add_argument("--changelog", default=str(pathlib.Path(__file__).resolve().parent.parent / "CHANGELOG.md"))
+    ap.add_argument("--apk-cert", default="", help="SHA-256 fingerprint of the Android release certificate; printed under the downloads table")
     a = ap.parse_args()
     version = a.version.lstrip("v")
     if not re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", version):
@@ -107,7 +115,11 @@ def main() -> int:
         return 2
     sums = pathlib.Path(a.sums).read_text() if a.sums else ""
     changelog = pathlib.Path(a.changelog).read_text() if pathlib.Path(a.changelog).exists() else ""
-    sys.stdout.write(build(version, a.repo, a.site, sums, changelog))
+    try:
+        sys.stdout.write(build(version, a.repo, a.site, sums, changelog, a.apk_cert))
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     return 0
 
 

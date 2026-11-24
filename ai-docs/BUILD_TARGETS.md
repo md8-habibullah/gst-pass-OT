@@ -91,8 +91,12 @@ Google data-transport discovery services); none is a foreground service. `Disgui
 
 Gradle produces `app-universal-release-unsigned.apk`. CI aligns it with `zipalign` and signs it with `apksigner` using the repository
 secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
-(`scripts/github-setup.sh android-key` prints the commands to create and store a key). Without them the APK is signed with a throw-away key
-made inside that CI run and its file name ends in `-testkey`: it installs, but cannot be updated by a build signed with another key. The
+(`scripts/github-setup.sh android-key` creates the key outside the repository, stores the first three as secrets and the public
+SHA-256 fingerprint of its certificate as the variable `ANDROID_CERT_SHA256`; the key password is the store password, so `ANDROID_KEY_PASSWORD`
+is optional). Pull-request runs never receive the secrets. Without a key the APK is signed with a throw-away key made inside that CI run and its
+file name ends in `-testkey`: it installs, but cannot be updated by a build signed with another key. A **version tag** build refuses that
+fallback and fails (set the repository variable `ALLOW_TESTKEY_RELEASE` to `true` to override), so a release cannot silently ship a test key
+again. The release notes and the Download page print the fingerprint so a user can check a file with `apksigner verify --print-certs`. The
 keystore never lives in the repository (`*.jks`, `*.keystore`, `keystore.properties` are git-ignored).
 
 ### 4.4 Installing on a Xiaomi phone (what blocked the on-device check)

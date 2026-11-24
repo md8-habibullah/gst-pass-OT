@@ -75,6 +75,33 @@ class Notes(unittest.TestCase):
         self.assertNotIn("//install.sh", text)  # a trailing slash on the site must not double up
         self.assertNotIn("Passman", text)
 
+    def test_a_properly_signed_apk_has_no_warning_and_shows_the_certificate(self):
+        sums = SUMS.replace("-testkey.apk", ".apk")
+        cert = "AB:CD:" + "0f" * 30  # as keytool prints it: upper case, with colons
+        text = rn.build("0.1.0", "o/p", "https://x.example", sums, CHANGELOG, cert)
+        self.assertIn("hexis-0.1.0-android-arm64.apk", text)
+        self.assertNotIn("throw-away", text)
+        self.assertNotIn("testkey", text)
+        self.assertIn("`abcd" + "0f" * 30 + "`", text)  # lower case, no colons, the form apksigner prints
+        self.assertIn("apksigner verify --print-certs", text)
+
+    def test_no_certificate_line_without_a_fingerprint_or_without_an_apk(self):
+        sums = SUMS.replace("-testkey.apk", ".apk")
+        self.assertNotIn("apksigner", rn.build("0.1.0", "o/p", "https://x.example", sums, CHANGELOG))
+        no_apk = "".join(line + "\n" for line in SUMS.splitlines() if ".apk" not in line)
+        self.assertNotIn("apksigner", rn.build("0.1.0", "o/p", "https://x.example", no_apk, CHANGELOG, "a" * 64))
+
+    def test_a_malformed_fingerprint_is_refused(self):
+        for bad in ("abc", "g" * 64, "a" * 63, "a" * 65):
+            with self.assertRaises(ValueError, msg=bad):
+                rn.build("0.1.0", "o/p", "https://x.example", SUMS, CHANGELOG, bad)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "SHA256SUMS").write_text(SUMS)
+            r = subprocess.run([sys.executable, "-I", str(SCRIPT), "--version", "0.1.0", "--repo", "o/p", "--site", "https://s.example",
+                                "--sums", str(Path(d) / "SHA256SUMS"), "--apk-cert", "not-a-fingerprint"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("64 hexadecimal", r.stderr)
+
     def test_without_a_changelog_section_it_links_to_the_file(self):
         text = rn.build("0.3.0", "o/p", "https://x.example", SUMS, CHANGELOG)
         self.assertIn("blob/v0.3.0/CHANGELOG.md", text)
