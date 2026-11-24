@@ -55,7 +55,7 @@ cat >"$WORK/PKGBUILD" <<EOF
 pkgname=hexis
 pkgver=${VERSION//-/_}
 pkgrel=1
-pkgdesc='Post-quantum zero-knowledge password vault'
+pkgdesc='Post-quantum zero-knowledge password vault with multi-S3 sync (works offline)'
 arch=('x86_64')
 url='${SITE}/'
 license=('MIT')

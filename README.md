@@ -2,12 +2,14 @@
 
 # Hexis
 
-**A local-first, zero-knowledge, post-quantum password manager** for passwords, one-time codes, secure notes and an
-encrypted file drive. No account, no server of ours, no telemetry of ours. Your vault is a file on your device; every
-byte that leaves it is ciphertext. (The one exception to "no telemetry" is Google's ML Kit inside the optional Android
-QR scanner; see [PRIVACY.md](PRIVACY.md).)
+**A zero-knowledge, post-quantum password manager that syncs to your own S3 storage: one bucket, or several at once.**
+Passwords, one-time codes, secure notes and an encrypted file drive live in a vault on your device. Add any
+S3-compatible storage (more than one if you like) and Hexis keeps sealed copies on all of them, so a lost phone or a
+lost provider loses nothing. No account, no server of ours, no telemetry of ours: every byte that leaves your device is
+ciphertext. (The one exception to "no telemetry" is Google's ML Kit inside the optional Android QR scanner; see
+[PRIVACY.md](PRIVACY.md).)
 
-[CI runs](../../actions/workflows/ci.yml) · [MIT licensed](LICENSE) · [Privacy](PRIVACY.md) · [Security policy](SECURITY.md)
+[Website](https://md8-habibullah.github.io/post-quantum-passman-gst/) · [CI runs](../../actions/workflows/ci.yml) · [MIT licensed](LICENSE) · [Privacy](PRIVACY.md) · [Security policy](SECURITY.md)
 
 > **Status: pre-1.0 and not independently audited.** The design, the tests and the honest list of what is *not*
 > verified are in [`ai-docs/CHANGELOG_AND_STATE.md`](ai-docs/CHANGELOG_AND_STATE.md). Keep a separate backup of anything you cannot lose.
@@ -17,13 +19,17 @@ The webview never sees a key, a seed or a master-password hash.
 
 ## Why Hexis
 
+* **Your own storage, as many as you want.** Sync goes straight from your device to S3-compatible buckets you own
+  (Amazon S3, Cloudflare R2, Backblaze B2, Wasabi, a MinIO on your own machine, and others that speak the S3 protocol).
+  Add several: one **master** that your other devices sync from, and any number of **mirrors** that receive every
+  change. No middleman server exists. Details in [Sync and backup](#sync-and-backup-to-your-own-s3-storage).
 * **Zero knowledge.** The master password and every key exist only in Rust memory while the vault is unlocked.
   Storage providers see ciphertext, object names, sizes and timestamps. Nothing else.
 * **Post-quantum ready.** The vault key is wrapped with a hybrid **ML-KEM-1024 + X25519** exchange; the password goes
   through **Argon2id** (64 MiB x 4 passes by default, configurable); items use **XChaCha20-Poly1305** with per-object HKDF sub-keys.
   Details and wire formats: [`CRYPTO_SPEC.md`](ai-docs/CRYPTO_SPEC.md).
-* **Local-first.** Everything works offline. Optional sync goes straight from your device to S3-compatible storage
-  (one primary target plus mirrors, a master backup, restore). No middleman server exists.
+* **Offline first.** Everything works without a network and without any bucket; sync is something you add, not
+  something you need.
 * **Quiet by design.** Sync runs on three triggers only: unlock, a saved change, and leaving the app. No timers, no
   background services, no notifications, no telemetry in Hexis's own code.
 * **Honest about limits.** The threat model says what is and is not protected. The optional Stage 1 gate is a privacy
@@ -37,11 +43,34 @@ The webview never sees a key, a seed or a master-password hash.
 | History | Immutable version history per item, trash with a two-step permanent delete, archive, clone |
 | Accounts | Several independent vaults per device, each with its own master password and its own backup targets |
 | Encrypted drive | Files up to 50 MB, chunked and authenticated, attachable to items; screen capture blocked while one is open on Android |
-| Sync and backup | S3-compatible targets over HTTPS, single-writer replication, pull-and-reconcile at unlock, restore into a new vault |
+| Sync and backup | Several S3-compatible targets at once (a master plus mirrors) over HTTPS, single-writer replication, pull-and-reconcile at unlock, per-target health, restore into a new vault |
 | Gate and panic | Optional Stage 1 gate (PIN, password or number grid) behind a decoy maths screen, a panic credential, an attempt limit with wipe, idle lock |
 | Disguise | Rename and re-icon the app (11 presets plus your own title), including the launcher icon on Android |
 | Import | About 25 formats recognised by content, with a preview, duplicate handling and one all-or-nothing transaction (see below) |
 | Export | Encrypted archive, or a readable Bitwarden-compatible JSON/CSV copy after a master-password re-prompt |
+
+## Sync and backup to your own S3 storage
+
+Hexis has no sync server. It writes sealed objects to buckets that belong to you, and it can write to several at once:
+
+* **Bring any S3-compatible storage.** Add each target on the **Backup** page with its endpoint, bucket and access
+  keys. The keys are stored sealed inside your vault, so you are never asked for them twice.
+* **A master and any number of mirrors.** The master is the copy your other devices sync from and the one that settles
+  disagreements. Mirrors receive every change from your device (same objects, same bytes), so losing one provider loses
+  nothing. Each target shows its health (healthy, lagging or failing), its queue and its last success; **Make master**
+  promotes a mirror after re-checking every object.
+* **Sealed before upload.** Items are encrypted on your device with keys that never leave it. A provider sees object
+  names, sizes and times, never content and never your master password.
+* **Several devices, no silent overwrites.** At unlock a device pulls from the master and reconciles by version, and a
+  push never overwrites remote data that device has not seen (the target shows `failing` with the reason instead).
+* **Restore anywhere.** Point a fresh install at a bucket, enter the master password, and the vault is rebuilt.
+* **Event-driven.** Sync runs when you unlock, save a change or leave the app: no timers, no background service, no
+  notifications.
+
+What is *not* verified yet: sync has been tested against Hexis's own local S3-compatible reference server
+(`scripts/mock_s3.py`, which checks AWS Signature V4 independently of the client), not against real AWS, Cloudflare,
+Backblaze, Wasabi or MinIO accounts. There is also no manual merge screen for two devices that edited the same item;
+the rules and what is built are in [`STORAGE_AND_SYNC.md`](ai-docs/STORAGE_AND_SYNC.md).
 
 ## Download
 
@@ -51,21 +80,21 @@ repository; Arch, CachyOS and Manjaro through a signed pacman repository; everyt
 tarball or AppImage under your home folder):
 
 ```
-curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh
+curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh
 ```
 
-No `curl`? `wget -qO- https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh`. Options go after `sh -s --`
+No `curl`? `wget -qO- https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh`. Options go after `sh -s --`
 (`--nightly`, `--version X.Y.Z`, `--user`, `--apk`, `--check`, `--update`, `--uninstall`, `--dry-run`, `--detect`, `--help`). Read the script
 first: it is [`scripts/install.sh`](scripts/install.sh), also shown at `/download/install-script/` on the site, and
 `--dry-run` prints every command without running one. What it does on each kind of system, and how to add the
-repositories by hand, is on the [Download page](https://md8-habibullah.github.io/gst-pass-OT/download/).
+repositories by hand, is on the [Download page](https://md8-habibullah.github.io/post-quantum-passman-gst/download/).
 
 **Update and remove.** The same script looks after an install later; your vaults are never touched:
 
 ```
-curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --check       # is there a newer version?
-curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --update      # update, the way it was installed
-curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --uninstall   # remove it
+curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --check       # is there a newer version?
+curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --update      # update, the way it was installed
+curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --uninstall   # remove it
 ```
 
 An install from the package repository also updates with `apt upgrade`, `dnf upgrade`, `zypper update` or `pacman -Syu`;

@@ -35,8 +35,8 @@
       "icons/icon.png"
     ],
     "category": "Utility",
-    "shortDescription": "Post-quantum zero-knowledge password vault",
-    "longDescription": "Local-first password, TOTP, secure note and encrypted media manager with hybrid post-quantum encryption (ML-KEM-1024 + X25519, Argon2id, XChaCha20-Poly1305) and optional direct-to-S3 sync.",
+    "shortDescription": "Post-quantum zero-knowledge password vault with multi-S3 sync",
+    "longDescription": "Password, TOTP, secure note and encrypted media manager with hybrid post-quantum encryption (ML-KEM-1024 + X25519, Argon2id, XChaCha20-Poly1305). Works offline and syncs, sealed, directly from your device to one or several S3-compatible buckets (a master plus mirrors), with restore into a new vault.",
     "android": {
       "minSdkVersion": 28
     }

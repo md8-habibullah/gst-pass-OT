@@ -1,4 +1,4 @@
-# ARCHITECTURE — Hexis (post-quantum, zero-knowledge, local-first vault)
+# ARCHITECTURE — Hexis (post-quantum, zero-knowledge vault with offline-first multi-S3 sync)
 
 Read this first, then `CRYPTO_SPEC.md` (wire formats), `STORAGE_AND_SYNC.md` (data + sync), `BUILD_TARGETS.md` (packaging), `CHANGELOG_AND_STATE.md` (what exists now).
 
@@ -228,7 +228,7 @@ Crates are added in the phase that uses them so builds stay light on the low-RAM
 | D6 | Per-object sub-keys via HKDF labels | Domain separation between item/version/attachment/meta. |
 | D7 | NFKC-normalized master password | Cross-platform unlock consistency. One-way door, decided before any vault exists. |
 | D8 | One-shot AEAD up to 64 MiB | Simplicity now; chunked envelope later for big media. |
-| D9 | The product is **Hexis**, the app identifier `dev.habibullah.hexis` (decided 2026-11-24; the first builds used a working name). | An Android applicationId cannot change after a release. The old desktop data folder (`app.passman.vault`) is adopted on first start (`storage/legacy.rs`). The stored format keeps its historical identifiers (the `passman/v1/...` HKDF labels, the `PMV1` file id): changing them would make every existing vault unreadable, so they are frozen, see `CRYPTO_SPEC.md`. |
+| D9 | The product is **Hexis**, the app identifier `dev.habibullah.hexis` (decided 2026-11-24; the first builds used a working name). | An Android applicationId cannot change after a release. The old desktop data folder (`app.passman.vault`) is adopted on first start (`storage/legacy.rs`). The stored format keeps its historical identifiers (the `passman/v1/...` HKDF labels, the `PMV1` file id): changing them would make every existing vault unreadable, so they are frozen, see `CRYPTO_SPEC.md`. The repository's address, `post-quantum-passman-gst`, was chosen for search and is only a URL (2026-11-24); it is not the product name. |
 | D10 | The re-prompt guard sends the master password with each gated call and the core re-verifies it with Argon2id; nothing is cached on either side. Edits use a single-use token bound to item and version (10 min TTL, cleared on lock). | Spec: the guard must hold even while unlocked. No "recently confirmed" state means nothing to steal or bypass; the token stops a stale or replayed edit. |
 | D11 | UI direction "Strongroom": dark only, bespoke tokens, three adaptive layouts, one orchestrated animation (unlock) | The user rejected a terminal or generic look and asked for a 1Password / Proton Pass / Keychain feel with glass, crisp type and tactile elevation. Details in `UI_DESIGN_SYSTEM.md`. |
 | D12 | The frontend talks to a `Backend` interface; a DEV-only in-memory implementation exists for design review and is excluded from production bundles | Lets the UI be reviewed in a browser at Android widths without the GUI stack. Guarded by `import.meta.env.DEV`; verified absent from `dist/`. |

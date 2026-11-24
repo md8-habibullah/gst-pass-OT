@@ -2,6 +2,18 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, night): v0.1.0 published, repository public and renamed, multi-S3 sync is the headline
+
+**State on GitHub (checked from outside, without signing in):** the repository is public; `v0.1.0` is a published release marked Latest; all five files download anonymously and match `SHA256SUMS`; GitHub Pages is built with HTTPS enforced; private vulnerability reporting is on. The signed package repositories exist: the key on the site has fingerprint `A867 F074 B960 75BE 1E28 ED1B 9388 04F3 3177 B6FF`, the apt `InRelease` and `Release.gpg`, the rpm `repomd.xml.asc` and the pacman `hexis.db.sig` all verify with it, and the `.deb` hash in the apt index equals the release file's. The APK (`-testkey`, signed with a throw-away CI key) is arm64-v8a only, minSdk 28 (Android 9), targetSdk 37, v3 signature, permissions limited to internet, camera, biometrics and network state, with the default launcher entry enabled and the 11 disguise aliases off.
+
+**Rename:** the repository is now `md8-habibullah/post-quantum-passman-gst` (was `gst-pass-OT`). The product is still Hexis; the slug is only a URL (ARCHITECTURE.md D9) and `scripts/tests/test_no_old_name.py` allows exactly that slug and fails on any link to the dead pre-rename address. GitHub redirects git and web URLs but **not Pages**: `https://md8-habibullah.github.io/gst-pass-OT/` answers 404. Everything that names the site is derived at build time (`@REPO@` and `@SITE@` in the installer, `GITHUB_REPOSITORY` in CI, `configure-pages` in `pages.yml`), so only the README had the old address written out. The site that was live right after the rename still carried the old address inside `install.sh` and `hexis.repo` because it had been built a minute before; any Pages run (a push touching the paths in `pages.yml`, or `workflow_dispatch`) rebuilds it with the new one. The v0.1.0 release description was written with the old address; `scripts/github-setup.sh release-notes v0.1.0` rewrites it. Nothing inside the release files names the address, so the release itself does not need to be cut again.
+
+**Positioning:** README, site, package descriptions, release notes, the social preview and the repository description now lead with multi-S3 sync (one bucket or several: a master plus mirrors) instead of "local-first" alone.
+
+**Open:** secret scanning, push protection and Dependabot security updates were found disabled on the public repository; `scripts/github-setup.sh apply` now turns them on and also replaces the topics (20 at most).
+
+**Not verified:** sync against real S3 providers (AWS, R2, B2, Wasabi, MinIO, Storj) and real TLS or clock skew, only `scripts/mock_s3.py`; the one-line installer pasted from the live site on fresh distributions (CI runs the same installer against local copies of the repositories on eight images, all passed; a run against the live site was started and stopped because of the rename); the apps on a real desktop window and a real phone.
+
 ## Update (2026-11-24, evening): first CI run, the one-line installer, signed package repositories
 
 **First run on GitHub (the owner's push, commit `maga-v2`):** all jobs passed (`checks`, `e2e`, `site`, `linux`, `android`, `nightly`); the `nightly` pre-release holds the deb, rpm, AppImage, tar.gz, the

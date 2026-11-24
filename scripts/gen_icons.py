@@ -67,7 +67,7 @@ p.tag { font-size:38px; line-height:1.25; margin:26px 0 0; color:#CBD5E1; font-w
 .cmd b { color:#818CF8; font-weight:400; }
 </style></head><body><div class="lattice"></div><div class="glow"></div>
 <div class="icon">@LOGO@</div>
-<div class="copy"><h1>Hexis</h1><p class="tag">A password vault that stays on your device, and stays secret from the quantum computers of tomorrow.</p></div>
+<div class="copy"><h1>Hexis</h1><p class="tag">A post-quantum password vault that syncs to your own S3 storage: one bucket, or several.</p></div>
 <div class="cmd">curl -fsS …/install.sh <b>|</b> sh</div>
 </body></html>"""
 

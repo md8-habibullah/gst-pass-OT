@@ -11,6 +11,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 OLD = re.compile("pass" + "man", re.I)  # spelled in two halves so this file does not match itself
+# The repository's address contains the working title on purpose (chosen for search, ARCHITECTURE.md D9). It is a URL, not the
+# product name, so exactly this slug is not counted; any other use of the title still fails.
+REPO_SLUG = "post-quantum-" + "pass" + "man-gst"
+# The address before the repository was renamed. GitHub Pages does not redirect it, so a link to it is dead.
+DEAD_SLUG = re.compile("gst-pass-" + "OT", re.I)
 
 # Stored-format identifiers: renaming them would make existing vaults unreadable (ai-docs/CRYPTO_SPEC.md, "Frozen identifiers").
 FROZEN_FORMAT = {
@@ -21,7 +26,7 @@ FROZEN_LINE = re.compile(OLD.pattern + r"/(v1|gate/v1)", re.I)
 # Compatibility with data written before the rename (data folder, export extension, export field names).
 COMPATIBILITY = {"src-tauri/src/storage/legacy.rs", "src-tauri/src/importer/export.rs"}
 # History and the explanation of the rename itself.
-HISTORY = {"CHANGELOG.md", "ai-docs/ARCHITECTURE.md"}
+HISTORY = {"CHANGELOG.md", "ai-docs/ARCHITECTURE.md", "ai-docs/CHANGELOG_AND_STATE.md"}
 # Tests that assert the old name is absent.
 GUARDS = {"scripts/tests/test_release_notes.py", "scripts/tests/test_no_old_name.py"}
 
@@ -46,7 +51,7 @@ class NoOldName(unittest.TestCase):
             if b"\0" in data:
                 continue
             for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
-                if not OLD.search(line):
+                if not OLD.search(line.replace(REPO_SLUG, "")):
                     continue
                 if f not in allowed:
                     stray.append(f"{f}:{n}: {line.strip()[:100]}")
@@ -56,6 +61,21 @@ class NoOldName(unittest.TestCase):
                         frozen_bad.append(f"{f}:{n}: {line.strip()[:100]}")
         self.assertEqual(stray, [], "the old product name is back; use Hexis (or add a reason to this test)")
         self.assertEqual(frozen_bad, [], "only the frozen format labels may keep the old spelling in these files")
+
+    def test_no_link_points_at_the_dead_pre_rename_address(self):
+        allowed = {"CHANGELOG.md", "ai-docs/CHANGELOG_AND_STATE.md", "scripts/tests/test_no_old_name.py"}
+        stray = []
+        for f in files():
+            p = ROOT / f
+            if f in allowed or not p.is_file() or p.is_symlink():
+                continue
+            data = p.read_bytes()
+            if b"\0" in data:
+                continue
+            for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+                if DEAD_SLUG.search(line):
+                    stray.append(f"{f}:{n}: {line.strip()[:100]}")
+        self.assertEqual(stray, [], "the repository was renamed to " + REPO_SLUG + "; use the new address")
 
     def test_the_product_name_is_set_where_the_build_reads_it(self):
         import json

@@ -4,6 +4,7 @@
 #
 #   scripts/github-setup.sh plan         print what it would do, change nothing
 #   scripts/github-setup.sh apply        make the settings below (asks once before it starts)
+#   scripts/github-setup.sh release-notes vX.Y.Z   rewrite the description of an existing release from CHANGELOG.md (after you confirm)
 #   scripts/github-setup.sh status       read-only: Pages, latest runs, releases, and the live site (run after you have pushed)
 #   scripts/github-setup.sh android-key  print the commands that create the Android release key and store it as secrets
 #   scripts/github-setup.sh repo-key     print the commands that create the package-repository signing key (apt/dnf) and store it
@@ -20,8 +21,9 @@ need gh; need curl
 R="${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 say() { printf '%s\n' "$*"; }
 
-DESCRIPTION="Hexis: a local-first, zero-knowledge, post-quantum password manager and authenticator. Rust + Tauri, Linux and Android, one-command installer."
-TOPICS=(hexis password-manager post-quantum zero-knowledge local-first tauri rust react typescript android linux totp authenticator s3 encryption security ml-kem argon2 offline-first privacy)
+DESCRIPTION="Hexis: a zero-knowledge, post-quantum password manager and authenticator that syncs to your own S3-compatible storage, one bucket or several. Rust + Tauri, Linux and Android."
+# GitHub allows 20 topics at most; apply REPLACES the list, so topics dropped here disappear from the repository.
+TOPICS=(hexis password-manager post-quantum zero-knowledge s3 s3-compatible cloud-sync multi-cloud self-hosted backup local-first tauri rust android linux totp authenticator encryption security ml-kem)
 
 case "$mode" in
   plan)
@@ -32,8 +34,9 @@ case "$mode" in
 apply would:
   1. set GitHub Pages to deploy from "GitHub Actions"           gh api -X PUT|POST repos/$R/pages -f build_type=workflow
   2. turn on private vulnerability reporting (SECURITY.md)      gh api -X PUT repos/$R/private-vulnerability-reporting
-  3. set the description and ${#TOPICS[@]} topics                          gh repo edit
-  4. once Pages exists, set the repository homepage to the site URL
+  3. set the description and replace the topics (${#TOPICS[@]} of 20)            gh repo edit, gh api -X PUT repos/$R/topics
+  4. turn on secret scanning, push protection and Dependabot security updates (free on public repositories)
+  5. once Pages exists, set the repository homepage to the site URL
 
 It would NOT: change visibility, commit, push, create a release, or store any secret.
 GitHub Pages sites are public on the internet. On a private repository Pages needs a paid plan, and the repository stays
@@ -54,10 +57,20 @@ EOF
       say "   Most likely your plan does not include Pages for private repositories. Options: upgrade the plan, or make the repository public (your decision, not done here). The workflows still run; only the site is missing."
     fi
     say "-- Private vulnerability reporting"
-    gh api -X PUT "repos/$R/private-vulnerability-reporting" > /dev/null 2>&1 && say "   enabled" || say "   not available on this repository or plan (SECURITY.md still describes the report path)"
+    if gh api -X PUT "repos/$R/private-vulnerability-reporting" > /dev/null 2>&1; then say "   enabled"
+    else say "   not available on this repository or plan (SECURITY.md still describes the report path)"; fi
     say "-- Description and topics"
-    args=(--description "$DESCRIPTION"); for t in "${TOPICS[@]}"; do args+=(--add-topic "$t"); done
-    gh repo edit "$R" "${args[@]}" && say "   done"
+    gh repo edit "$R" --description "$DESCRIPTION" && say "   description set"
+    topics_json=$(printf '%s\n' "${TOPICS[@]}" | python3 -c 'import json,sys; print(json.dumps({"names": [l.strip() for l in sys.stdin if l.strip()]}))')
+    if printf '%s' "$topics_json" | gh api -X PUT "repos/$R/topics" --input - > /dev/null; then say "   ${#TOPICS[@]} topics set (the list was replaced)"
+    else say "   could not set the topics"; fi
+    say "-- Secret scanning and push protection"
+    if printf '%s' '{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}' \
+        | gh api -X PATCH "repos/$R" --input - > /dev/null 2>&1; then say "   enabled"
+    else say "   not available (needs a public repository, or GitHub Advanced Security on a private one)"; fi
+    say "-- Dependabot alerts and security updates"
+    if gh api -X PUT "repos/$R/vulnerability-alerts" > /dev/null 2>&1 && gh api -X PUT "repos/$R/automated-security-fixes" > /dev/null 2>&1; then say "   enabled"
+    else say "   could not be enabled (check Settings, Code security)"; fi
     url=$(gh api "repos/$R/pages" --jq .html_url 2>/dev/null || true)
     if [ -n "$url" ]; then gh repo edit "$R" --homepage "$url" && say "-- Homepage set to $url"; fi
     say
@@ -76,6 +89,20 @@ EOF
     [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
     gh release edit "$tag" -R "$R" --draft=false --latest && say "Published. Watch the site build: scripts/github-setup.sh status"
     ;;
+  release-notes)
+    tag="${2:-}"; case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) say "usage: scripts/github-setup.sh release-notes vX.Y.Z"; exit 2 ;; esac
+    say "Repository: $R   (account: $(gh api user --jq .login))"
+    site=$(gh api "repos/$R/pages" --jq .html_url 2>/dev/null || true)
+    [ -n "$site" ] || { say "This repository has no Pages site yet, so the install commands cannot be written."; exit 1; }
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    gh release download "$tag" -R "$R" -p SHA256SUMS -D "$tmp" > /dev/null 2>&1 || { say "No release $tag with a SHA256SUMS file."; exit 1; }
+    python3 "$root/scripts/release_notes.py" --version "${tag#v}" --repo "$R" --site "${site%/}" --sums "$tmp/SHA256SUMS" --changelog "$root/CHANGELOG.md" > "$tmp/notes.md"
+    say "---- the new description of $tag (from the CHANGELOG.md of this checkout) ----"; cat "$tmp/notes.md"; say "----"
+    read -r -p "Replace the description of release $tag with this text? The tag and the files stay as they are. [y/N] " ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
+    gh release edit "$tag" -R "$R" --notes-file "$tmp/notes.md" && say "Done: https://github.com/$R/releases/tag/$tag"
+    ;;
   status)
     say "== Repository"; gh api "repos/$R" --jq '"visibility: \(.visibility)  default branch: \(.default_branch)  homepage: \(.homepage)"'
     say "== Pages";      gh api "repos/$R/pages" --jq '"source: \(.build_type)  status: \(.status)  url: \(.html_url)  https enforced: \(.https_enforced)"' 2>&1 || true
@@ -88,6 +115,13 @@ EOF
         printf '  %-22s %s\n' "/${p}" "$(curl -s -o /dev/null -m 15 -w '%{http_code}' "${url%/}/${p}" || echo fail)"
       done
       printf '  %-22s %s (expect 404)\n' "/no-such-page" "$(curl -s -o /dev/null -m 15 -w '%{http_code}' "${url%/}/no-such-page" || echo fail)"
+      say "  package repositories and the installer:"
+      for p in install.sh hexis-archive-keyring.asc apt/dists/stable/InRelease rpm/x86_64/repodata/repomd.xml arch/x86_64/hexis.db; do
+        printf '    %-34s %s\n' "/${p}" "$(curl -s -o /dev/null -m 15 -w '%{http_code}' "${url%/}/${p}" || echo fail)"
+      done
+      say "  the installer's built-in address (expect this repository's own site):"
+      # shellcheck disable=SC2016  # the ${...} is the literal text of the installer line, not an expansion
+      curl -s -m 15 "${url%/}/install.sh" | sed -n 's/^SITE="${HEXIS_SITE:-\(.*\)}"$/    \1/p'
       say "  third-party hosts in the home page (expect none besides the repository link):"
       curl -s -m 15 "${url%/}/" | grep -oE '(src|href)="https?://[^"]+"' | sort -u | sed 's/^/    /' || true
     fi

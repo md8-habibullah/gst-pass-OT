@@ -57,9 +57,10 @@ def build(version: str, repo: str, site: str, sums: str, changelog: str) -> str:
     new = shift_headings(changelog_section(changelog, version)) or f"See [CHANGELOG.md](https://github.com/{repo}/blob/v{version}/CHANGELOG.md)."
     table = downloads_table(sums)
     parts = [
-        f"**Hexis {version}** is a local-first password, one-time-code, note and file vault with post-quantum encryption "
-        "(ML-KEM-1024 with X25519, Argon2id, XChaCha20-Poly1305). Your vault lives on your device; backup to your own "
-        "S3-compatible storage is optional, and nothing is sent anywhere else.",
+        f"**Hexis {version}** is a password, one-time-code, note and file vault with post-quantum encryption "
+        "(ML-KEM-1024 with X25519, Argon2id, XChaCha20-Poly1305). It lives on your device and syncs, sealed, to the "
+        "S3-compatible storage you choose: one bucket, or several at once (a master and mirrors). Without a bucket it works "
+        "fully offline, and nothing is sent anywhere else.",
         "> Early software, not independently audited. Keep a separate backup of anything you cannot lose.",
         "## Install",
         "**Linux**, one command. It detects your system and installs the signed package for it, or a checked download:",

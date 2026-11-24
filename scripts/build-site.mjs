@@ -38,7 +38,7 @@ if (/@(REPO|SITE)@/.test(installScript)) fail("scripts/install.sh still contains
 // slug "" is the home page. `src` is a repo file rendered as Markdown; `kind` marks the hand-written pages.
 const PAGES = [
   { slug: "", kind: "home", title: "Hexis", nav: "Home", group: "start",
-    desc: "A local-first, zero-knowledge, post-quantum password manager for Linux and Android. No account, no server, no telemetry." },
+    desc: "A zero-knowledge, post-quantum password manager for Linux and Android that syncs to your own S3-compatible storage, one bucket or several at once. No account, no server of ours, no telemetry." },
   { slug: "overview", src: "README.md", title: "Overview", group: "start",
     desc: "What Hexis is, what it protects against, how to run it, import and export, and where everything is documented." },
   { slug: "download", kind: "download", title: "Download", group: "start",
@@ -241,7 +241,7 @@ function homeBody() {
 <section class="hero">
   <div class="hero-copy">
     <h1>Sealed on your device, before anything is saved or synced.</h1>
-    <p class="lede">Hexis keeps passwords, one-time codes, notes and files in a vault only you can open. There is no account and no server of ours: what reaches your storage is ciphertext.</p>
+    <p class="lede">Hexis keeps passwords, one-time codes, notes and files in a vault only you can open, and syncs it to your own S3-compatible storage: one bucket, or several at once. There is no account and no server of ours: what reaches your storage is ciphertext.</p>
     <p class="actions"><a class="btn primary" href="${dl}">Download Hexis</a><a class="btn" href="${arch}">How it is built</a></p>
     <p class="cmd-label">Linux, any distribution: one command detects your system and installs.</p>
     <pre class="cmd"><code>${esc(INSTALL_CMD)}</code></pre>
@@ -272,8 +272,8 @@ function homeBody() {
     <p>Your master password goes through Argon2id. A random vault key is wrapped with ML-KEM-1024 and X25519 together, so a future quantum computer is not enough on its own. Items use XChaCha20-Poly1305. <a href="${crypto}">Read the specification.</a></p>
   </div>
   <div>
-    <h2>Offline first, direct to your own storage</h2>
-    <p>Everything works without a network. If you add S3-compatible storage, the app talks to it directly from your device, only when you unlock, save a change or leave the app. No timers, no background service, no notifications.</p>
+    <h2>Your own storage, one bucket or several</h2>
+    <p>Add S3-compatible buckets: a master that your other devices sync from, and any number of mirrors that receive every change. The app talks to them directly from your device, only when you unlock, save a change or leave the app. No timers, no background service, no notifications. Everything also works with no network at all.</p>
   </div>
   <div>
     <h2>Honest about its limits</h2>
@@ -284,6 +284,7 @@ function homeBody() {
 <section class="list">
   <h2>What is inside</h2>
   <dl>
+    <div><dt>Multi-S3 sync and backup</dt><dd>Several S3-compatible targets at once: a master, mirrors, a health indicator for each, promotion of a mirror, and restore into a new vault.</dd></div>
     <div><dt>Items</dt><dd>Logins, cards, identities, SSH keys, notes and media, with one-time codes, folders, tags and favourites.</dd></div>
     <div><dt>History and trash</dt><dd>Every edit is kept as an immutable version. Deleted items wait in a trash with a two-step permanent delete.</dd></div>
     <div><dt>Several accounts</dt><dd>Independent vaults on one device, each with its own master password and backup targets.</dd></div>
@@ -291,7 +292,6 @@ function homeBody() {
     <div><dt>Gate and panic</dt><dd>An optional PIN, password or number grid behind a maths exercise, a panic credential, an attempt limit and a wipe.</dd></div>
     <div><dt>Disguise</dt><dd>Rename and re-icon the app, including its launcher icon on Android.</dd></div>
     <div><dt>Import and export</dt><dd>About 25 formats recognised by content, with a preview before anything is saved; a readable copy on request.</dd></div>
-    <div><dt>Backup</dt><dd>One primary S3 target and mirrors, a master backup, and restore into a new vault.</dd></div>
   </dl>
 </section>
 

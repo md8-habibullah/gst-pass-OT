@@ -9,6 +9,11 @@ src-tauri/gen/schemas/
 *.jks
 *.keystore
 keystore.properties
+# the package-repository signing key (scripts/github-setup.sh repo-key) and its revocation certificate live outside the tree
+*.asc
+*.gpg
+*.rev
+*.pem
 __pycache__/
 *.pyc
 

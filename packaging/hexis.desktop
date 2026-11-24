@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Hexis
-Comment=Post-quantum zero-knowledge password vault
+Comment=Post-quantum password vault with multi-S3 sync
 Exec=hexis
 Icon=hexis
 Terminal=false

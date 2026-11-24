@@ -8,16 +8,22 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+### Changed
+
+* The repository moved to `post-quantum-passman-gst`. The website, the one-line installer and the package repositories now live at <https://md8-habibullah.github.io/post-quantum-passman-gst/>; GitHub does not redirect the old Pages address (`.../gst-pass-OT/`), so a machine that registered the package repository from there must run the installer once more. Links to `github.com/md8-habibullah/gst-pass-OT` still redirect. The product name is unchanged: Hexis.
+* The README, website, package descriptions, release notes and social preview now lead with multi-S3 sync (one bucket or several at once) instead of describing the app only as local-first.
+* `scripts/github-setup.sh apply` replaces the repository topics, and also enables secret scanning, push protection and Dependabot security updates; new `release-notes vX.Y.Z` rewrites a release description from this file.
+
 ## [0.1.0] - 2026-11-24
 
 First public build, under its final name: **Hexis**.
 
 ### Added
 
+* Multi-S3 sync and backup: any number of S3-compatible targets at once, one master that other devices sync from plus mirrors that receive every change, a health indicator per target, promotion of a mirror to master, and restore into a new vault. Event-driven (unlock, saved change, leaving the app), no timers.
 * Post-quantum vault: hybrid ML-KEM-1024 + X25519 key wrap, Argon2id password stretching, XChaCha20-Poly1305 items with HKDF sub-keys.
 * Items: logins, cards, identities, SSH keys, secure notes, media; RFC 6238 one-time codes with QR setup on phones; immutable version history, trash with two-step permanent delete, archive, clone.
 * Several accounts per device, each with its own master password.
-* S3-compatible backup and sync: one primary target plus mirrors, a master backup, restore into a new vault. Event-driven (unlock, saved change, leaving the app), no timers.
 * Optional Stage 1 gate (PIN, password or number grid) behind a decoy maths screen, panic credential, attempt limit with wipe, idle lock in the core.
 * App disguise: 11 name-and-icon presets plus a custom title, with launcher aliases on Android.
 * Encrypted 50 MB file drive (chunked, authenticated) with attachments.
@@ -37,6 +43,7 @@ First public build, under its final name: **Hexis**.
 ### Known limits
 
 * Not independently audited. The Stage 1 gate is a privacy screen, not encryption.
-* The package repositories exist only after a stable release is published and the signing key is set up (`scripts/github-setup.sh repo-key`); until then the installer downloads release files. There is no Linux build for aarch64.
+* The signed package repositories (apt, rpm, pacman) are built from the newest stable release; before one exists the installer downloads release files. There is no Linux build for aarch64.
+* Sync was tested against Hexis's own local S3-compatible reference server, not yet against real Amazon S3, Cloudflare R2, Backblaze B2, Wasabi or MinIO accounts. There is no manual merge screen for two devices that edited the same item.
 * Android: the file pickers return `content://` addresses, so import, drive add and save-a-copy do not work there yet.
 * Only Bitwarden web-vault JSON and Ente Auth plain text were checked against real exports.
