@@ -29,6 +29,7 @@ pub mod session;
 pub mod uuid;
 pub mod vault;
 mod vault_drive;
+pub mod webview_data;
 
 #[cfg(test)]
 mod app_demo_tests;

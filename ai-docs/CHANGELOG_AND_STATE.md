@@ -2,6 +2,27 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-25): next code, a clean uninstall, light and dark
+
+**The request:** show the next (and previous) TOTP code; when someone uninstalls, nothing may stay behind (no cache, no cookies, no stored data), or the uninstall step must say plainly what is and is not removed; and the app, which was dark only, must have a proper light and a proper dark theme.
+
+**Built (uncommitted; the owner commits).** Decisions D32 to D37, contract `IPC_CONTRACT.md` (`TotpNow.previous/next`, `DeviceInfo.theme/clipboardClear`, `device_set_theme`, `device_set_clipboard_clear`, `app_prepare_uninstall`), `STORAGE_AND_SYNC.md` §13, `UI_DESIGN_SYSTEM.md` §2 and §10, `PRIVACY.md`.
+
+* **TOTP.** `TotpAccount::window_at` gives the previous, current and next code; `totp_now` carries `previous` and `next` (withheld with `code` for a flagged item); the item shows Next (copy) and Previous under the live code, the Codes tiles show Next.
+* **Nothing kept.** The window is incognito; `storage/webview_data.rs` removes what 0.2.0 and earlier let the web view write into the data folder (at every start and in the wipe); the theme and the clipboard time moved from web view storage to `device.json`; Settings > Security > "Remove Hexis from this device" (`app_prepare_uninstall`: three confirmations + the long sum, the wipe, then `device.json`, leftovers and the empty folder; nothing is made again; the app closes on desktop; a last screen says what is gone). The installer's `--uninstall` removes the data too, with a typed `REMOVE`, named paths only (`--yes`, `--keep-data`). Android: Auto Backup and device transfer are off.
+* **Themes.** Complete light and dark palettes in `tokens.css`, a `brass-ink` token for the accent as text, shadows as variables, Avatar, Ring and the logo themed, Settings > Theme (Device setting / Light / Dark with drawn previews), the native title bar on desktop and the Android bar icons follow. `tokens.test.ts` guards the copies and the contrast.
+
+**Verified.** Rust library suite 876 passed, 0 failed, 2 ignored; `cargo fmt --check` and `clippy --all-targets -D warnings` clean. vitest 151 (16 files); `tsc --noEmit` clean. Python script tests 118 (Android patch 43, installer 62, release notes, old-name guard; the guard learned that the installer and its tests must name the folder an older build made). `shellcheck` clean on `install.sh` and `container_case.sh`. End to end against the real core: `e2e/real-uninstall.mjs` **18/18** (new: the theme and the clipboard time kept in `device.json` and in force after a core restart, no local storage or cookie, removal refused with the app lock closed, a wrong sum removes nothing, the right one leaves no file in the data folder but the shim's own marker, planted web view leftovers gone, nothing written afterwards, the screen ends on "Everything is removed"), `e2e/theme-ui.mjs` 13/13 (an emulated light and dark device against every choice, the page stores nothing). Both themes were looked at in headless Chromium on desktop and phone widths.
+
+**Not verified.**
+* That the incognito window really writes nothing in a **real WebKitGTK window** (it was read from the `wry` source; the clean-up at start and in the wipe is the safety net and is tested).
+* The native title bar following the theme, and how WebKitGTK and the Android WebView draw the light palette (only headless Chromium was used).
+* **Android:** the manifest patch is tested on synthetic projects only; the new Kotlin (`HexisBars`) was not compiled (its API calls were checked with `javap` against androidx.core 1.13.1) and nothing ran on a phone.
+* The installer's new `--uninstall` on real distributions: the Python tests run the real script against stub package managers and a temporary home; `scripts/test_installer_containers.sh` (which needs a built deb, rpm and tarball) was **not run** after the change to `container_case.sh`. CI runs it on the next build.
+* Residual data an uninstall cannot reach: a deleted or overwritten file on an SSD or in a journal; backups in S3; other accounts; anything the person copied or exported themselves.
+
+**For the release:** none of this is published until the version is raised (`0.3.0`, with `package.json`, `Cargo.toml`, `tauri.conf.json` and a `## [0.3.0]` section in `CHANGELOG.md` agreeing); CI then builds and publishes by itself (see the entry below).
+
 ## Update (2026-11-24, later still): the generator remembers its last settings
 
 **The request:** the generator always opened at 20 characters. A length the person chose (30, say) must show in every place next time, be stored in the database and sync.

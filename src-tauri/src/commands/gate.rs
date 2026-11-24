@@ -103,6 +103,26 @@ pub async fn app_reset(
     .await
 }
 
+/// "Remove Hexis from this device": the same confirmations and sum as `app_reset`, then everything Hexis keeps
+/// here is removed (vaults, settings, the web view's leftovers, the launcher entry) and the app closes, so that
+/// uninstalling it leaves nothing behind. S3 backups are not touched. Not allowed with the app lock closed.
+#[tauri::command]
+pub async fn app_prepare_uninstall(
+    state: State<'_, AppState>,
+    confirmed_steps: Value,
+    answer: Option<String>,
+) -> CmdResult<()> {
+    run(&state, move |c| match confirmed_steps.as_u64() {
+        Some(n) => c.app_prepare_uninstall(n, answer.as_deref().unwrap_or("")),
+        None => Err(StorageError::invalid(
+            "Confirm all three steps to remove Hexis from this device.",
+        )),
+    })
+    .await?;
+    state.request_exit();
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn app_settings_get(state: State<'_, AppState>) -> CmdResult<AppSettings> {
     run(&state, |c| Ok(c.app_settings_get())).await

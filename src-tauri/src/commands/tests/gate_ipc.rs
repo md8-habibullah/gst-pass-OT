@@ -71,6 +71,7 @@ fn the_gate_commands_exist_with_the_names_the_front_end_calls() {
         "gate_configure",
         "app_reset",
         "app_reset_challenge",
+        "app_prepare_uninstall",
         "app_settings_get",
         "app_settings_set",
         "activity_ping",

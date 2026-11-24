@@ -47,6 +47,17 @@ impl AppCore {
         self.device_update(|d| d.setup_done = true)
     }
 
+    /// Choose the colours: light, dark, or follow the device.
+    pub fn device_set_theme(&self, theme: device::Theme) -> Result<DeviceInfo> {
+        self.device_update(|d| d.theme = theme)
+    }
+
+    /// How long a copied secret stays on the clipboard (15, 30 or 60 seconds).
+    pub fn device_set_clipboard_clear(&self, seconds: u32) -> Result<DeviceInfo> {
+        let seconds = device::validate_clipboard_clear(seconds)?;
+        self.device_update(|d| d.clipboard_clear = seconds)
+    }
+
     /// Switch the online time check on or off. Off, no request is ever made and waits rest on the boot clock alone.
     pub fn device_set_time_check(&self, on: bool) -> Result<DeviceInfo> {
         let info = self.device_update(|d| d.time_check = on)?;
@@ -134,6 +145,18 @@ impl AppCore {
     pub(super) fn marked(&self, mut info: ProfileInfo) -> ProfileInfo {
         info.demo = relock(&self.device).demo_profile.as_deref() == Some(info.id.as_str());
         info
+    }
+
+    /// The very last step of "remove Hexis from this device": `device.json` goes, the settings in memory fall back
+    /// to the defaults (nothing is written), and the data folder is removed when nothing is left in it.
+    pub(super) fn forget_device_files(&self) {
+        for name in [device::DEVICE_FILE, "device.json.tmp"] {
+            let _ = std::fs::remove_file(self.dir.join(name));
+        }
+        *relock(&self.device) = device::DeviceSettings::default();
+        crate::storage::webview_data::remove(&self.dir);
+        // only succeeds when empty: anything unknown in there is left alone
+        let _ = std::fs::remove_dir(&self.dir);
     }
 
     /// The demo vault was deleted: forget its id.

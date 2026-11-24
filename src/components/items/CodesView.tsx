@@ -42,6 +42,12 @@ function CodeTile({ item }: { item: ItemSummary }) {
           <span className={`mt-1 block font-mono text-[1.55rem] leading-8 font-medium tracking-[0.08em] tabular-nums ${tone === "critical" ? "text-ember" : "text-frost"}`}>
             {failed ? <span className="text-[0.6em] text-ember">{failed}</span> : now ? groupDigits(now.code) : locked ? <span className="flex items-center gap-2 text-[0.62em] font-normal tracking-normal text-mist"><KeyRound className="size-4" aria-hidden /> Tap to show with your master password</span> : "••• •••"}
           </span>
+          {now?.next && (
+            <span className="mt-0.5 flex items-baseline gap-2 text-[0.82em] text-mist">
+              Next
+              <span className={`font-mono tracking-[0.06em] tabular-nums ${tone === "critical" ? "font-medium text-frost" : ""}`}>{groupDigits(now.next)}</span>
+            </span>
+          )}
         </span>
         {now && (
           <CountdownRing totalMs={now.period * 1000} remainingMs={remainingMs} windowKey={now.validUntilMs} color={TONE_COLOR[tone]} size={36} stroke={3}>

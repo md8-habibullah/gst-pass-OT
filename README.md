@@ -88,18 +88,20 @@ curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh |
 ```
 
 No `curl`? `wget -qO- https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh`. Options go after `sh -s --`
-(`--nightly`, `--version X.Y.Z`, `--user`, `--apk`, `--check`, `--update`, `--uninstall`, `--dry-run`, `--detect`, `--help`). Read the script
+(`--nightly`, `--version X.Y.Z`, `--user`, `--apk`, `--check`, `--update`, `--uninstall`, `--keep-data`, `--yes`, `--dry-run`, `--detect`, `--help`). Read the script
 first: it is [`scripts/install.sh`](scripts/install.sh), also shown at `/download/install-script/` on the site, and
 `--dry-run` prints every command without running one. What it does on each kind of system, and how to add the
 repositories by hand, is on the [Download page](https://md8-habibullah.github.io/post-quantum-passman-gst/download/).
 
-**Update and remove.** The same script looks after an install later; your vaults are never touched:
+**Update and remove.** The same script looks after an install later. An update never touches your vaults; `--uninstall` removes Hexis *and* everything it keeps for your account (it lists every folder, then asks you to type `REMOVE`; `--keep-data` removes only the program):
 
 ```
 curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --check       # is there a newer version?
 curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --update      # update, the way it was installed
-curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --uninstall   # remove it
+curl -fsS https://md8-habibullah.github.io/post-quantum-passman-gst/install.sh | sh -s -- --uninstall   # remove it and all its data
 ```
+
+A package manager alone (`apt remove`, `dnf remove`, `pacman -R`) removes the program only; it never reaches into your home folder, so your data stays. To leave nothing behind, first use **Settings > Security > Remove Hexis from this device** in the app (it destroys the keys, overwrites the files, removes the web view's cache and closes the app), or run `--uninstall` above.
 
 An install from the package repository also updates with `apt upgrade`, `dnf upgrade`, `zypper update` or `pacman -Syu`;
 a tarball or AppImage install has a short `hexis-update` command next to the program.

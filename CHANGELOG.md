@@ -10,7 +10,17 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ### Added
 
+* **The next one-time code.** Under the live code of a TOTP field, and on each tile of the Codes page, Hexis now shows the code that comes next (with a copy button), and on the item itself the one that just ended. Handy when a code is about to run out.
+* **Light and dark themes.** Settings > Theme: *Device setting* (the default: light by day and dark by night, or whatever the device uses), *Light* or *Dark*. Both are complete palettes with every text colour checked for contrast, including the lock screens, the sheets and the logo. The choice applies at once, is kept on the device (not in the window), and is there before the first screen on the next start. On a computer the title bar follows; on Android the status and navigation bar icons follow.
+* **Remove Hexis from this device.** Settings > Security. Three confirmations and a sum, then it destroys every vault and the app lock (files are overwritten with zeros before they are deleted), deletes the settings and the window's leftovers, makes nothing new and closes the app. Then you uninstall the program. The last screen says what is gone and what is not (backups in S3 buckets are never touched).
 * **The password generator remembers your last settings.** Choose 30 characters (or switch symbols off) once; the Generator page and the item editor both open with that next time. The settings are kept inside your encrypted vault, copied to every backup target and picked up by your other devices on their next sync. The newest change wins. The generated passwords are still never stored.
+
+### Changed
+
+* **A clean uninstall.** The installer's `--uninstall` now removes Hexis *and* everything it keeps for your account, after printing every folder and asking you to type `REMOVE` (`--yes` confirms in advance; `--keep-data` removes only the program; it refuses while Hexis is running). Removing the program with a package manager alone still leaves your data, as every distribution requires; the README and the Download page say so.
+* **The window keeps no cache, cookies or stored page data.** It runs without a persistent profile, and the two settings it used to keep (how long a copied secret stays on the clipboard, and the theme) are now in the app's own `device.json`. Files an older version let the window write into the data folder are removed when this version starts and when you erase. **Upgrading:** the clipboard time starts at 30 seconds once, because the old value lived in the window's storage.
+* **Android does not back up Hexis** (`allowBackup` off, no cloud backup, no device transfer), so a vault cannot be restored behind your back after a reinstall.
+* Erasing everything also removes the window's leftovers, and the erase and the removal share the same wipe.
 
 ## [0.2.0] - 2026-11-24
 

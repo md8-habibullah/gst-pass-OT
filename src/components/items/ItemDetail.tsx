@@ -102,8 +102,8 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
           <div className="min-w-0 flex-1">
             <h2 className="flex items-center gap-2 font-display text-[1.65rem] leading-[1.15] font-semibold tracking-[-0.01em] break-words">
               {view.title}
-              {view.favorite && <Star className="size-[18px] shrink-0 fill-brass text-brass" aria-label="Favorite" />}
-              {view.reprompt && <KeyRound className="size-[18px] shrink-0 text-brass" aria-label="Asks for the master password" />}
+              {view.favorite && <Star className="size-[18px] shrink-0 fill-brass-ink text-brass-ink" aria-label="Favorite" />}
+              {view.reprompt && <KeyRound className="size-[18px] shrink-0 text-brass-ink" aria-label="Asks for the master password" />}
             </h2>
             <p className="mt-1 text-[0.93em] text-mist" title={exactTime(view.updatedAt)}>
               {TYPE_LABEL[view.type]}, edited {relativeTime(view.updatedAt)}
@@ -134,7 +134,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
       )}
 
       {view.changedElsewhere && (
-        <div role="status" className="frosted flex flex-wrap items-center gap-3 rounded-lg border border-brass/30 px-4 py-2.5">
+        <div role="status" className="frosted flex flex-wrap items-center gap-3 rounded-lg border border-brass-ink/30 px-4 py-2.5">
           <p className="min-w-0 flex-1 text-[0.93em]">Changed on another device. Your version stays current. The other device’s version is saved in the history, so nothing was lost.</p>
           <div className="flex gap-1.5">
             <Button className="min-h-8" onClick={() => setShowHistory((n) => n + 1)}>Show history</Button>
@@ -144,8 +144,8 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
       )}
 
       {secrets && (
-        <div role="status" className="frosted flex items-center gap-3 rounded-lg border border-brass/30 px-4 py-2.5">
-          <CountdownRing totalMs={REVEAL_MS} remainingMs={remaining} windowKey={revealed!.key} color="var(--color-brass)" size={28} stroke={3} />
+        <div role="status" className="frosted flex items-center gap-3 rounded-lg border border-brass-ink/30 px-4 py-2.5">
+          <CountdownRing totalMs={REVEAL_MS} remainingMs={remaining} windowKey={revealed!.key} color="var(--color-brass-ink)" size={28} stroke={3} />
           <p className="flex-1 text-[0.93em]">Secrets hide again in {Math.ceil(remaining / 1000)} seconds.</p>
           <Button className="min-h-8" icon={<EyeOff className="size-3.5" />} onClick={() => setRevealed(null)}>Hide now</Button>
         </div>
@@ -176,7 +176,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
                 {f.kind === "paragraph" ? (
                   <span className="block font-mono text-[0.9em] leading-6 break-all whitespace-pre-wrap">{f.value}</span>
                 ) : (
-                  <span className={`block break-all ${f.kind === "url" ? "text-brass-hi" : ""}`}>{f.value}</span>
+                  <span className={`block break-all ${f.kind === "url" ? "text-brass-ink-hi" : ""}`}>{f.value}</span>
                 )}
               </FieldRow>
             );

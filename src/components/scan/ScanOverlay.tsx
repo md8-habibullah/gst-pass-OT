@@ -21,7 +21,7 @@ export function ScanOverlay() {
   }, [active]);
 
   if (!active) return null;
-  const corner = "absolute size-9 border-brass";
+  const corner = "absolute size-9 border-brass-ink";
   return (
     <div data-scan-overlay role="dialog" aria-modal="true" aria-label="Scan a QR code" className="fixed inset-0 z-[90] flex flex-col items-center justify-between px-6 pt-[calc(1.5rem+var(--safe-top))] pb-[calc(1.5rem+var(--safe-bottom))]">
       <p className="rounded-full bg-marine/80 px-5 py-2.5 text-center">Point the camera at the QR code from the website or app.</p>

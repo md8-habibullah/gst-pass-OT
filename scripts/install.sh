@@ -22,7 +22,8 @@
 #
 # Later:  --check    tells you whether a newer version exists (changes nothing)
 #         --update   brings an installed Hexis up to date, the way it was installed
-#         --uninstall removes what this installer installed (your vaults are never touched)
+#         --uninstall removes Hexis AND everything it keeps for your account: vaults, settings, caches (it lists
+#                     them and asks first; --keep-data removes only the program)
 set -eu
 
 REPO="${HEXIS_REPO:-@REPO@}"
@@ -80,7 +81,10 @@ Usage: install.sh [options]
   --method M          auto (default), repo, deb, rpm, tarball or appimage
   --check             say whether a newer version exists; changes nothing
   --update            bring an installed Hexis up to date, the same way it was installed
-  --uninstall         remove what this installer installed (your vault data is never touched)
+  --uninstall         remove Hexis and everything it keeps for your account (vaults, settings, caches, launcher
+                      entry). It lists every folder first and asks you to type REMOVE; nothing is kept.
+  --keep-data         with --uninstall: remove only the program and leave your data where it is
+  --yes               with --uninstall: do not ask (for scripts); the list is still printed
   --dry-run           show what would happen and change nothing
   --detect            show what was detected about this machine and stop
   -h, --help          this text
@@ -93,7 +97,7 @@ EOF
 # ------------------------------------------------------------------------------------------------ options
 parse_args() {
     CHANNEL="${HEXIS_CHANNEL:-stable}"
-    VERSION=""; METHOD=auto; MODE=""; PREFIX=""; WANT_APK=0; UNINSTALL=0; UPDATE=0; CHECK=0; DRY=0; DETECT_ONLY=0
+    VERSION=""; METHOD=auto; MODE=""; PREFIX=""; WANT_APK=0; UNINSTALL=0; UPDATE=0; CHECK=0; DRY=0; DETECT_ONLY=0; KEEP_DATA=0; ASSUME_YES=0
     while [ $# -gt 0 ]; do
         case $1 in
             --stable) CHANNEL=stable ;;
@@ -108,6 +112,8 @@ parse_args() {
             --method) [ $# -ge 2 ] || die "--method needs a value"; METHOD=$2; shift ;;
             --method=*) METHOD=${1#--method=} ;;
             --uninstall) UNINSTALL=1 ;;
+            --keep-data) KEEP_DATA=1 ;;
+            --yes|-y) ASSUME_YES=1 ;;
             --update|--upgrade) UPDATE=1 ;;
             --check) CHECK=1 ;;
             --dry-run) DRY=1 ;;
@@ -121,6 +127,8 @@ parse_args() {
     case $METHOD in auto|repo|deb|rpm|tarball|appimage) ;; *) die "unknown method '$METHOD' (use auto, repo, deb, rpm, tarball or appimage)" ;; esac
     if [ -n "$VERSION" ]; then CHANNEL=version; fi
     if [ $((UNINSTALL + UPDATE + CHECK)) -gt 1 ]; then die "Choose one of --update, --check and --uninstall."; fi
+    if [ "$UNINSTALL" = 0 ] && [ $((KEEP_DATA + ASSUME_YES)) -gt 0 ]; then die "--keep-data and --yes belong to --uninstall."; fi
+    if [ "$KEEP_DATA" = 1 ] && [ "$ASSUME_YES" = 1 ]; then die "--keep-data and --yes do not go together: with --keep-data there is nothing to confirm."; fi
     case $REPO in *@*) die "this copy of the installer was not built for a project" "set HEXIS_REPO=owner/name and HEXIS_SITE=https://..., or use the copy served by the project site" ;; esac
 }
 
@@ -766,7 +774,7 @@ do_update() {
         update_one "$_k" "$_v" "$_r" "$_s"
     done 3<"$TMP/installs"
     say ""
-    say "Done. Your vaults and settings were not touched."
+    say "Done. Your vaults and settings were not touched by the update."
 }
 
 # Runs the plan that choose_plan, or update_one, decided on.
@@ -785,8 +793,105 @@ run_plan() {
 }
 
 # ------------------------------------------------------------------------------------------------ uninstall
+# What Hexis keeps for one account is found by its own names only, never by a pattern: the data folder (vaults, settings,
+# and what older builds' web view left there), the same names in the config, cache and state folders, and the launcher entry
+# that the "app icon and name" setting writes (only when it carries Hexis's own marker line). Anything else is never looked at.
+DATA_IDS="dev.habibullah.hexis app.passman.vault"
+
+abs_or() { case $1 in /*) printf '%s' "$1" ;; *) printf '%s' "$2" ;; esac; }
+
+collect_user_data() {
+    USER_DATA=""
+    if [ -z "${HOME:-}" ] || [ "$HOME" = / ]; then die "HOME is not set, so the folder Hexis keeps its data in cannot be found."; fi
+    U_DATA=$(abs_or "${XDG_DATA_HOME:-}" "$HOME/.local/share")
+    U_CONFIG=$(abs_or "${XDG_CONFIG_HOME:-}" "$HOME/.config")
+    U_CACHE=$(abs_or "${XDG_CACHE_HOME:-}" "$HOME/.cache")
+    U_STATE=$(abs_or "${XDG_STATE_HOME:-}" "$HOME/.local/state")
+    _nl='
+'
+    for _base in "$U_DATA" "$U_CONFIG" "$U_CACHE" "$U_STATE"; do
+        for _id in $DATA_IDS; do
+            if [ -e "$_base/$_id" ] || [ -L "$_base/$_id" ]; then USER_DATA="$USER_DATA$_base/$_id$_nl"; fi
+        done
+    done
+    _entry="$U_DATA/applications/dev.habibullah.hexis.desktop"
+    if [ -f "$_entry" ] && grep -q '^X-Hexis-Managed=true' "$_entry" 2>/dev/null; then USER_DATA="$USER_DATA$_entry$_nl"; fi
+}
+
+data_label() {
+    case $1 in
+        */applications/*.desktop) printf '%s' "the launcher entry made by the app icon and name setting" ;;
+        "$U_DATA"/*) printf '%s' "vaults and every setting Hexis keeps" ;;
+        *) printf '%s' "cache or settings left by the screen" ;;
+    esac
+}
+
+# Is the program running right now? A running Hexis would write its files again after they were removed.
+refuse_if_running() {
+    if have pgrep && pgrep -x -u "$(id -u)" hexis >/dev/null 2>&1; then
+        die "Hexis is running. Close it first, so that nothing writes its files again after they are removed, and run this again."
+    fi
+}
+
+announce_removal() {
+    say "Uninstalling Hexis removes the program and EVERYTHING it keeps for the account whose home folder is $HOME."
+    say "Nothing is kept: no vault, no setting, no cache, no cookie, no launcher entry."
+    say ""
+    while IFS= read -r _p; do
+        [ -n "$_p" ] || continue
+        say "  $_p"
+        say "      $(data_label "$_p")"
+    done <<EOF
+$USER_DATA
+EOF
+    say ""
+    say "Your vaults cannot be brought back from this computer afterwards. What is NOT removed: backups you made in S3 buckets"
+    say "(they are not on this computer; delete them in your storage provider's console if you want them gone), and the data of"
+    say "other accounts on this machine (each account removes its own the same way)."
+    say "These files are deleted, not overwritten. The vault was sealed with your master password all along, but a deleted file can"
+    say "stay on an SSD until the space is reused. For a stronger clean-up, first use Settings > Security > Remove Hexis from this"
+    say "device inside the app: it destroys the keys, overwrites the files and then removes them."
+    say "Use --keep-data to remove only the program."
+    say ""
+}
+
+confirm_removal() {
+    if [ "$ASSUME_YES" = 1 ] || [ "$DRY" = 1 ]; then return 0; fi
+    _tty=${HEXIS_TTY:-/dev/tty}
+    printf 'Type REMOVE and press Enter to remove all of it (anything else cancels): ' >&2
+    _ans=""
+    if ! { IFS= read -r _ans <"$_tty"; } 2>/dev/null; then
+        printf '\n' >&2
+        die "There is no terminal to ask on, so nothing was removed." \
+            "Run it from a terminal, add --yes to confirm in advance, or add --keep-data to remove only the program."
+    fi
+    if [ "$_ans" != REMOVE ]; then die "Cancelled. Nothing was removed."; fi
+}
+
+remove_user_data() {
+    while IFS= read -r _p; do
+        [ -n "$_p" ] || continue
+        case $_p in /?*) ;; *) die "refusing to remove a path that is not absolute: $_p" ;; esac
+        case ${_p##*/} in
+            dev.habibullah.hexis|app.passman.vault|dev.habibullah.hexis.desktop) ;;
+            *) die "refusing to remove $_p: it is not one of Hexis's own names" ;;
+        esac
+        show rm -rf -- "$_p"
+    done <<EOF
+$USER_DATA
+EOF
+}
+
 do_uninstall() {
     _found=0
+    collect_user_data
+    if [ "$KEEP_DATA" = 0 ] && [ -n "$USER_DATA" ]; then
+        _found=1
+        step "What will be removed"
+        announce_removal
+        confirm_removal
+    fi
+    if [ "$DRY" = 0 ]; then refuse_if_running; fi
     if have dpkg && dpkg_has "$DEB_PKG"; then
         _found=1; step "Removing the apt package"; run_root apt-get remove -y "$DEB_PKG"
     fi
@@ -823,7 +928,25 @@ do_uninstall() {
         done <"$_m"
         if [ "$_need" = 1 ]; then run_root rmdir "$_root/share/hexis" 2>/dev/null || true; else rmdir "$_root/share/hexis" 2>/dev/null || true; fi
     done
-    if [ "$_found" = 0 ]; then say "Nothing installed by this installer was found."; else say ""; say "Hexis is removed. Your vaults and settings were not touched."; fi
+    if [ "$KEEP_DATA" = 0 ] && [ -n "$USER_DATA" ]; then
+        step "Removing everything Hexis kept for this account"
+        remove_user_data
+    fi
+    if [ "$_found" = 0 ] && { [ "$KEEP_DATA" = 1 ] || [ -z "$USER_DATA" ]; }; then say "Nothing installed by this installer was found."; return 0; fi
+    say ""
+    if [ "$DRY" = 1 ]; then say "(dry run: nothing was removed)"; return 0; fi
+    if [ "$KEEP_DATA" = 1 ]; then
+        say "Hexis, the program, is removed. Your data was kept, as you asked:"
+        while IFS= read -r _p; do
+            if [ -n "$_p" ]; then say "  $_p"; fi
+        done <<EOF
+$USER_DATA
+EOF
+        say "Remove it too by running the uninstall again without --keep-data."
+    else
+        say "Hexis is removed, and so is everything it kept for this account: the vaults, the settings, the caches and the launcher entry."
+        say "Nothing of Hexis is left in $HOME. Backups in S3 buckets and other accounts' data were not touched."
+    fi
 }
 
 # ------------------------------------------------------------------------------------------------ choosing what to do
@@ -931,7 +1054,7 @@ main() {
         repo) say "Update it later with your package manager ($PM), or: curl -fsS $SITE/install.sh | sh -s -- --update" ;;
         *) say "Update it later with: curl -fsS $SITE/install.sh | sh -s -- --update" ;;
     esac
-    say "Remove it with:       curl -fsS $SITE/install.sh | sh -s -- --uninstall   (your vaults are kept)"
+    say "Remove it with:       curl -fsS $SITE/install.sh | sh -s -- --uninstall   (lists everything it removes, asks first; nothing is kept)"
     say "Pre-1.0 and not independently audited: keep a separate backup of anything you cannot lose."
 }
 

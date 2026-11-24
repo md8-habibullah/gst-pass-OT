@@ -139,6 +139,28 @@ impl AppCore {
         self.gate.exclusive(|| self.wipe_unserialised())
     }
 
+    /// `app_prepare_uninstall`: "remove everything Hexis keeps on this device, so that uninstalling leaves
+    /// nothing behind". The same three confirmations and the same sum as `app_reset`, then the same wipe, and
+    /// after it the things the reset keeps on purpose so that it does not announce itself: `device.json`
+    /// (time zone, theme, the first-run flag), the web view's leftovers, and the data folder itself when it
+    /// is empty. Unlike a reset, nothing new is made afterwards: no demo vault, no default files. The caller
+    /// closes the app. Remote S3 copies are never touched. Needs the gate open (it is not on the allow-list).
+    pub fn app_prepare_uninstall(&self, confirmed_steps: u64, answer: &str) -> Result<()> {
+        if confirmed_steps != 3 {
+            return Err(StorageError::invalid(
+                "Confirm all three steps to remove Hexis from this device.",
+            ));
+        }
+        if !self.gate.check_reset_answer(answer) {
+            return Err(StorageError::WrongAnswer);
+        }
+        self.gate.exclusive(|| {
+            self.wipe_unserialised()?;
+            self.forget_device_files();
+            Ok(())
+        })
+    }
+
     /// The wipe as the gate's closure uses it: the gate already holds its own serial lock.
     fn wipe_unserialised(&self) -> Result<()> {
         self.wipe_with(&mut NoObserver).map(|_| ())

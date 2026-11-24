@@ -361,7 +361,7 @@ class RealInstalls(InstallerCase):
         self.rel = make_release()
         self.web_files = {"/" + k: v for k, v in self.rel.items()}
 
-    def test_user_tarball_install_then_uninstall_keeps_the_vault(self):
+    def test_user_tarball_install_works_and_leaves_a_manifest(self):
         web = self.web(self.web_files)
         self.run_installer("--method", "tarball", "--user", base=web.url, expect=0)
         prog = self.home / ".local" / "bin" / "hexis"
@@ -371,13 +371,167 @@ class RealInstalls(InstallerCase):
         self.assertTrue((self.home / ".local/share/icons/hicolor/128x128/apps/hexis.png").exists())
         manifest = (self.home / ".local/share/hexis/install-manifest").read_text()
         self.assertIn("method=tarball", manifest); self.assertIn("file=bin/hexis", manifest)
-        vault = self.home / ".local/share/dev.habibullah.hexis/vault.db"
-        vault.parent.mkdir(parents=True); vault.write_text("secret data")
-        out = self.run_installer("--uninstall", expect=0).out
-        self.assertIn("Hexis is removed", out)
+
+    # ---- uninstall: the program AND everything Hexis keeps for the account, with the list shown first
+
+    def leave_data(self):
+        """Everything a Hexis install may have left for this account, plus neighbours that are not Hexis's."""
+        h = self.home
+        files = {
+            ".local/share/dev.habibullah.hexis/vaults/abc/vault.db": "secret data",
+            ".local/share/dev.habibullah.hexis/device.json": "{}",
+            ".local/share/dev.habibullah.hexis/localstorage/x.localstorage": "web view",
+            ".local/share/dev.habibullah.hexis/WebKitCache/Version 17/salt": "cache",
+            ".local/share/app.passman.vault/vault.db": "old name",
+            ".cache/dev.habibullah.hexis/blob": "cache",
+            ".config/dev.habibullah.hexis/settings": "cfg",
+            ".local/state/dev.habibullah.hexis/log": "state",
+            ".local/share/applications/dev.habibullah.hexis.desktop": "[Desktop Entry]\nName=Kerf\nX-Hexis-Managed=true\n",
+            # not Hexis's: must survive
+            ".local/share/other-app/data": "keep me",
+            ".cache/hexis-scratch/x": "somebody else's folder with a similar name",
+            ".local/share/applications/dev.habibullah.hexis.other.desktop": "[Desktop Entry]\n",
+        }
+        for rel, body in files.items():
+            f = h / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+        return files
+
+    def answer(self, text):
+        tty = self.tmp / "tty"; tty.write_text(text)
+        return {"HEXIS_TTY": str(tty)}
+
+    def install_user(self):
+        web = self.web(self.web_files)
+        self.run_installer("--method", "tarball", "--user", base=web.url, expect=0)
+        return self.home / ".local" / "bin" / "hexis"
+
+    def test_uninstall_lists_everything_then_removes_the_program_and_all_data(self):
+        prog = self.install_user()
+        self.leave_data()
+        r = self.run_installer("--uninstall", env=self.answer("REMOVE\n"), expect=0)
+        for shown in (".local/share/dev.habibullah.hexis", ".local/share/app.passman.vault", ".cache/dev.habibullah.hexis",
+                      ".config/dev.habibullah.hexis", ".local/state/dev.habibullah.hexis",
+                      ".local/share/applications/dev.habibullah.hexis.desktop"):
+            self.assertIn(str(self.home / shown), r.out, shown)
+        self.assertIn("Nothing is kept", r.out)
+        self.assertIn("Type REMOVE", r.out)
+        self.assertIn("everything it kept for this account", r.out)
         self.assertFalse(prog.exists())
         self.assertFalse((self.home / ".local/share/applications/hexis.desktop").exists())
-        self.assertEqual(vault.read_text(), "secret data", "uninstall must never touch the vault")
+        for gone in (".local/share/dev.habibullah.hexis", ".local/share/app.passman.vault", ".cache/dev.habibullah.hexis",
+                     ".config/dev.habibullah.hexis", ".local/state/dev.habibullah.hexis",
+                     ".local/share/applications/dev.habibullah.hexis.desktop"):
+            self.assertFalse((self.home / gone).exists(), gone)
+        # only Hexis's own names went
+        self.assertEqual((self.home / ".local/share/other-app/data").read_text(), "keep me")
+        self.assertTrue((self.home / ".cache/hexis-scratch/x").exists())
+        self.assertTrue((self.home / ".local/share/applications/dev.habibullah.hexis.other.desktop").exists())
+
+    def test_a_launcher_entry_without_the_hexis_marker_is_somebody_elses_and_stays(self):
+        self.install_user()
+        entry = self.home / ".local/share/applications/dev.habibullah.hexis.desktop"
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text("[Desktop Entry]\nName=Mine\n")
+        data = self.home / ".local/share/dev.habibullah.hexis/vault.db"
+        data.parent.mkdir(parents=True); data.write_text("x")
+        self.run_installer("--uninstall", env=self.answer("REMOVE\n"), expect=0)
+        self.assertFalse(data.exists())
+        self.assertTrue(entry.exists())
+
+    def test_anything_but_remove_cancels_and_nothing_at_all_is_changed(self):
+        prog = self.install_user()
+        files = self.leave_data()
+        for reply in ("no\n", "remove\n", "\n", "REMOVE please\n"):
+            with self.subTest(reply=reply):
+                r = self.run_installer("--uninstall", env=self.answer(reply), expect=1)
+                self.assertIn("Cancelled", r.out)
+                self.assertTrue(prog.exists(), "the program stays too: a cancel changes nothing")
+                for rel in files:
+                    self.assertTrue((self.home / rel).exists(), rel)
+
+    def test_without_a_terminal_or_yes_it_refuses_instead_of_guessing(self):
+        prog = self.install_user()
+        files = self.leave_data()
+        r = self.run_installer("--uninstall", env={"HEXIS_TTY": str(self.tmp / "no-such-terminal")}, expect=1)
+        self.assertIn("no terminal", r.out)
+        self.assertIn("--yes", r.out); self.assertIn("--keep-data", r.out)
+        self.assertTrue(prog.exists())
+        for rel in files:
+            self.assertTrue((self.home / rel).exists(), rel)
+
+    def test_yes_confirms_in_advance_but_still_prints_the_list(self):
+        prog = self.install_user()
+        self.leave_data()
+        r = self.run_installer("--uninstall", "--yes", env={"HEXIS_TTY": str(self.tmp / "no-such-terminal")}, expect=0)
+        self.assertIn(str(self.home / ".local/share/dev.habibullah.hexis"), r.out)
+        self.assertNotIn("Type REMOVE", r.out)
+        self.assertFalse(prog.exists())
+        self.assertFalse((self.home / ".local/share/dev.habibullah.hexis").exists())
+
+    def test_keep_data_removes_only_the_program_and_says_where_the_data_is(self):
+        prog = self.install_user()
+        files = self.leave_data()
+        r = self.run_installer("--uninstall", "--keep-data", expect=0)
+        self.assertFalse(prog.exists())
+        self.assertNotIn("Type REMOVE", r.out)
+        for rel in files:
+            self.assertTrue((self.home / rel).exists(), rel)
+        self.assertIn("Your data was kept", r.out)
+        self.assertIn(str(self.home / ".local/share/dev.habibullah.hexis"), r.out)
+        self.assertNotIn("Nothing of Hexis is left", r.out)
+
+    def test_a_dry_run_lists_and_removes_nothing(self):
+        prog = self.install_user()
+        files = self.leave_data()
+        r = self.run_installer("--uninstall", "--dry-run", env={"HEXIS_TTY": str(self.tmp / "no-such-terminal")}, expect=0)
+        self.assertIn("dry run", r.out)
+        self.assertIn("rm -rf", r.out)
+        self.assertTrue(prog.exists())
+        for rel in files:
+            self.assertTrue((self.home / rel).exists(), rel)
+
+    def test_data_without_a_program_is_still_cleaned(self):
+        # the program was removed by hand (or by the package manager); only the data is left
+        files = self.leave_data()
+        r = self.run_installer("--uninstall", env=self.answer("REMOVE\n"), expect=0)
+        self.assertNotIn("Nothing installed", r.out)
+        self.assertFalse((self.home / ".local/share/dev.habibullah.hexis").exists())
+        self.assertTrue((self.home / ".local/share/other-app/data").exists())
+
+    def test_the_data_folders_follow_the_xdg_variables(self):
+        self.install_user()
+        data = self.tmp / "elsewhere" / "data"
+        (data / "dev.habibullah.hexis").mkdir(parents=True)
+        (data / "dev.habibullah.hexis" / "vault.db").write_text("x")
+        default = self.home / ".local/share/dev.habibullah.hexis"
+        default.mkdir(parents=True); (default / "vault.db").write_text("not looked at: XDG_DATA_HOME points elsewhere")
+        self.run_installer("--uninstall", env={**self.answer("REMOVE\n"), "XDG_DATA_HOME": str(data)}, expect=0)
+        self.assertFalse((data / "dev.habibullah.hexis").exists())
+        self.assertTrue((default / "vault.db").exists())
+
+    def test_a_link_in_place_of_the_data_folder_is_removed_as_a_link(self):
+        self.install_user()
+        target = self.tmp / "precious"; target.mkdir(); (target / "keep").write_text("do not touch")
+        link = self.home / ".local/share/dev.habibullah.hexis"
+        link.parent.mkdir(parents=True, exist_ok=True); link.symlink_to(target)
+        self.run_installer("--uninstall", env=self.answer("REMOVE\n"), expect=0)
+        self.assertFalse(link.is_symlink() or link.exists())
+        self.assertEqual((target / "keep").read_text(), "do not touch")
+
+    def test_a_running_hexis_is_not_removed_from_under_itself(self):
+        prog = self.install_user()
+        self.leave_data()
+        self.stub("pgrep", "#!/bin/sh\nexit 0\n")
+        self.stub("id", "#!/bin/sh\necho 1000\n")
+        r = self.run_installer("--uninstall", "--yes", expect=1)
+        self.assertIn("Hexis is running", r.out)
+        self.assertTrue(prog.exists())
+        self.assertTrue((self.home / ".local/share/dev.habibullah.hexis").exists())
+
+    def test_the_two_options_only_belong_to_uninstall_and_not_together(self):
+        self.assertIn("belong to --uninstall", self.run_installer("--keep-data", expect=1).out)
+        self.assertIn("belong to --uninstall", self.run_installer("--yes", expect=1).out)
+        self.assertIn("do not go together", self.run_installer("--uninstall", "--keep-data", "--yes", expect=1).out)
 
     def test_appimage_install_without_fuse_is_user_scoped(self):
         # the fake "AppImage" is a script that can unpack itself, like the real runtime does

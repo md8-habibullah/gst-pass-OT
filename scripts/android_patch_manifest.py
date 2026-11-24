@@ -33,6 +33,9 @@ What it does, from assets/disguise/presets.json (the single source of truth for 
 * MainActivity.kt, rewritten from scripts/android/MainActivity.kt.tmpl: Back on the first screen asks the page to close a
   sheet or step back and otherwise sends the app to the background (finishing it crashed the process on shutdown), and the
   content view is padded by the keyboard's height (edge-to-edge no longer resizes the window, so sheets sat behind it).
+* Backup off: `android:allowBackup="false"`, `android:fullBackupContent="false"` and `android:dataExtractionRules` on `<application>`,
+  plus res/xml/data_extraction_rules.xml excluding every domain. Without this Android may restore the vault files from a cloud
+  backup after the app is uninstalled and installed again, which would contradict "uninstall leaves nothing behind".
 * app/hexis.pro, copied from scripts/android/hexis.pro: R8 keep rules. Without them the release APK crashed the app on the
   first camera frame, because ML Kit creates its component registrars by reflection and R8 had removed their constructors.
 
@@ -72,6 +75,18 @@ T = "{%s}" % TOOLS_NS
 UNUSED_PERMISSIONS = ("android.permission.VIBRATE",)
 # The camera is optional: the QR scan has a typed-key alternative, so the app must stay installable on devices without one.
 OPTIONAL_FEATURES = ("android.hardware.camera.any",)
+# Nothing of the app may travel to a cloud backup, to a new phone or into an `adb backup`: the vaults are sealed, but "uninstall
+# leaves nothing behind" must also hold on Android, where a backup could put the data back after a reinstall.
+BACKUP_RULES_NAME = "data_extraction_rules"
+BACKUP_ATTRIBUTES = {
+    "allowBackup": "false",
+    "fullBackupContent": "false",  # Android 11 and older
+    "dataExtractionRules": "@xml/" + BACKUP_RULES_NAME,  # Android 12 and newer
+}
+BACKUP_DOMAINS = {
+    "cloud-backup": ("root", "file", "database", "sharedpref", "external"),
+    "device-transfer": ("root", "file", "database", "sharedpref", "external", "device_root", "device_file"),
+}
 ACTION_MAIN = "android.intent.action.MAIN"
 CATEGORY_LAUNCHER = "android.intent.category.LAUNCHER"
 
@@ -446,6 +461,12 @@ def patch_manifest(root: ET.Element, presets: list[Preset]) -> tuple[list[str], 
             anchor = elem
             changes.append(f"add <activity-alias> {name}")
 
+    # 3b. no backup of any kind (cloud, device-to-device, adb): a reinstall must start empty
+    for key, value in BACKUP_ATTRIBUTES.items():
+        if application.get(A + key) != value:
+            application.set(A + key, value)
+            changes.append(f"set android:{key}={value} on <application> (no backup of the app's data)")
+
     # 4. permissions and features that libraries add but that Hexis does not need (removal markers, never a grant)
     ET.register_namespace("tools", TOOLS_NS)
     root_nl = child_nl[: -len(unit)] if child_nl.endswith(unit) else "\n    "  # newline + the indentation of <application> itself
@@ -622,6 +643,15 @@ def build_plan(project: Path, repo: Path, presets_file: Path, assets: Path, pack
     plan_text_file(plan, project, layout.res / "values" / "disguise_colors.xml",
                    '<?xml version="1.0" encoding="utf-8"?>\n<!-- ' + GENERATED_NOTE + ' -->\n<resources>\n' + "\n".join(colors) + "\n</resources>\n",
                    "the adaptive icon backgrounds")
+
+    # the backup rules the manifest points to: every domain is excluded, for the cloud and for a phone-to-phone transfer
+    sections = []
+    for section, domains in BACKUP_DOMAINS.items():
+        rows = "".join(f'        <exclude domain="{d}" path="."/>\n' for d in domains)
+        sections.append(f"    <{section}>\n{rows}    </{section}>\n")
+    plan_text_file(plan, project, layout.res / "xml" / f"{BACKUP_RULES_NAME}.xml",
+                   '<?xml version="1.0" encoding="utf-8"?>\n<!-- ' + GENERATED_NOTE + ' -->\n<data-extraction-rules>\n' + "".join(sections) + "</data-extraction-rules>\n",
+                   "the backup rules (nothing is backed up or transferred)")
 
     # adaptive icons
     for p in presets:

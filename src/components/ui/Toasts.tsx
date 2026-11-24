@@ -24,8 +24,8 @@ function ToastItem({ toast }: { toast: Toast }) {
       className="surface-float pointer-events-auto flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg py-2.5 pr-2.5 pl-3.5"
     >
       {toast.countdownMs ? (
-        <CountdownRing totalMs={toast.countdownMs} remainingMs={toast.countdownMs} windowKey={toast.id} color="var(--color-brass)" size={26} stroke={2.5}>
-          <Icon className="size-3 text-brass" aria-hidden />
+        <CountdownRing totalMs={toast.countdownMs} remainingMs={toast.countdownMs} windowKey={toast.id} color="var(--color-brass-ink)" size={26} stroke={2.5}>
+          <Icon className="size-3 text-brass-ink" aria-hidden />
         </CountdownRing>
       ) : (
         <Icon className={`size-[18px] shrink-0 ${tone}`} aria-hidden />
@@ -35,7 +35,7 @@ function ToastItem({ toast }: { toast: Toast }) {
         <button
           type="button"
           onClick={() => { toast.action?.run(); dismissToast(toast.id); }}
-          className="pressable shrink-0 rounded-sm px-2.5 py-1.5 text-[0.93em] font-semibold text-brass hover:bg-hover pointer-coarse:min-h-11"
+          className="pressable shrink-0 rounded-sm px-2.5 py-1.5 text-[0.93em] font-semibold text-brass-ink hover:bg-hover pointer-coarse:min-h-11"
         >
           {toast.action.label}
         </button>

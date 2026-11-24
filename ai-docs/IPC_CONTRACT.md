@@ -104,7 +104,7 @@ interface VersionEntry {
                                       // is a local number above every own entry, so it can sit above the head
 }
 
-interface TotpNow { code: string; period: number; digits: number; secondsRemaining: number; validUntilMs: number }
+interface TotpNow { code: string; previous: string; next: string; period: number; digits: number; secondsRemaining: number; validUntilMs: number }
 ```
 
 ### Field schemas (keys inside `ItemDraft.fields`)
@@ -147,7 +147,7 @@ Light validation only (never blocks legitimate data): `card.number` digits, spac
 | `history_get` | `id`, `version`, `password?` | `ItemDraft` | same rule as `item_reveal` |
 | `history_restore` | `id`, `version`, `password?` | `ItemSummary` | new snapshot (next free number), `event = restoredFromVersion`; restoring an other-device copy makes the new head a descendant of both lines and clears `changedElsewhere` (§6.2) |
 | `item_review_other_device` | `id` | `void` | R3a: "got it", marks the item's other-device copies as seen without restoring anything, which clears `changedElsewhere`; idempotent; `not_found` / `in_trash` / `locked` as for the other item commands |
-| `totp_now` | `id`, `password?` | `TotpNow` | active items with a `totp` field only; a flagged item needs the password (`password_required`), see §1 |
+| `totp_now` | `id`, `password?` | `TotpNow` | active items with a `totp` field only; a flagged item needs the password (`password_required`), see §1. `previous` and `next` are the codes of the window before and after `code` (same secret, same algorithm, same digits); they come from the same call, so a flagged item withholds them exactly like `code`. The screen shows `next` (with a copy button) and `previous` under the live code, so the person can see what comes when it runs out. |
 
 Nothing returns keys, seeds, hashes or the master password.
 
@@ -348,6 +348,7 @@ interface DisguiseView extends DisguiseInput { appliedName: string; note: string
 | `gate_configure` | `{ input: GateConfigInput }` | `GateStatus` | Needs an unlocked vault (`locked` otherwise) and that vault's master password (`wrong_password`; the re-prompt guard). `credential:null` keeps the stored one (error when none exists or the mode changes), `panicCode:null` keeps, `""` removes; `enabled:false` deletes `gate.json`. Returns `open:true` for this run. Rule failures are `invalid_input` with the messages of `src/lib/gateRules.ts`; they are reported before any Argon2id work. |
 | `app_reset_challenge` | none | `string` | The long sum for the last reset step (two ordinary sums joined by `+`, `-` or `*`, answer 100 to 99,999). The core keeps only this one sum; the answer never leaves it. Allowed with the gate closed. |
 | `app_reset` | `{ confirmedSteps: 3, answer: string }` | `null` | `confirmedSteps` other than the number 3 is `invalid_input` (also a string, `-3`, `3.5`, `null`; a missing argument is a decoding error). `answer` is checked against the sum from `app_reset_challenge`, which is **used up by any answer**: a wrong answer, or no sum asked for first, is `wrong_answer` and erases nothing; ask again for a new sum. A right answer does the same wipe as panic, reported normally; a second call is `wrong_answer`. Allowed with the gate closed. |
+| `app_prepare_uninstall` | `{ confirmedSteps: 3, answer: string }` | `null` | "Remove Hexis from this device" (Settings > Security). Same three confirmations and the same sum as `app_reset` (`app_reset_challenge` first; the sum is used up by any answer; `confirmedSteps` other than 3 is `invalid_input`; a wrong or missing sum is `wrong_answer` and removes nothing). A right answer does the wipe of a reset (every vault, the app lock and its counter, the settings, the launcher entry; files are overwritten with zeros, then unlinked), and then also removes what a reset keeps on purpose: `device.json`, the web view's leftovers, and the data folder when nothing else is in it. **Nothing is made again afterwards** (no demo vault, no default file). On desktop the command then asks the app to close (about 0.9 s later, so the answer reaches the screen); on a phone the app stays on its last page ("Everything is removed", with the next step: uninstall it), because an Android app does not close itself. S3 backups are never touched. **Not on the closed-gate allow-list** (`locked` with the app lock closed): it needs the app lock open. |
 | `app_settings_get` | none | `{lockAfterMinutes, lockAfterLeaveSeconds}` | Defaults 15 minutes and 300 seconds. |
 | `app_settings_set` | `{ input: {lockAfterMinutes, lockAfterLeaveSeconds?} }` | same | `lockAfterMinutes`: 1, 5, 15, 30, 60 or 240 (no "never"). `lockAfterLeaveSeconds`: 0 (right away), 15, 30, 60, 300, 900, 1800, 3600 or 14400 (default 300 when missing). Anything else is `invalid_input`. Stored in `app-settings.json`. |
 | `activity_ping` | none | `null` | Restarts the inactivity timer. |
@@ -458,20 +459,22 @@ interface ImportOutcome { added: number; appended: number; skipped: number; fail
 
 ## 11. Device settings, trusted time and the demo vault (Q5) [impl]
 
-Shapes are exactly those of `src/backend/types.ts` / `tauri.ts` (camelCase arguments, snake_case Rust parameters). The decisions are D27 to D30 in `ARCHITECTURE.md`.
+Shapes are exactly those of `src/backend/types.ts` / `tauri.ts` (camelCase arguments, snake_case Rust parameters). The decisions are D27 to D30 and D32 to D37 in `ARCHITECTURE.md`.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `device_get` | none | `DeviceInfo` | `{timeZone: string \| null, setupDone: boolean, timeCheck: boolean}`. `timeZone` is `null` until the first page is answered. Never carries the demo vault's id. **Allowed while the gate is closed** (the gate screen writes times in the zone). |
+| `device_get` | none | `DeviceInfo` | `{timeZone: string \| null, setupDone: boolean, timeCheck: boolean, theme: "system" \| "light" \| "dark", clipboardClear: 15 \| 30 \| 60}`. `timeZone` is `null` until the first page is answered. `theme` is what Settings > Theme chose (default `system`: follow the device); `clipboardClear` is how many seconds a copied secret stays on the clipboard (default 30). Never carries the demo vault's id. **Allowed while the gate is closed** (the gate screen writes times in the zone and is drawn in the chosen theme). |
 | `device_set_time_zone` | `{ zone: string }` | `DeviceInfo` | An IANA name such as `Asia/Dhaka`. The core checks the **shape** only (1 to 64 characters, letters, digits, `_ + - /`, no empty, dotted or leading-dash part); `invalid_input` otherwise. The webview's own time library decides whether the name is a real zone before it sends it. |
 | `device_finish_setup` | none | `DeviceInfo` | The first-run welcome was seen: `setupDone` becomes `true`. |
 | `device_set_time_check` | `{ on: boolean }` | `DeviceInfo` | Switches the online time check. Off, the core makes no request at all. On, a check starts in the background. |
+| `device_set_theme` | `{ theme: "system" \| "light" \| "dark" }` | `DeviceInfo` | Saves the colour theme in `device.json` (the web view stores nothing) and, on desktop, tells the native window so that the title bar and system dialogs follow. Any other word is a decoding error. |
+| `device_set_clipboard_clear` | `{ seconds: number }` | `DeviceInfo` | 15, 30 or 60; anything else is `invalid_input`. Saved in `device.json`. (Before 0.3.0 this lived in the web view's local storage; the value is not carried over, so it starts at 30 once.) |
 | `clock_status` | none | `ClockStatus` | `{verified, enabled, skewMs, checkedAgoMs, sources, problem, nowMs}`. `skewMs` is checked UTC minus this device's clock (positive: the device is behind). Starts a background check when one is due. A polling command: it does not count as activity. **Allowed while the gate is closed.** |
 | `clock_sync` | none | `ClockStatus` | Checks now and waits for the answer (about ten seconds at most). `invalid_input` when the check is switched off. A failed check is **not** an error: `problem` says what went wrong. **Allowed while the gate is closed.** |
 | `demo_spawn` | none | `ProfileInfo` | Makes the vault "Hexis123" (15 to 25 items) **only when the app holds no vault** (`invalid_input` otherwise); selects and unlocks it. `demo: true` in the result. |
 | `demo_open` | none | `void` | Selects and unlocks the demo vault without a typed password. `not_found` when there is no demo vault. Never works for another vault. |
 
-`device_set_time_zone`, `device_finish_setup`, `device_set_time_check`, `demo_spawn` and `demo_open` are **closed** while the gate is closed (deny by default, D19).
+`device_set_time_zone`, `device_finish_setup`, `device_set_time_check`, `device_set_theme`, `device_set_clipboard_clear`, `demo_spawn` and `demo_open` are **closed** while the gate is closed (deny by default, D19). Only `device_get` is open: the lock screens read the theme from it.
 
 Changes to earlier shapes:
 

@@ -13,7 +13,7 @@ export function ShortcutsSheet() {
   return (
     <Sheet
       open={open} onClose={close} title="Keyboard shortcuts" variant="dialog" size="lg" level={2}
-      titleIcon={<Keyboard className="size-5 text-brass" aria-hidden />}
+      titleIcon={<Keyboard className="size-5 text-brass-ink" aria-hidden />}
       footer={
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-[0.86em] text-fog">Letter shortcuts work when no text box is focused.</p>

@@ -36,7 +36,7 @@ function useBackupSummary() {
   return summarize(targets);
 }
 
-const TONE_DOT = { none: "bg-fog", ok: "bg-verdigris", busy: "bg-brass", bad: "bg-ember", untested: "bg-brass" } as const;
+const TONE_DOT = { none: "bg-fog", ok: "bg-verdigris", busy: "bg-brass-ink", bad: "bg-ember", untested: "bg-brass-ink" } as const;
 
 /** Wide layout: sidebar with the account chip, grouped places with counts, and the real backup state. */
 export function Sidebar() {
@@ -66,8 +66,8 @@ export function Sidebar() {
                     className={`pressable relative flex min-h-9 w-full items-center gap-3 rounded-sm px-2.5 text-left font-medium transition-colors ${on ? "text-frost" : "text-mist hover:bg-raised/60 hover:text-frost"}`}
                   >
                     {on && <motion.span layoutId="nav-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
-                    {on && <motion.span layoutId="nav-edge" className="absolute top-2 bottom-2 left-0 w-[3px] rounded-full bg-brass" transition={SPRING} />}
-                    <Icon className={`relative size-[18px] ${on ? "text-brass" : ""}`} aria-hidden />
+                    {on && <motion.span layoutId="nav-edge" className="absolute top-2 bottom-2 left-0 w-[3px] rounded-full bg-brass-ink" transition={SPRING} />}
+                    <Icon className={`relative size-[18px] ${on ? "text-brass-ink" : ""}`} aria-hidden />
                     <span className="relative flex-1">{n.label}</span>
                     {!NO_COUNT.has(n.filter) && <span className="relative text-[0.86em] text-fog tabular-nums">{total[n.filter]}</span>}
                   </button>
@@ -113,7 +113,7 @@ export function Rail() {
               const Icon = n.icon;
               return (
                 <li key={n.filter}>
-                  <button type="button" aria-label={n.label} title={n.label} aria-current={on ? "page" : undefined} onClick={() => setFilter(n.filter)} className={`pressable relative grid size-11 place-items-center rounded-sm ${on ? "text-brass" : "text-mist hover:bg-raised/60 hover:text-frost"}`}>
+                  <button type="button" aria-label={n.label} title={n.label} aria-current={on ? "page" : undefined} onClick={() => setFilter(n.filter)} className={`pressable relative grid size-11 place-items-center rounded-sm ${on ? "text-brass-ink" : "text-mist hover:bg-raised/60 hover:text-frost"}`}>
                     {on && <motion.span layoutId="rail-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
                     <Icon className="relative size-5" />
                   </button>
@@ -145,7 +145,7 @@ export function BottomNav() {
               <button type="button" aria-current={on ? "page" : undefined} onClick={() => setFilter(t.filter)} className="pressable flex min-h-14 w-full flex-col items-center justify-center gap-1">
                 <span className="relative grid h-8 w-16 place-items-center">
                   {on && <motion.span layoutId="tab-pill" className="absolute inset-0 rounded-full bg-brass/20" transition={SPRING} />}
-                  <Icon className={`relative size-[22px] ${on ? "text-brass-hi" : "text-mist"}`} aria-hidden />
+                  <Icon className={`relative size-[22px] ${on ? "text-brass-ink-hi" : "text-mist"}`} aria-hidden />
                 </span>
                 <span className={`text-[0.8em] font-medium ${on ? "text-frost" : "text-fog"}`}>{t.label}</span>
               </button>

@@ -1,4 +1,10 @@
-/* Strongroom design tokens. Spec: ai-docs/UI_DESIGN_SYSTEM.md §2. Contrast ratios are documented there. */
+/* Strongroom design tokens. Spec: ai-docs/UI_DESIGN_SYSTEM.md §2. Contrast ratios are documented there.
+ *
+ * Two palettes, one set of names. `@theme` below holds the DARK palette (the default). The LIGHT palette overrides the same
+ * variables further down, twice: once for `<html data-theme="light">` (chosen on purpose) and once for "follow the device"
+ * (no attribute, `prefers-color-scheme: light`). `src/styles/tokens.test.ts` keeps the two copies identical and checks the
+ * contrast of every text pair in both palettes. Utilities such as `bg-pane` read `var(--color-pane)` at run time, so a theme
+ * switch repaints without rebuilding anything. */
 @theme {
   --color-*: initial;
 
@@ -15,11 +21,14 @@
   --color-mist: #9bb2b9;
   --color-fog: #8aa1a8;
 
-  /* the key (accent) */
+  /* the key (accent): brass is the fill of the primary button; brass-ink is the same colour used as text, a line or a
+     dot, which on a light ground must be darker to stay readable. In the dark palette they are the same colour. */
   --color-brass: #e2b259;
   --color-brass-hi: #edc378;
   --color-brass-lo: #cc9a45;
   --color-on-brass: #231905;
+  --color-brass-ink: #e2b259;
+  --color-brass-ink-hi: #edc378;
 
   /* state */
   --color-verdigris: #52d3b8;
@@ -39,14 +48,11 @@
   --radius-xl: 22px;
   --radius-full: 9999px;
 
-  /* depth comes from surface steps and hairlines; only floating layers (menus, sheets, toasts) carry a neutral shadow */
+  /* depth comes from surface steps and hairlines; only floating layers (menus, sheets, toasts) carry a neutral shadow.
+     The shadow values are plain variables in `:root` below, not theme tokens: Tailwind copies a theme shadow into every
+     utility, which would freeze it, and the two palettes need different shadows. `shadow-e1` and `shadow-e2` are defined
+     in base.css. */
   --shadow-*: initial;
-  --shadow-e1: 0 1px 0 rgb(0 0 0 / 0.3);
-  --shadow-e2: 0 1px 2px rgb(0 0 0 / 0.35);
-  --shadow-e3: 0 10px 28px -14px rgb(0 0 0 / 0.6);
-  --shadow-e4: 0 24px 56px -24px rgb(0 0 0 / 0.75);
-  --shadow-key: 0 1px 0 rgb(0 0 0 / 0.4);
-  --shadow-key-down: none;
 
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-shake: shake 0.22s var(--ease-out);
@@ -72,6 +78,36 @@
 }
 
 :root {
+  color-scheme: dark;
+  --shadow-e1: 0 1px 0 rgb(0 0 0 / 0.3);
+  --shadow-e2: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-e3: 0 10px 28px -14px rgb(0 0 0 / 0.6);
+  --shadow-e4: 0 24px 56px -24px rgb(0 0 0 / 0.75);
+  --shadow-key: 0 1px 0 rgb(0 0 0 / 0.4);
+  --shadow-key-down: none;
+  /* things that are not a colour token but still change with the palette (see base.css) */
+  --sel-bg: rgb(226 178 89 / 0.32);
+  --scroll-thumb: rgb(155 178 185 / 0.24);
+  --scroll-thumb-firefox: rgb(155 178 185 / 0.28);
+  --key-off-bg: rgb(226 178 89 / 0.15);
+  --key-off-fg: rgb(237 195 120 / 0.7);
+  --key-off-ring: rgb(226 178 89 / 0.22);
+  --frosted-bg: rgb(155 178 185 / 0.1);
+  --frosted-ring: rgb(190 230 240 / 0.08);
+  --ring-track: rgb(155 178 185 / 0.16);
+  /* the monogram tiles: lightness of the two gradient stops and of the letters (hue comes from the title) */
+  --av-bg1: 25%;
+  --av-bg2: 19%;
+  --av-fg: 80%;
+  --av-bg1-dim: 17%;
+  --av-bg2-dim: 13%;
+  --av-fg-dim: 62%;
+  /* the Hexis mark: silver pillars in the dark palette */
+  --mark-face-top: #ffffff;
+  --mark-face-bottom: #cbd5e1;
+  --mark-cap: #ffffff;
+  --mark-side-top: #94a3b8;
+  --mark-side-bottom: #475569;
   /* every motion in the app is one of these: short enough that nothing reads as loading */
   --dur-fast: 80ms;
   --dur: 120ms;
@@ -80,4 +116,154 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* ---- a dark island ---------------------------------------------------------------------------------------------------
+ * `data-palette="dark"` / `"light"` on any element paints that subtree with one palette whatever the page uses. The theme
+ * page uses it for its three small previews. Same values as above; tokens.test.ts checks the copies. */
+[data-palette="dark"] {
+  color-scheme: dark;
+  --color-marine: #08141a;
+  --color-pane: #0e1d25;
+  --color-raised: #152a34;
+  --color-hover: #1b3541;
+  --color-hairline: rgb(190 230 240 / 0.1);
+  --color-hairline-strong: rgb(190 230 240 / 0.18);
+  --color-frost: #e6f0f2;
+  --color-mist: #9bb2b9;
+  --color-fog: #8aa1a8;
+  --color-brass: #e2b259;
+  --color-brass-hi: #edc378;
+  --color-brass-lo: #cc9a45;
+  --color-on-brass: #231905;
+  --color-brass-ink: #e2b259;
+  --color-brass-ink-hi: #edc378;
+  --color-verdigris: #52d3b8;
+  --color-ember: #f0737a;
+  --color-danger: #c23b44;
+  --shadow-e1: 0 1px 0 rgb(0 0 0 / 0.3);
+  --shadow-e2: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-e3: 0 10px 28px -14px rgb(0 0 0 / 0.6);
+  --shadow-e4: 0 24px 56px -24px rgb(0 0 0 / 0.75);
+  --shadow-key: 0 1px 0 rgb(0 0 0 / 0.4);
+  --sel-bg: rgb(226 178 89 / 0.32);
+  --scroll-thumb: rgb(155 178 185 / 0.24);
+  --scroll-thumb-firefox: rgb(155 178 185 / 0.28);
+  --key-off-bg: rgb(226 178 89 / 0.15);
+  --key-off-fg: rgb(237 195 120 / 0.7);
+  --key-off-ring: rgb(226 178 89 / 0.22);
+  --frosted-bg: rgb(155 178 185 / 0.1);
+  --frosted-ring: rgb(190 230 240 / 0.08);
+  --ring-track: rgb(155 178 185 / 0.16);
+  --av-bg1: 25%;
+  --av-bg2: 19%;
+  --av-fg: 80%;
+  --av-bg1-dim: 17%;
+  --av-bg2-dim: 13%;
+  --av-fg-dim: 62%;
+  --mark-face-top: #ffffff;
+  --mark-face-bottom: #cbd5e1;
+  --mark-cap: #ffffff;
+  --mark-side-top: #94a3b8;
+  --mark-side-bottom: #475569;
+}
+
+/* ---- the light palette ---------------------------------------------------------------------------------------------
+ * Paper-white panes on a cool grey ground, ink-teal text, the same brass key. Elevation comes from the same surface steps
+ * (ground, pane, raised) plus a softer neutral shadow on floating layers. */
+:root[data-theme="light"],
+[data-palette="light"] {
+  color-scheme: light;
+  --color-marine: #e7eef0;
+  --color-pane: #f4f8f9;
+  --color-raised: #ffffff;
+  --color-hover: #dce7ea;
+  --color-hairline: rgb(16 48 60 / 0.12);
+  --color-hairline-strong: rgb(16 48 60 / 0.22);
+  --color-frost: #0f2630;
+  --color-mist: #41575f;
+  --color-fog: #52676e;
+  --color-brass: #d9a23a;
+  --color-brass-hi: #e3b255;
+  --color-brass-lo: #c28b26;
+  --color-on-brass: #231905;
+  --color-brass-ink: #7d550b;
+  --color-brass-ink-hi: #664508;
+  --color-verdigris: #0a7360;
+  --color-ember: #b4303a;
+  --color-danger: #c23b44;
+  --shadow-e1: 0 1px 0 rgb(15 38 48 / 0.06);
+  --shadow-e2: 0 1px 2px rgb(15 38 48 / 0.14);
+  --shadow-e3: 0 10px 28px -14px rgb(15 38 48 / 0.3);
+  --shadow-e4: 0 24px 56px -24px rgb(15 38 48 / 0.38);
+  --shadow-key: 0 1px 0 rgb(15 38 48 / 0.28);
+  --sel-bg: rgb(217 162 58 / 0.34);
+  --scroll-thumb: rgb(16 48 60 / 0.26);
+  --scroll-thumb-firefox: rgb(16 48 60 / 0.3);
+  --key-off-bg: rgb(217 162 58 / 0.18);
+  --key-off-fg: rgb(125 85 11 / 0.8);
+  --key-off-ring: rgb(125 85 11 / 0.26);
+  --frosted-bg: rgb(16 48 60 / 0.06);
+  --frosted-ring: rgb(16 48 60 / 0.1);
+  --ring-track: rgb(16 48 60 / 0.14);
+  --av-bg1: 90%;
+  --av-bg2: 84%;
+  --av-fg: 26%;
+  --av-bg1-dim: 94%;
+  --av-bg2-dim: 90%;
+  --av-fg-dim: 40%;
+  --mark-face-top: #5b6b80;
+  --mark-face-bottom: #2f3d50;
+  --mark-cap: #7b8ba0;
+  --mark-side-top: #2a3647;
+  --mark-side-bottom: #111a28;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --color-marine: #e7eef0;
+    --color-pane: #f4f8f9;
+    --color-raised: #ffffff;
+    --color-hover: #dce7ea;
+    --color-hairline: rgb(16 48 60 / 0.12);
+    --color-hairline-strong: rgb(16 48 60 / 0.22);
+    --color-frost: #0f2630;
+    --color-mist: #41575f;
+    --color-fog: #52676e;
+    --color-brass: #d9a23a;
+    --color-brass-hi: #e3b255;
+    --color-brass-lo: #c28b26;
+    --color-on-brass: #231905;
+    --color-brass-ink: #7d550b;
+    --color-brass-ink-hi: #664508;
+    --color-verdigris: #0a7360;
+    --color-ember: #b4303a;
+    --color-danger: #c23b44;
+    --shadow-e1: 0 1px 0 rgb(15 38 48 / 0.06);
+    --shadow-e2: 0 1px 2px rgb(15 38 48 / 0.14);
+    --shadow-e3: 0 10px 28px -14px rgb(15 38 48 / 0.3);
+    --shadow-e4: 0 24px 56px -24px rgb(15 38 48 / 0.38);
+    --shadow-key: 0 1px 0 rgb(15 38 48 / 0.28);
+    --sel-bg: rgb(217 162 58 / 0.34);
+    --scroll-thumb: rgb(16 48 60 / 0.26);
+    --scroll-thumb-firefox: rgb(16 48 60 / 0.3);
+    --key-off-bg: rgb(217 162 58 / 0.18);
+    --key-off-fg: rgb(125 85 11 / 0.8);
+    --key-off-ring: rgb(125 85 11 / 0.26);
+    --frosted-bg: rgb(16 48 60 / 0.06);
+    --frosted-ring: rgb(16 48 60 / 0.1);
+    --ring-track: rgb(16 48 60 / 0.14);
+    --av-bg1: 90%;
+    --av-bg2: 84%;
+    --av-fg: 26%;
+    --av-bg1-dim: 94%;
+    --av-bg2-dim: 90%;
+    --av-fg-dim: 40%;
+    --mark-face-top: #5b6b80;
+    --mark-face-bottom: #2f3d50;
+    --mark-cap: #7b8ba0;
+    --mark-side-top: #2a3647;
+    --mark-side-bottom: #111a28;
+  }
 }

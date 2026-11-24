@@ -3,6 +3,7 @@
 //! vault's id never reaches the screen.
 
 use super::*;
+use tauri::Manager;
 
 const PIN: &str = "2468";
 
@@ -11,7 +12,10 @@ fn the_defaults_a_new_install_reports() {
     let h = harness();
     assert_eq!(
         h.ok("device_get", json!({})),
-        json!({"timeZone": null, "setupDone": false, "timeCheck": true})
+        json!({
+            "timeZone": null, "setupDone": false, "timeCheck": true,
+            "theme": "system", "clipboardClear": 30
+        })
     );
 }
 
@@ -113,9 +117,127 @@ fn a_closed_gate_lets_only_the_read_commands_through() {
         ("device_set_time_zone", json!({"zone": "Asia/Dhaka"})),
         ("device_finish_setup", json!({})),
         ("device_set_time_check", json!({"on": false})),
+        ("device_set_theme", json!({"theme": "light"})),
+        ("device_set_clipboard_clear", json!({"seconds": 15})),
         ("demo_spawn", json!({})),
         ("demo_open", json!({})),
     ] {
         assert_eq!(h.err_code(cmd, args), "locked", "{cmd}");
     }
+}
+
+#[test]
+fn the_theme_and_the_clipboard_time_are_saved_by_the_core_not_by_the_web_view() {
+    let h = harness();
+    for (word, expected) in [("dark", "dark"), ("light", "light"), ("system", "system")] {
+        let d = h.ok("device_set_theme", json!({"theme": word}));
+        assert_eq!(d["theme"], expected);
+        assert_eq!(h.ok("device_get", json!({}))["theme"], expected);
+    }
+    // a word that is not a theme changes nothing
+    h.ok("device_set_theme", json!({"theme": "dark"}));
+    assert!(h
+        .call("device_set_theme", json!({"theme": "purple"}))
+        .is_err());
+    assert!(h.call("device_set_theme", json!({})).is_err());
+    assert_eq!(h.ok("device_get", json!({}))["theme"], "dark");
+
+    for seconds in [15, 60, 30] {
+        let d = h.ok("device_set_clipboard_clear", json!({"seconds": seconds}));
+        assert_eq!(d["clipboardClear"], seconds);
+    }
+    for bad in [0, 1, 20, 61, 3600] {
+        assert_eq!(
+            h.err_code("device_set_clipboard_clear", json!({"seconds": bad})),
+            "invalid_input",
+            "{bad}"
+        );
+    }
+    assert_eq!(h.ok("device_get", json!({}))["clipboardClear"], 30);
+
+    // both live in device.json (one small file), and nothing else new appeared in the data folder
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(h.dir.path().join("device.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["theme"], "dark");
+    assert_eq!(saved["clipboardClear"], 30);
+}
+
+#[test]
+fn the_native_window_is_told_the_theme_when_it_changes() {
+    use std::sync::Mutex;
+    let h = harness();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    h._app
+        .state::<AppState>()
+        .set_theme_hook(move |t| sink.lock().unwrap().push(t));
+    h.ok("device_set_theme", json!({"theme": "dark"}));
+    h.ok("device_set_theme", json!({"theme": "light"}));
+    // a refused call tells nobody
+    let _ = h.call("device_set_theme", json!({"theme": "purple"}));
+    use crate::storage::device::Theme;
+    assert_eq!(*seen.lock().unwrap(), vec![Theme::Dark, Theme::Light]);
+}
+
+#[test]
+fn removing_hexis_over_ipc_needs_all_three_steps_and_the_sum_then_closes_the_app() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let h = harness();
+    let exits = Arc::new(AtomicUsize::new(0));
+    let counter = exits.clone();
+    h._app.state::<AppState>().set_exit_hook(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    });
+
+    h.ok(
+        "profile_create",
+        json!({"displayName": "Ana", "password": PW}),
+    );
+    h.ok("device_set_theme", json!({"theme": "dark"}));
+    // anything but exactly three confirmed steps is refused, and nothing is touched
+    for bad in [json!(0), json!(2), json!(4), json!("3"), json!(null)] {
+        assert_eq!(
+            h.err_code("app_prepare_uninstall", json!({"confirmedSteps": bad})),
+            "invalid_input",
+            "{bad}"
+        );
+    }
+    // the sum is asked for first; a wrong or missing answer removes nothing
+    assert_eq!(
+        h.err_code("app_prepare_uninstall", json!({"confirmedSteps": 3})),
+        "wrong_answer"
+    );
+    h.ok("app_reset_challenge", json!({}));
+    assert_eq!(
+        h.err_code(
+            "app_prepare_uninstall",
+            json!({"confirmedSteps": 3, "answer": "1"})
+        ),
+        "wrong_answer"
+    );
+    assert!(h.dir.path().join("profiles.json").exists());
+    assert_eq!(exits.load(Ordering::SeqCst), 0, "no exit after a refusal");
+
+    h.ok("app_reset_challenge", json!({}));
+    let answer = h
+        ._app
+        .state::<AppState>()
+        .inner()
+        .core()
+        .gate()
+        .reset_answer()
+        .unwrap()
+        .to_string();
+    let r = h.ok(
+        "app_prepare_uninstall",
+        json!({"confirmedSteps": 3, "answer": answer}),
+    );
+    assert_eq!(r, Value::Null);
+    assert_eq!(exits.load(Ordering::SeqCst), 1, "the app is asked to close");
+    // the data folder is empty: not even device.json is left, and the folder itself is not recreated
+    let left: Vec<_> = std::fs::read_dir(h.dir.path())
+        .map(|d| d.map(|e| e.unwrap().file_name()).collect())
+        .unwrap_or_default();
+    assert!(left.is_empty(), "left behind: {left:?}");
 }

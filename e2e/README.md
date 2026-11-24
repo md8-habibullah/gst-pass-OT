@@ -11,7 +11,9 @@ npm run dev -- --port 1431                          # the UI (Vite)
 export SP=/tmp/hexis-e2e; mkdir -p $SP/shots2     # scratch folder: data, profiles, screenshots
 export E2E_BIN=$PWD/src-tauri/target/debug/examples/e2e_server
 node e2e/run.mjs                                    # accounts, items, history, trash, vault file, import, no plaintext on disk
+node e2e/theme-ui.mjs                               # light, dark and device setting in the browser preview, nothing stored by the page
 node e2e/real-gate.mjs                              # Stage 1 gate, decoy maths, panic, wipe, idle lock (scaled timer)
+node e2e/real-uninstall.mjs                         # theme and clipboard time kept by the core, "Remove Hexis from this device" leaves no file
 node e2e/real-drive.mjs                             # encrypted drive, 50 MB limit, attachments
 node e2e/real-import.mjs                            # import preview and commit, plaintext export, round trip
 node e2e/real-disguise.mjs                          # app name and icon (writes a launcher entry in a temp XDG folder)
@@ -27,5 +29,6 @@ node e2e/real-multi-s3.mjs                          # one primary and two second
 * `real-import.mjs` also imports **your own** exports when you point it at them (read only, never copied):
   `REAL_BW=~/Downloads/bitwarden_export_….json REAL_ENTE=~/Downloads/ente-auth-codes-plaintext-….txt node e2e/real-import.mjs`.
   Without those variables it runs only the synthetic steps.
-* `gate-ui`, `mobile-ui`, `import-ui`, `files-ui`, `sync-ui` check the browser **preview** backend (`npm run dev` with deep links such as `?vault=unlocked&filter=import`), not the real core.
+* `real-uninstall.mjs` plants what an older build's web view left in the data folder, tries the removal with the app lock closed (refused) and with a wrong sum (nothing removed), then removes with the right one and checks that no file is left but the shim's own `.hexis-e2e` marker, and that nothing is written afterwards. `theme-ui.mjs` emulates a light and a dark device (`prefers-color-scheme`) against every theme choice.
+* `gate-ui`, `mobile-ui`, `import-ui`, `files-ui`, `sync-ui`, `theme-ui` check the browser **preview** backend (`npm run dev` with deep links such as `?vault=unlocked&filter=import`), not the real core.
 * The shim answers `POST /e2e/pick-next {"path": "/abs"}` or `{"paths": [...]}` for the next native dialog (open file, key file, add files, save a copy, save an export; an empty queue cancels) and `GET /e2e/last-saved` for the last saved file. It is dev-only: it is an example binary, not part of any build.

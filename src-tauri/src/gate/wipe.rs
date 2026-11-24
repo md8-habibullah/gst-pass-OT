@@ -11,7 +11,9 @@
 //!    nothing in the vault can be opened again (there is no key material to unlock), even if
 //!    everything after this is interrupted.
 //! 2. Every known file is **overwritten with zeros** in chunks, fsynced, truncated and unlinked.
-//! 3. The emptied known folders are removed (a folder that still holds unknown files stays).
+//! 3. The emptied known folders are removed (a folder that still holds unknown files stays). The web
+//!    view's own folders (`storage::webview_data`: caches and local storage an older build let it keep
+//!    in this folder) are removed too; they are not secret, so they are only unlinked, not overwritten.
 //!
 //! It deletes **only known Hexis paths** under the folder it is given; it never calls
 //! `remove_dir_all`; files it does not know are left alone and listed in the report. It is
@@ -25,6 +27,7 @@
 use crate::storage::files;
 use crate::storage::profiles::{REGISTRY_FILE, VAULTS_DIR, VAULT_FILE};
 use crate::storage::uuid;
+use crate::storage::webview_data;
 use rusqlite::{Connection, OpenFlags};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -101,6 +104,8 @@ pub struct WipeError {
 pub struct WipeReport {
     pub files_removed: usize,
     pub dirs_removed: usize,
+    /// Files and folders of the web view's own storage that an older build left (`storage::webview_data`).
+    pub web_view_removed: usize,
     /// Unknown files and folders that were left alone (relative to the data folder).
     pub unknown: Vec<PathBuf>,
     pub errors: Vec<WipeError>,
@@ -304,6 +309,8 @@ fn scan(root: &Path, plan: &WipePlan) -> Result<Layout, Refused> {
             } else {
                 l.unknown.push(rel(root, &path));
             }
+        } else if webview_data::is_webview_name(&name) {
+            // The web view's own storage: removed in the last step, not an unknown file.
         } else {
             l.unknown.push(rel(root, &path));
         }
@@ -476,6 +483,7 @@ pub fn secure_wipe_all_local_data(
             }
         }
     }
+    report.web_view_removed = webview_data::remove(&canon);
     let _ = files::fsync_dir(&canon);
     Ok(report)
 }

@@ -52,7 +52,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 ) {
   const tones = {
     default: "text-mist hover:bg-hover hover:text-frost",
-    key: "text-brass hover:bg-hover hover:text-brass-hi",
+    key: "text-brass-ink hover:bg-hover hover:text-brass-ink-hi",
     danger: "text-ember hover:bg-hover",
   } as const;
   const dims = size === "sm" ? "size-8 pointer-coarse:size-11" : "size-9 pointer-coarse:size-12";

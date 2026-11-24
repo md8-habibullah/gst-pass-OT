@@ -106,7 +106,7 @@ export function RepromptHost() {
       size="sm"
       level={2}
       dismissible={!busy}
-      titleIcon={tone === "danger" ? <ShieldAlert className="size-5 text-ember" aria-hidden /> : <KeyRound className="size-5 text-brass" aria-hidden />}
+      titleIcon={tone === "danger" ? <ShieldAlert className="size-5 text-ember" aria-hidden /> : <KeyRound className="size-5 text-brass-ink" aria-hidden />}
     >
       <form onSubmit={submit} className="flex flex-col gap-4 pt-1">
         <div className="flex flex-col gap-1.5">

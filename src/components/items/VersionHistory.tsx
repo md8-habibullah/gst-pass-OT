@@ -132,10 +132,10 @@ export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }
                   const lifecycle = e.event === "trashed" || e.event === "restored";
                   return (
                     <li key={`${e.version}-${e.timestamp}-${e.otherDevice ? "o" : "l"}`} className="relative py-2.5">
-                      <span aria-hidden className={`absolute top-[18px] -left-[25px] size-2.5 rounded-full border-2 ${isLatest ? "border-brass bg-brass" : "border-mist/60 bg-pane"}`} />
+                      <span aria-hidden className={`absolute top-[18px] -left-[25px] size-2.5 rounded-full border-2 ${isLatest ? "border-brass-ink bg-brass-ink" : "border-mist/60 bg-pane"}`} />
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="font-semibold">Version {e.version}</span>
-                        {isLatest && <span className="rounded-full bg-brass/15 px-2 py-0.5 text-[0.8em] font-medium text-brass-hi">Current</span>}
+                        {isLatest && <span className="rounded-full bg-brass/15 px-2 py-0.5 text-[0.8em] font-medium text-brass-ink-hi">Current</span>}
                         {e.otherDevice && <span className="rounded-full bg-raised px-2 py-0.5 text-[0.8em] font-medium text-mist shadow-e1">From another device</span>}
                         <span className="text-mist">{EVENT_LABEL[e.event]}{e.restoredFrom ? ` (version ${e.restoredFrom})` : ""}</span>
                       </div>
@@ -152,7 +152,7 @@ export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }
                       {!lifecycle && (
                         <p className="mt-2 flex gap-1.5">
                           <Button className="min-h-8" icon={<Eye className="size-3.5" />} onClick={() => void view(e.version)}>View</Button>
-                          {!isLatest && <Button variant="ghost" className="min-h-8 text-brass hover:text-brass-hi" icon={<RotateCcw className="size-3.5" />} onClick={() => void restore(e.version)}>Restore this version</Button>}
+                          {!isLatest && <Button variant="ghost" className="min-h-8 text-brass-ink hover:text-brass-ink-hi" icon={<RotateCcw className="size-3.5" />} onClick={() => void restore(e.version)}>Restore this version</Button>}
                         </p>
                       )}
                     </li>

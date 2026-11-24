@@ -346,15 +346,18 @@ function parseTotp(raw: string) {
 async function totpAt(raw: string, nowMs: number): Promise<TotpNow> {
   const { key, period, digits, alg } = parseTotp(raw);
   const counter = Math.floor(nowMs / 1000 / period);
-  const msg = new ArrayBuffer(8);
-  new DataView(msg).setBigUint64(0, BigInt(counter));
   const k = await crypto.subtle.importKey("raw", key.buffer as ArrayBuffer, { name: "HMAC", hash: alg }, false, ["sign"]);
-  const h = new Uint8Array(await crypto.subtle.sign("HMAC", k, msg));
-  const o = h[h.length - 1]! & 0x0f;
-  const bin = ((h[o]! & 0x7f) << 24) | (h[o + 1]! << 16) | (h[o + 2]! << 8) | h[o + 3]!;
-  const code = String(bin % 10 ** digits).padStart(digits, "0");
+  const at = async (c: number) => {
+    const msg = new ArrayBuffer(8);
+    new DataView(msg).setBigUint64(0, BigInt(Math.max(0, c)));
+    const h = new Uint8Array(await crypto.subtle.sign("HMAC", k, msg));
+    const o = h[h.length - 1]! & 0x0f;
+    const bin = ((h[o]! & 0x7f) << 24) | (h[o + 1]! << 16) | (h[o + 2]! << 8) | h[o + 3]!;
+    return String(bin % 10 ** digits).padStart(digits, "0");
+  };
+  const [code, previous, next] = [await at(counter), await at(counter - 1), await at(counter + 1)];
   const validUntilMs = (counter + 1) * period * 1000;
-  return { code, period, digits, validUntilMs, secondsRemaining: Math.max(0, Math.ceil((validUntilMs - nowMs) / 1000)) };
+  return { code, previous, next, period, digits, validUntilMs, secondsRemaining: Math.max(0, Math.ceil((validUntilMs - nowMs) / 1000)) };
 }
 
 function view(s: Stored): ItemView {
@@ -381,7 +384,8 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
 }
 
 // ---- device settings and the demo vault (same rules as the core; see storage/device.rs and storage/demo.rs) ----
-let device: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true };
+const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30 };
+let device: DeviceInfo = { ...FRESH_DEVICE };
 let demoId: string | null = null;
 const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info, ...(p.info.id === demoId ? { demo: true } : {}) });
 function seedDemo(p: MockProfile) {
@@ -833,6 +837,11 @@ export const previewBackend: Backend = {
   },
   async appResetChallenge() { return gate.resetChallenge(); },
   async appReset(answer) { if (!gate.reset(answer)) err("wrong_answer", "That is not the answer. Try the new sum."); },
+  async appPrepareUninstall(answer) {
+    if (!gate.reset(answer)) err("wrong_answer", "That is not the answer. Try the new sum.");
+    // Nothing is made again, not even the device file: the real core removes the data folder and the app closes.
+    device = { ...FRESH_DEVICE };
+  },
   async appSettingsGet() { return { ...appSettings }; },
   async appSettingsSet(input) { appSettings = { ...input }; return { ...appSettings }; },
   async activityPing() { /* the preview never times out */ },
@@ -870,6 +879,16 @@ export const previewBackend: Backend = {
   },
   async deviceFinishSetup() { device = { ...device, setupDone: true }; return { ...device }; },
   async deviceSetTimeCheck(on) { device = { ...device, timeCheck: on }; return { ...device }; },
+  async deviceSetTheme(theme) {
+    if (theme !== "system" && theme !== "light" && theme !== "dark") err("invalid_input", "Choose light, dark or system.");
+    device = { ...device, theme };
+    return { ...device };
+  },
+  async deviceSetClipboardClear(seconds) {
+    if (seconds !== 15 && seconds !== 30 && seconds !== 60) err("invalid_input", "Choose 15, 30 or 60 seconds.");
+    device = { ...device, clipboardClear: seconds };
+    return { ...device };
+  },
   async clockStatus() { return clockView(); },
   async clockSync() {
     if (!device.timeCheck) err("invalid_input", "The online time check is switched off. Switch it on first.");

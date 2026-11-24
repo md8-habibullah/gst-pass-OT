@@ -1,6 +1,7 @@
-import { getBackend, type Backend, type BackupTargetInput, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type TrashEntry, type VaultStatus } from "../backend";
+import { getBackend, type Backend, type BackupTargetInput, type ClipboardClear, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type Theme, type TrashEntry, type VaultStatus } from "../backend";
 import { setDisplayZone } from "../lib/format";
 import { canGenerate, DEFAULT_GEN, savedOrDefault, type GenOptions } from "../lib/password";
+import { applyTheme } from "../lib/theme";
 import { setBrand } from "./brand";
 import { createStore } from "./store";
 import { setLockIntent, type LockFlow } from "./ui";
@@ -12,13 +13,14 @@ import { setLockIntent, type LockFlow } from "./ui";
  * welcome    no account exists and the built-in vault could not be made: the plain create / import / restore choices
  * picker     several accounts exist and none is chosen
  * locked     one account is chosen; its master password is needed (the demo vault opens itself)
+ * removed     "Remove Hexis from this device" is done: nothing is left to show but what to do next
  */
-export type Phase = "boot" | "gate" | "setup" | "preparing" | "welcome" | "picker" | "locked" | "ready" | "failed";
+export type Phase = "boot" | "gate" | "setup" | "preparing" | "welcome" | "picker" | "locked" | "ready" | "failed" | "removed";
 
 export type Filter =
   | "all" | "logins" | "cards" | "identities" | "ssh" | "notes" | "media" | "files" | "favorites" | "codes" | "archive" | "trash"
   | "generator" | "import" | "export" | "backup" | "settings";
-export type ClipboardClear = 15 | 30 | 60;
+export type { ClipboardClear };
 
 export interface ToastAction {
   label: string;
@@ -54,6 +56,7 @@ export interface AppState {
   /** True for the single render after unlocking so the shell can play the entrance sequence once. */
   justUnlocked: boolean;
   toasts: Toast[];
+  /** How long a copied secret stays on the clipboard. Kept by the core with the other device settings, never in the web view. */
   clipboardClear: ClipboardClear;
   /**
    * The password generator's settings, the same in every place that shows the generator. Remembered in the vault (and
@@ -62,18 +65,6 @@ export interface AppState {
   generator: GenOptions;
   /** Last value of the core's pull counter. When it moves, a pull from the backup changed local data and the lists reload. */
   syncRevision: number;
-}
-
-const PREF_KEY = "hexis.prefs.v1";
-
-function loadPrefs(): Pick<AppState, "clipboardClear"> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as { clipboardClear?: number };
-    if (raw.clipboardClear === 15 || raw.clipboardClear === 30 || raw.clipboardClear === 60) return { clipboardClear: raw.clipboardClear };
-  } catch {
-    /* storage unavailable or corrupt: use defaults */
-  }
-  return { clipboardClear: 30 };
 }
 
 export const app = createStore<AppState>({
@@ -93,7 +84,7 @@ export const app = createStore<AppState>({
   toasts: [],
   syncRevision: 0,
   generator: { ...DEFAULT_GEN },
-  ...loadPrefs(),
+  clipboardClear: 30,
 });
 
 /**
@@ -103,6 +94,13 @@ export const app = createStore<AppState>({
 export const isLabelledDemo = (device: DeviceInfo | null, p: ProfileInfo | null): boolean => p?.demo === true && device?.setupDone === false;
 
 const patch = (p: Partial<AppState>) => app.set((s) => ({ ...s, ...p }));
+
+/** The device settings were read or changed: the time zone, the colours and the clipboard time all follow them. */
+function adoptDevice(device: DeviceInfo): void {
+  setDisplayZone(device.timeZone);
+  applyTheme(device.theme);
+  patch({ device, clipboardClear: device.clipboardClear });
+}
 
 let backend: Backend | null = null;
 export function be(): Backend {
@@ -150,8 +148,8 @@ export async function boot(): Promise<void> {
     backend = await getBackend();
     const [suite, gate, disguise, device] = await Promise.all([backend.suiteInfo(), backend.gateStatus(), backend.disguiseGet(), backend.deviceGet()]);
     setBrand(disguise);
-    setDisplayZone(device.timeZone);
-    patch({ suite, gate, device });
+    patch({ suite, gate });
+    adoptDevice(device);
     if (gate.enabled && !gate.open) {
       patch({ phase: "gate" });
       return;
@@ -164,9 +162,7 @@ export async function boot(): Promise<void> {
 
 /** Reads the device settings again (zone, setup, time check), for a change made outside the screens. */
 export async function refreshDevice(): Promise<void> {
-  const device = await be().deviceGet();
-  setDisplayZone(device.timeZone);
-  patch({ device });
+  adoptDevice(await be().deviceGet());
 }
 
 export async function refreshProfiles(): Promise<void> {
@@ -335,22 +331,20 @@ export async function openDemo(): Promise<void> {
 
 /** Saves the zone every time is shown in. Everything the app stores stays UTC. */
 export async function chooseTimeZone(zone: string): Promise<void> {
-  const device = await be().deviceSetTimeZone(zone);
-  setDisplayZone(device.timeZone);
-  patch({ device });
+  adoptDevice(await be().deviceSetTimeZone(zone));
 }
 
 /** The first page: remember the zone, then carry on to the accounts. An install that already had vaults is not a first run. */
 export async function confirmTimeZone(zone: string): Promise<void> {
   await chooseTimeZone(zone);
   const list = await be().listProfiles();
-  if (list.profiles.length > 0 && !app.get().device?.setupDone) patch({ device: await be().deviceFinishSetup() });
+  if (list.profiles.length > 0 && !app.get().device?.setupDone) adoptDevice(await be().deviceFinishSetup());
   await continueToAccounts();
 }
 
 /** The one-time welcome over the demo was read. `go` carries on to a way of getting a real vault. */
 export async function finishFirstRun(go: LockFlow | null = null): Promise<void> {
-  patch({ device: await be().deviceFinishSetup() });
+  adoptDevice(await be().deviceFinishSetup());
   if (go) {
     setLockIntent(go);
     await showPicker();
@@ -358,7 +352,7 @@ export async function finishFirstRun(go: LockFlow | null = null): Promise<void> 
 }
 
 export async function setTimeCheck(on: boolean): Promise<void> {
-  patch({ device: await be().deviceSetTimeCheck(on) });
+  adoptDevice(await be().deviceSetTimeCheck(on));
 }
 
 // ---- Stage 1 gate ----
@@ -370,8 +364,8 @@ async function afterWipe(): Promise<void> {
   const b = be();
   const [gate, disguise, device] = await Promise.all([b.gateStatus(), b.disguiseGet(), b.deviceGet()]);
   setBrand(disguise);
-  setDisplayZone(device.timeZone);
-  patch({ ...EMPTY_VAULT, profiles: [], profile: null, gate, device });
+  patch({ ...EMPTY_VAULT, profiles: [], profile: null, gate });
+  adoptDevice(device);
   // The time zone survives the erase, so the new start has no setup page: it opens straight into the built-in vault.
   if (needsZone()) patch({ phase: "setup" });
   else await spawnDemo();
@@ -423,6 +417,17 @@ export const resetChallenge = (): Promise<string> => be().appResetChallenge();
 export async function resetAppData(answer: string): Promise<void> {
   await be().appReset(answer);
   await afterWipe();
+}
+/**
+ * "Remove Hexis from this device": the same confirmations as the erase, but nothing is made again afterwards. The core
+ * removes the vaults, the settings and the web view's leftovers and then closes the app (a computer) or waits for the
+ * system's uninstall (a phone). The colours stay as chosen until then.
+ */
+export async function prepareUninstall(answer: string): Promise<void> {
+  await be().appPrepareUninstall(answer);
+  // Nothing is read from the core after this: it has nothing left to answer with. The screen only says what to do next,
+  // and the activity watcher stops with the phase, so no call goes to the core again.
+  patch({ ...EMPTY_VAULT, profiles: [], profile: null, gate: null, phase: "removed" });
 }
 export async function refreshGate(): Promise<GateStatus> {
   const gate = await be().gateStatus();
@@ -489,12 +494,30 @@ export const select = (id: string | null) => patch({ selectedId: id });
 export const setFilter = (filter: Filter) => patch({ filter, selectedId: null });
 export const setQuery = (query: string) => patch({ query });
 
-export function setClipboardClear(sec: ClipboardClear) {
+/**
+ * How long a copied secret stays on the clipboard. The core keeps it (`device.json`), never the web view: the screen stores
+ * nothing, so nothing of it is left behind when Hexis is removed.
+ */
+export async function setClipboardClear(sec: ClipboardClear): Promise<void> {
+  const before = app.get().clipboardClear;
   patch({ clipboardClear: sec });
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ clipboardClear: sec }));
-  } catch {
-    /* preference simply will not persist */
+    adoptDevice(await be().deviceSetClipboardClear(sec));
+  } catch (e) {
+    patch({ clipboardClear: before });
+    pushToast({ kind: "error", text: e instanceof Error ? e.message : "The clipboard time could not be saved." });
+  }
+}
+
+/** Light, dark or the device's own setting. The colours change at once; the core keeps the choice in `device.json`. */
+export async function setTheme(theme: Theme): Promise<void> {
+  const before = app.get().device?.theme ?? "system";
+  applyTheme(theme);
+  try {
+    adoptDevice(await be().deviceSetTheme(theme));
+  } catch (e) {
+    applyTheme(before);
+    pushToast({ kind: "error", text: e instanceof Error ? e.message : "The colour choice could not be saved." });
   }
 }
 

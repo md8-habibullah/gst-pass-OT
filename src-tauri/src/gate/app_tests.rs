@@ -846,3 +846,128 @@ fn the_wipe_is_idempotent_on_an_empty_folder_and_never_removes_the_folder_or_its
         b"keep"
     );
 }
+
+// ------------------------------------------------------------------ remove Hexis from this device (before an uninstall)
+
+/// `app_prepare_uninstall` the way the screen does it: ask for the sum, answer it.
+fn prepare_uninstall(app: &AppCore, steps: u64) -> Result<(), StorageError> {
+    app.app_reset_challenge();
+    let answer = app
+        .gate()
+        .reset_answer()
+        .expect("a sum is waiting")
+        .to_string();
+    app.app_prepare_uninstall(steps, &answer)
+}
+
+/// What an older build's web view left in the data folder.
+fn leave_web_view_data(root: &Path) {
+    for (path, body) in [
+        ("localstorage/http_localhost_1420.localstorage", "prefs"),
+        ("WebKitCache/Version 17/Records/aa/bb", "cached page"),
+        ("WebKitCache/Version 17/salt", "salt"),
+        ("CacheStorage/salt", "salt"),
+        ("mediakeys/v1/salt", "salt"),
+        ("hsts-storage.sqlite", "hsts"),
+    ] {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+}
+
+#[test]
+fn an_erase_also_removes_the_web_views_leftovers_but_keeps_the_device_settings() {
+    let fx = Fx::new();
+    fx.account("Ana", PW);
+    fx.app.device_set_time_zone("Asia/Dhaka").unwrap();
+    fx.app
+        .device_set_theme(crate::storage::device::Theme::Dark)
+        .unwrap();
+    leave_web_view_data(fx.root());
+    erase(&fx.app, 3).unwrap();
+    let left = fx.tree();
+    assert_eq!(
+        left,
+        vec!["device.json".to_string()],
+        "no vault, no cache, no local storage; only the settings an erase keeps on purpose"
+    );
+    let d = fx.app.device_get();
+    assert_eq!(d.time_zone.as_deref(), Some("Asia/Dhaka"));
+    assert_eq!(d.theme, crate::storage::device::Theme::Dark);
+}
+
+#[test]
+fn removing_hexis_from_the_device_leaves_nothing_of_ours_behind() {
+    let fx = Fx::new();
+    let (ana, _bob) = realistic(&fx);
+    fx.app.device_set_time_zone("Asia/Dhaka").unwrap();
+    fx.app.device_finish_setup().unwrap();
+    fx.app.device_set_clipboard_clear(60).unwrap();
+    leave_web_view_data(fx.root());
+    assert!(fx.tree().contains(&"device.json".to_string()));
+    assert!(fx.tree().contains(&format!("vaults/{ana}/vault.db")));
+
+    // wrong confirmations and a wrong sum remove nothing
+    for steps in [0, 1, 2, 4, 99] {
+        assert_eq!(
+            code(prepare_uninstall(&fx.app, steps)),
+            "invalid_input",
+            "{steps}"
+        );
+    }
+    fx.app.app_reset_challenge();
+    assert_eq!(code(fx.app.app_prepare_uninstall(3, "1")), "wrong_answer");
+    assert!(fx.tree().contains(&"device.json".to_string()));
+    assert!(fx.tree().contains(&format!("vaults/{ana}/vault.db")));
+
+    prepare_uninstall(&fx.app, 3).unwrap();
+    assert_eq!(
+        fx.tree(),
+        vec!["notes.txt".to_string()],
+        "vaults, settings and web view data are gone; a file that is not ours stays"
+    );
+    assert!(!contains(&fx.all_bytes(), MARKER));
+    // the settings in memory are the defaults, and asking for them writes nothing
+    let d = fx.app.device_get();
+    assert_eq!(
+        (d.time_zone, d.setup_done, d.clipboard_clear),
+        (None, false, 30)
+    );
+    let _ = fx.app.profile_list();
+    let _ = fx.app.status();
+    assert_eq!(
+        fx.tree(),
+        vec!["notes.txt".to_string()],
+        "nothing was made afterwards"
+    );
+    // unlike a reset it makes no demo vault and no default files
+    assert!(fx.app.profile_list().unwrap().profiles.is_empty());
+}
+
+#[test]
+fn the_data_folder_itself_goes_when_nothing_else_is_in_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("dev.habibullah.hexis");
+    std::fs::create_dir_all(&root).unwrap();
+    let app = open_app(&root);
+    app.profile_create("Ana", PW.into()).unwrap();
+    leave_web_view_data(&root);
+    prepare_uninstall(&app, 3).unwrap();
+    assert!(!root.exists(), "the folder is removed, not just emptied");
+    assert!(tmp.path().read_dir().unwrap().next().is_none());
+}
+
+#[test]
+fn removing_hexis_is_closed_while_the_app_lock_is_closed() {
+    let fx = Fx::new();
+    fx.account("Ana", PW);
+    fx.app.gate_configure(pin("2468", PW)).unwrap();
+    fx.app.gate_close();
+    assert_eq!(
+        code(fx.app.before_command("app_prepare_uninstall")),
+        "locked",
+        "a closed lock screen cannot remove the app's data (a reset can: it is for a forgotten passcode)"
+    );
+    assert!(fx.app.before_command("app_reset").is_ok());
+}

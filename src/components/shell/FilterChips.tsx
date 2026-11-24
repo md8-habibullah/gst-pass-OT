@@ -14,7 +14,7 @@ export function FilterChips() {
       {CHIPS.map((c) => {
         const on = filter === c.filter;
         return (
-          <button key={c.filter} type="button" role="tab" aria-selected={on} onClick={() => setFilter(c.filter)} className={`pressable min-h-10 shrink-0 rounded-full border px-4 text-[0.93em] font-medium ${on ? "border-brass/60 bg-brass/15 text-brass-hi" : "border-hairline bg-raised text-mist"}`}>
+          <button key={c.filter} type="button" role="tab" aria-selected={on} onClick={() => setFilter(c.filter)} className={`pressable min-h-10 shrink-0 rounded-full border px-4 text-[0.93em] font-medium ${on ? "border-brass-ink/60 bg-brass/15 text-brass-ink-hi" : "border-hairline bg-raised text-mist"}`}>
             {c.label}
             <span className="ml-1.5 text-fog">{totals[c.filter]}</span>
           </button>

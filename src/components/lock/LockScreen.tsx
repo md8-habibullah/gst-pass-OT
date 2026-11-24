@@ -30,7 +30,7 @@ function AddChoices({ onChoose, first }: { onChoose: (f: LockFlow) => void; firs
     <div className="flex flex-col gap-2.5">
       {rows.map((r, i) => (
         <button key={r.flow} type="button" onClick={() => onChoose(r.flow)} className={`pressable group flex items-center gap-4 rounded-lg border px-4 py-3.5 text-left pointer-coarse:py-4 ${first && i === 0 ? "border-hairline-strong bg-raised hover:bg-hover" : "border-hairline bg-pane hover:bg-raised"}`}>
-          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-marine text-brass">{r.icon}</span>
+          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-marine text-brass-ink">{r.icon}</span>
           <span className="min-w-0 flex-1">
             <span className="block font-semibold">{r.title}</span>
             <span className="block text-[0.93em] text-mist">{r.text}</span>

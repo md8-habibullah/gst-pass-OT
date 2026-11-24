@@ -1,6 +1,6 @@
 # UI_DESIGN_SYSTEM — "Strongroom"
 
-Visual and interaction system for the Hexis UI (`src/`). Dark only. Written before the components; the code in `src/styles/` and `src/components/` implements exactly this. Backend boundary: `IPC_CONTRACT.md`.
+Visual and interaction system for the Hexis UI (`src/`). Dark and light (§2 and §10; the person chooses, or the device decides). Written before the components; the code in `src/styles/` and `src/components/` implements exactly this. Backend boundary: `IPC_CONTRACT.md`.
 
 ## 1. Direction
 
@@ -15,6 +15,8 @@ The one memorable element is the **unlock moment** (§6). The signature detail i
 Defined once in `src/styles/tokens.css`; Tailwind utilities are generated from them (`bg-pane`, `text-mist`, `rounded-lg` ...).
 
 ### Colour (contrast measured against the real surfaces, WCAG 2.x)
+
+There are two complete palettes, dark and light (D37); this table is the dark one. The light palette is below it.
 
 | Token | Hex | Role | Contrast on pane / raised / hover |
 |-------|-----|------|-----------------------------------|
@@ -31,6 +33,25 @@ Defined once in `src/styles/tokens.css`; Tailwind utilities are generated from t
 | `verdigris` | `#52D3B8` | secure/healthy state, fresh TOTP window | 9.3 / 8.1 / 7.0 |
 | `ember` | `#F0737A` | danger text, low TOTP time | 6.1 / 5.3 / 4.6 |
 | `danger` | `#C23B44` | destructive button fill (white text 5.3) | – |
+
+**Light palette** (`:root[data-theme="light"]`, and `prefers-color-scheme: light` when no theme is chosen):
+
+| Token | Hex | Role | Contrast on pane / raised / hover |
+|-------|-----|------|-----------------------------------|
+| `marine` | `#E7EEF0` | window ground | – |
+| `pane` | `#F4F8F9` | pane surfaces | – |
+| `raised` | `#FFFFFF` | raised rows, inputs | – |
+| `hover` | `#DCE7EA` | hover / selected | – |
+| `frost` | `#0F2630` | primary text | 14.7 / 15.7 / 12.4 |
+| `mist` | `#41575F` | secondary text | 7.1 / 7.6 / 6.1 |
+| `fog` | `#52676E` | tertiary text, hints | 5.6 / 6.0 / 4.7 |
+| `brass` | `#D9A23A` | the key button fill | – (label `on-brass` `#231905`: 7.6) |
+| `brass-ink` | `#7D550B` | the accent as text, focus ring, selection edge, dots | 6.2 / 6.6 / 5.2 |
+| `verdigris` | `#0A7360` | secure/healthy state | 5.4 / 5.8 / 4.6 |
+| `ember` | `#B4303A` | danger text | 5.7 / 6.1 / 4.9 |
+| `danger` | `#C23B44` | destructive button fill (white text 5.2) | – |
+
+`brass-ink` is new: the accent used as text, a line or a dot. In the dark palette it equals `brass`; in the light one it is the darker `#7D550B`, because the gold fill is too pale to read as text on white. `brass` (the fill of the key button) is gold in both. Hairlines are the ink colour at 12% and 22% (`rgb(16 48 60 / …)`) instead of the pale tint, and shadows are small and neutral (`--shadow-e1` … `e4`, plain variables with hand-written `shadow-e1`/`shadow-e2` utilities, because Tailwind would inline a theme shadow and make it unthemeable). The avatar hues, the ring track, selection, scrollbar, the key's disabled look and the pale "frosted" secret pill are variables too. The logo's gradient (an existing brand asset) is the same in both. `<meta name="color-scheme" content="light dark">` and `color-scheme` on the root keep form controls and scrollbars in step.
 
 Surfaces (`surface` utility, was `glass`): a solid fill from the marine ramp and a hairline `rgba(190, 230, 240, 0.10)`. No `backdrop-filter`, no lattice, no coloured glow. Text on a surface is always `frost`/`mist`.
 
@@ -165,3 +186,13 @@ Dev-only deep links for screenshots (preview backend only): `?vault=unlocked|loc
 **Time on screen.** `lib/format.ts` holds the display zone (`setDisplayZone`); every date and time the UI writes goes through it. The Date and time page names the zone, the online check (switch, status, "Check now", the measured difference to this device's clock) and what is stored (UTC).
 
 **A CSS rule that matters.** The base `button { color: inherit }` reset sits in `@layer base`. Unlayered, it beat every Tailwind v4 utility and made all button text pale; keep every reset in a layer.
+
+## 10. Two themes (2026-11-25)
+
+**Choice.** Settings > Theme (`ThemePage`): *Device setting* (default), *Light*, *Dark*, each with a small drawing of the app in that palette (the first drawn half and half). It applies at once, is kept by the core in `device.json` (the web view stores nothing, D32/D33) and also drives the lock screens, because `device_get` is open while the app lock is closed. On desktop the native window (title bar, dialogs) follows through a hook; on Android the status and navigation bar icons follow through `HexisBars.setLook`.
+
+**How it switches.** `<html data-theme="light|dark">` is written by `lib/theme.ts` once the core has answered; with no attribute the stylesheet follows `prefers-color-scheme`. The palette lives only in `src/styles/tokens.css`: no component carries a hard-coded colour for a surface or a text. The accent has two roles: `brass` (the key button's fill, gold in both themes) and `brass-ink` (the accent as text, line, ring or dot; darker in light so it reaches 4.5:1). `[data-palette="dark|light"]` scopes a palette to a subtree, which the theme previews use.
+
+**Checks.** `src/styles/tokens.test.ts` (vitest) keeps the four copies of the palette identical, requires that every colour the dark palette has is redefined for light, and checks WCAG contrast of every text colour on every surface in both palettes (text 4.5, primary text 7, marks 3), the key button's label in all three states, white text on the danger button, error and accent washes, and that each surface step is a visible step. End to end: `e2e/theme-ui.mjs` (emulated light and dark device against every choice) and `e2e/real-uninstall.mjs` (the choice kept by the core and applied on the next start). Both palettes were also looked at in headless Chromium on the desktop and the phone layout.
+
+**Not verified.** How WebKitGTK and the Android WebView draw the light palette (only headless Chromium was used); the native title bar following the theme; the Android bar icons (the Kotlin was not built here).

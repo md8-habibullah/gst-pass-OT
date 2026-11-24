@@ -147,7 +147,7 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
             </p>
           )}
           {parse.kind === "export" && (
-            <p className="flex items-start gap-2 text-[0.93em] text-brass-hi" role="status">
+            <p className="flex items-start gap-2 text-[0.93em] text-brass-ink-hi" role="status">
               <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
               <span>
                 This export holds {parse.accounts.length} accounts{parse.skipped ? ` (${parse.skipped} unsupported ${parse.skipped === 1 ? "entry is" : "entries are"} left out)` : ""}.{" "}

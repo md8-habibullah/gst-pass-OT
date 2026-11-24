@@ -168,7 +168,7 @@ export function GateScreen() {
                   value={value} onChange={(e) => setValue(e.target.value)} disabled={busy}
                   type="text" inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                   aria-label="Your answer" data-autofocus enterKeyHint="go"
-                  className={`min-h-12 w-full rounded-sm border border-hairline-strong bg-pane px-4 text-center text-[1.2em] tracking-wide outline-none focus-visible:border-brass ${[...value].length > MATH_MAX_LENGTH ? "mask-chars" : ""}`}
+                  className={`min-h-12 w-full rounded-sm border border-hairline-strong bg-pane px-4 text-center text-[1.2em] tracking-wide outline-none focus-visible:border-brass-ink ${[...value].length > MATH_MAX_LENGTH ? "mask-chars" : ""}`}
                 />
                 <Button type="submit" variant="key" block disabled={busy || !value} className="min-h-11" icon={<CornerDownLeft className="size-4" />}>Enter</Button>
               </form>

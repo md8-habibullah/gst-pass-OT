@@ -102,12 +102,12 @@ export function GridPad({ disabled, onDigit, onBackspace, onPattern, onSubmit }:
             <button
               key={d} type="button" data-node={d} aria-disabled={disabled || undefined} aria-label={`Number ${d}`}
               onKeyDown={(e) => { if (!disabled && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onDigit(d); } }}
-              className={`grid size-[4.25rem] place-items-center rounded-full border text-[1.45em] font-medium transition-colors duration-75 pointer-coarse:size-[4.5rem] ${on ? "border-brass bg-raised text-brass-hi" : "border-hairline-strong bg-raised hover:bg-hover"}`}
+              className={`grid size-[4.25rem] place-items-center rounded-full border text-[1.45em] font-medium transition-colors duration-75 pointer-coarse:size-[4.5rem] ${on ? "border-brass-ink bg-raised text-brass-ink-hi" : "border-hairline-strong bg-raised hover:bg-hover"}`}
             >{d}</button>
           );
         })}
         <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" aria-hidden>
-          <polyline ref={line} points="" fill="none" stroke="var(--color-brass)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          <polyline ref={line} points="" fill="none" stroke="var(--color-brass-ink)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
       <div className="grid w-full max-w-[16.5rem] grid-cols-3 gap-x-7">

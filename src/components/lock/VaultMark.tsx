@@ -37,16 +37,16 @@ export function VaultMark({ size = 64, open = false, busy = false }: { size?: nu
       aria-busy={busy || undefined}
     >
       <defs>
-        <linearGradient id={face} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#FFFFFF" /><stop offset="1" stopColor="#CBD5E1" /></linearGradient>
-        <linearGradient id={side} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#94A3B8" /><stop offset="1" stopColor="#475569" /></linearGradient>
+        <linearGradient id={face} x1="0" y1="0" x2="0" y2="1"><stop offset="0" style={{ stopColor: "var(--mark-face-top, #FFFFFF)" }} /><stop offset="1" style={{ stopColor: "var(--mark-face-bottom, #CBD5E1)" }} /></linearGradient>
+        <linearGradient id={side} x1="0" y1="0" x2="0" y2="1"><stop offset="0" style={{ stopColor: "var(--mark-side-top, #94A3B8)" }} /><stop offset="1" style={{ stopColor: "var(--mark-side-bottom, #475569)" }} /></linearGradient>
         <linearGradient id={accent} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#38BDF8" /><stop offset="1" stopColor="#818CF8" /></linearGradient>
       </defs>
       <g transform="translate(-6 4)">
         <rect x="40" y="48" width="44" height="160" fill={`url(#${face})`} />
-        <polygon points="40,48 84,48 96,40 52,40" fill="#FFFFFF" />
+        <polygon points="40,48 84,48 96,40 52,40" style={{ fill: "var(--mark-cap, #FFFFFF)" }} />
         <polygon points="84,48 96,40 96,200 84,208" fill={`url(#${side})`} />
         <rect x="172" y="48" width="44" height="160" fill={`url(#${face})`} />
-        <polygon points="172,48 216,48 228,40 184,40" fill="#FFFFFF" />
+        <polygon points="172,48 216,48 228,40 184,40" style={{ fill: "var(--mark-cap, #FFFFFF)" }} />
         <polygon points="216,48 228,40 228,200 216,208" fill={`url(#${side})`} />
         <motion.g animate={{ y: open ? -14 : 0 }} transition={tween(DUR.base)}>
           <polygon points="84,140 172,124 172,160 84,176" fill={`url(#${accent})`} fillOpacity="0.92" />

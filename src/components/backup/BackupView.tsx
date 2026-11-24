@@ -20,7 +20,7 @@ const STATE_LABEL: Record<HealthState, string> = {
   failing: "Not reaching the bucket",
   disabled: "Switched off",
 };
-const STATE_DOT: Record<HealthState, string> = { untested: "bg-brass", healthy: "bg-verdigris", lagging: "bg-brass", failing: "bg-ember", disabled: "bg-fog" };
+const STATE_DOT: Record<HealthState, string> = { untested: "bg-brass-ink", healthy: "bg-verdigris", lagging: "bg-brass-ink", failing: "bg-ember", disabled: "bg-fog" };
 
 const where = (t: BackupTargetView) => `${t.endpoint ? new URL(t.endpoint).host : "Amazon S3"} / ${t.bucket}${t.prefix ? ` / ${t.prefix.replace(/\/$/, "")}` : ""}`;
 const safeWhere = (t: BackupTargetView) => { try { return where(t); } catch { return `${t.endpoint ?? "Amazon S3"} / ${t.bucket}`; } };
@@ -49,7 +49,7 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
             {t.name}
-            {t.master && <span className="inline-flex items-center gap-1 rounded-full bg-brass/15 px-2 py-px text-[0.78em] font-medium text-brass-hi"><Crown className="size-3" aria-hidden />Master backup</span>}
+            {t.master && <span className="inline-flex items-center gap-1 rounded-full bg-brass/15 px-2 py-px text-[0.78em] font-medium text-brass-ink-hi"><Crown className="size-3" aria-hidden />Master backup</span>}
             {t.shareInMaster && !t.master && <span className="rounded-full border border-hairline-strong px-2 py-px text-[0.78em] font-medium text-mist">In the master backup</span>}
           </p>
           <p className="mt-0.5 truncate font-mono text-[0.86em] text-mist">{safeWhere(t)}</p>
@@ -146,7 +146,7 @@ export function BackupView() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-3 rounded-lg bg-pane/70 px-4 py-3 shadow-e1">
-            <CloudUpload className="size-5 shrink-0 text-brass" aria-hidden />
+            <CloudUpload className="size-5 shrink-0 text-brass-ink" aria-hidden />
             <div className="min-w-0 flex-1 basis-48">
               <p className="font-semibold">{summary.title}</p>
               <p className="text-[0.93em] text-mist">{summary.detail}</p>
@@ -175,7 +175,7 @@ export function BackupView() {
         {sheet?.kind === "remove" && (
           <div className="flex flex-col gap-4 pt-1">
             <p>“{sheet.t.name}” will stop receiving changes and its credentials are deleted from this vault. Files already in the bucket stay there; delete them with your provider if you no longer want them.</p>
-            {sheet.t.master && <p className="text-[0.93em] text-brass-hi">This is your master backup. Choose another one afterwards so a fresh install knows where to restore from.</p>}
+            {sheet.t.master && <p className="text-[0.93em] text-brass-ink-hi">This is your master backup. Choose another one afterwards so a fresh install knows where to restore from.</p>}
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setSheet(null)}>Keep it</Button>
               <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => void remove(sheet.t)}>Remove backup</Button>

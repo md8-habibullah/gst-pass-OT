@@ -86,7 +86,7 @@ def build(version: str, repo: str, site: str, sums: str, changelog: str, apk_cer
         "```sh\n"
         f"curl -fsS {site}/install.sh | sh -s -- --check       # is there a newer version?\n"
         f"curl -fsS {site}/install.sh | sh -s -- --update      # update, the way it was installed\n"
-        f"curl -fsS {site}/install.sh | sh -s -- --uninstall   # remove it; your vaults are kept\n"
+        f"curl -fsS {site}/install.sh | sh -s -- --uninstall   # remove it and everything it keeps (asks first)\n"
         "```",
         "Installs from the package repository also update with `apt upgrade`, `dnf upgrade`, `zypper update` or `pacman -Syu`. "
         "Files installed without a package manager get a `hexis-update` command next to the program.",

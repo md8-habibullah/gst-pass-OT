@@ -37,7 +37,7 @@ export function TrashList() {
               return (
                 <li key={t.id} role="presentation">
                   <button type="button" role="option" aria-selected={on} data-item-row data-item-id={t.id} onClick={() => select(t.id)} className={`pressable relative flex min-h-[3.75rem] w-full items-center gap-3 rounded-lg px-3 text-left pointer-coarse:min-h-[4.5rem] ${on ? "bg-raised shadow-e2" : "hover:bg-raised/60"}`}>
-                    {on && <motion.span layoutId="row-edge" aria-hidden className="absolute top-3 bottom-3 left-0 w-[3px] rounded-full bg-brass" />}
+                    {on && <motion.span layoutId="row-edge" aria-hidden className="absolute top-3 bottom-3 left-0 w-[3px] rounded-full bg-brass-ink" />}
                     <Avatar title={t.title} size={38} dim />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold text-mist">{t.title}</span>

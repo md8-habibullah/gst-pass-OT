@@ -739,6 +739,7 @@ fn an_item_with_the_reprompt_flag_asks_for_the_master_password_every_time() {
         code(fx.s.history_restore(&id, 1, None)),
         "password_required"
     );
+    // the neighbouring codes live in the same answer, so a flagged item withholds them too
     assert_eq!(code(fx.s.totp_now(&id, None)), "password_required");
     assert_eq!(
         code(fx.s.item_reveal(&id, Some(WRONG.into()))),
@@ -761,7 +762,11 @@ fn an_item_with_the_reprompt_flag_asks_for_the_master_password_every_time() {
         fx.s.item_reveal(&id, Some(PW.into())).unwrap().fields["password"],
         "pw-bank-111"
     );
-    assert_eq!(fx.s.totp_now(&id, Some(PW.into())).unwrap().code.len(), 6);
+    let shown = fx.s.totp_now(&id, Some(PW.into())).unwrap();
+    assert_eq!(
+        (shown.code.len(), shown.next.len(), shown.previous.len()),
+        (6, 6, 6)
+    );
     assert_eq!(
         fx.s.history_get(&id, 1, Some(PW.into())).unwrap().title,
         "Bank"
@@ -1073,6 +1078,13 @@ fn totp_codes_are_computed_in_rust_and_the_secret_stays_inside() {
         now.code,
         account.code_at(now.valid_until_ms / 1000 - 30).code
     );
+    // the window after this one, and the window before it, recomputed independently
+    assert_eq!(now.next, account.code_at(now.valid_until_ms / 1000).code);
+    assert_eq!(
+        now.previous,
+        account.code_at(now.valid_until_ms / 1000 - 60).code
+    );
+    assert_eq!((now.next.len(), now.previous.len()), (6, 6));
 
     let text = serde_json::to_string(&now).unwrap();
     assert!(!text.contains("JBSWY3DPEHPK3PXP"));

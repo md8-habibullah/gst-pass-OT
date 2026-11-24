@@ -15,6 +15,7 @@ import { ScanOverlay } from "./components/scan/ScanOverlay";
 import { ShortcutsSheet } from "./components/help/ShortcutsSheet";
 import { FirstRunSheet } from "./components/setup/FirstRunSheet";
 import { SetupScreen } from "./components/setup/SetupScreen";
+import { RemovedScreen } from "./components/setup/RemovedScreen";
 import { Toasts } from "./components/ui/Toasts";
 
 let booted: Promise<void> | null = null;
@@ -76,6 +77,7 @@ export default function App() {
       {phase === "gate" && <GateScreen />}
       {phase === "setup" && <SetupScreen />}
       {phase === "preparing" && <Preparing />}
+      {phase === "removed" && <RemovedScreen />}
       {(phase === "welcome" || phase === "picker" || phase === "locked") && <LockScreen />}
       {phase === "ready" && (
         <>

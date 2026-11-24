@@ -1,6 +1,6 @@
 import { estimateStrength } from "../../lib/password";
 
-const TONE = ["bg-ember", "bg-ember", "bg-brass", "bg-verdigris", "bg-verdigris"] as const;
+const TONE = ["bg-ember", "bg-ember", "bg-brass-ink", "bg-verdigris", "bg-verdigris"] as const;
 
 /** Four segments plus a sentence; colour is reinforced by text so it is never the only signal. */
 export function StrengthMeter({ password }: { password: string }) {

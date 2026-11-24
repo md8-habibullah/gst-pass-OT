@@ -58,7 +58,7 @@ export function PinPad({
     <div className="flex flex-col items-center gap-6">
       <div key={shake} className={`flex gap-3.5 ${shake > 0 ? "animate-shake" : ""}`} role="img" aria-label={`${pin.length} of ${LENGTH} digits entered`}>
         {Array.from({ length: LENGTH }, (_, i) => (
-          <span key={i} className={`size-3 rounded-full border transition-colors duration-100 ${i < pin.length ? "scale-110 border-brass bg-brass" : "border-mist/50"}`} />
+          <span key={i} className={`size-3 rounded-full border transition-colors duration-100 ${i < pin.length ? "scale-110 border-brass-ink bg-brass-ink" : "border-mist/50"}`} />
         ))}
       </div>
       <p role="alert" className="h-5 text-[0.9em] text-ember">{error}</p>
@@ -69,7 +69,7 @@ export function PinPad({
           </button>
         ))}
         {onBiometric ? (
-          <button type="button" className="pressable grid size-[4.25rem] place-items-center rounded-full text-brass hover:bg-raised" onClick={onBiometric} aria-label="Use biometrics" disabled={busy || disabled}>
+          <button type="button" className="pressable grid size-[4.25rem] place-items-center rounded-full text-brass-ink hover:bg-raised" onClick={onBiometric} aria-label="Use biometrics" disabled={busy || disabled}>
             <Fingerprint className="size-7" />
           </button>
         ) : (

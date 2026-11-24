@@ -15,7 +15,7 @@ export function PasswordText({ value }: { value: string }) {
   return (
     <span className="font-mono text-[1.02em] leading-6 font-medium tracking-[0.02em] break-all">
       {parts.map((p, i) => (
-        <span key={i} className={p.cls === "digit" ? "text-brass-hi" : p.cls === "symbol" ? "text-verdigris" : "text-frost"}>
+        <span key={i} className={p.cls === "digit" ? "text-brass-ink-hi" : p.cls === "symbol" ? "text-verdigris" : "text-frost"}>
           {p.ch}
         </span>
       ))}
@@ -141,6 +141,32 @@ export function useTotp(id: string, enabled: boolean, title = "this item") {
   return { now, failed, locked, unlock, remainingMs, seconds: now ? secondsLeft(now.validUntilMs, tick) : 0 };
 }
 
+/**
+ * The code that comes next (and the one that just ended) under the live code. The next one is what to type when the live
+ * one is about to run out, so it is a button that copies it; it turns from muted to full contrast for the last seconds.
+ */
+function NeighbourCodes({ now, soon, onCopy }: { now: TotpNow; soon: boolean; onCopy: (code: string) => Promise<void> }) {
+  return (
+    <div className="mt-2 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[0.86em] text-mist">
+      <button
+        type="button"
+        aria-label={`Copy the next code, ${now.next.split("").join(" ")}`}
+        onClick={() => void onCopy(now.next).catch(() => undefined)}
+        className="pressable -mx-1.5 inline-flex items-baseline gap-2 rounded-sm px-1.5 py-0.5 hover:bg-hover/60 pointer-coarse:py-1.5"
+      >
+        <span>Next</span>
+        <span className={`font-mono tracking-[0.06em] tabular-nums ${soon ? "font-medium text-frost" : "text-mist"}`}>{groupDigits(now.next)}</span>
+      </button>
+      {now.previous && (
+        <span className="inline-flex items-baseline gap-2 text-fog">
+          <span>Previous</span>
+          <span className="font-mono tracking-[0.06em] tabular-nums">{groupDigits(now.previous)}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function TotpValue({ id, title, onCopy }: { id: string; title: string; onCopy: (code: string) => Promise<void> }) {
   const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(id, true, title);
   if (failed) return <FieldRow label="One-time code">{<span className="text-ember">{failed}</span>}</FieldRow>;
@@ -175,6 +201,7 @@ export function TotpValue({ id, title, onCopy }: { id: string; title: string; on
           </CountdownRing>
         )}
       </div>
+      {now?.next && <NeighbourCodes now={now} soon={tone === "critical"} onCopy={onCopy} />}
     </FieldRow>
   );
 }

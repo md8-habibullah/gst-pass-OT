@@ -31,7 +31,7 @@ if [ "$mode" = "--e2e" ] || [ "$mode" = "--e2e-only" ]; then
   # and E2E_BIN pointing at the shim built with `cargo build --example e2e_server` (target/debug/examples/e2e_server).
   export SP="${SP:-/tmp/hexis-e2e}"; mkdir -p "$SP/shots2"
   export E2E_BIN="${E2E_BIN:-$ROOT/src-tauri/target/debug/examples/e2e_server}"
-  for t in run real-gate real-drive real-import real-disguise real-backup real-sync; do
+  for t in run theme-ui real-gate real-uninstall real-drive real-import real-disguise real-backup real-sync; do
     [ -f "e2e/$t.mjs" ] && step "e2e: $t" node "e2e/$t.mjs"
   done
   # Several buckets at once against real S3-compatible servers (two throw-away containers on loopback). Needs Docker.

@@ -27,7 +27,7 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Accounts" variant="dialog" size="sm" titleIcon={<UserRound className="size-5 text-brass" aria-hidden />}>
+    <Sheet open={open} onClose={onClose} title="Accounts" variant="dialog" size="sm" titleIcon={<UserRound className="size-5 text-brass-ink" aria-hidden />}>
       <p className="mb-3 text-[0.93em] text-mist">Each account is its own vault with its own master password. Switching locks this one first.</p>
       <ul className="flex flex-col gap-1">
         {profiles.map((p) => {

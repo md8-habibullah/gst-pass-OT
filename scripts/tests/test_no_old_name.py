@@ -23,8 +23,9 @@ FROZEN_FORMAT = {
     "scripts/gen_crypto_kat.py", "scripts/verify_bundle_fixture.py", "ai-docs/CRYPTO_SPEC.md",
 }
 FROZEN_LINE = re.compile(OLD.pattern + r"/(v1|gate/v1)", re.I)
-# Compatibility with data written before the rename (data folder, export extension, export field names).
-COMPATIBILITY = {"src-tauri/src/storage/legacy.rs", "src-tauri/src/importer/export.rs"}
+# Compatibility with data written before the rename (data folder, export extension, export field names). The installer's
+# uninstall must find and remove the folder an older build made (app.<old name>.vault), so it names that folder, and its tests plant it.
+COMPATIBILITY = {"src-tauri/src/storage/legacy.rs", "src-tauri/src/importer/export.rs", "scripts/install.sh", "scripts/tests/test_install_sh.py"}
 # History and the explanation of the rename itself.
 HISTORY = {"CHANGELOG.md", "ai-docs/ARCHITECTURE.md", "ai-docs/CHANGELOG_AND_STATE.md"}
 # Tests that assert the old name is absent.

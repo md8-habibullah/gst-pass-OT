@@ -2,7 +2,7 @@ import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type Selec
 import { motion } from "motion/react";
 
 const base =
-  "w-full rounded-sm border bg-raised px-3 text-frost shadow-e1 outline-none transition-colors placeholder:text-fog hover:border-hairline-strong focus:border-brass/70 focus:bg-hover/60 min-h-10 pointer-coarse:min-h-12 pointer-coarse:text-base";
+  "w-full rounded-sm border bg-raised px-3 text-frost shadow-e1 outline-none transition-colors placeholder:text-fog hover:border-hairline-strong focus:border-brass-ink/70 focus:bg-hover/60 min-h-10 pointer-coarse:min-h-12 pointer-coarse:text-base";
 
 interface FieldProps {
   label: string;
@@ -85,10 +85,10 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-6 w-10 shrink-0 rounded-full border transition-colors pointer-coarse:h-7 pointer-coarse:w-12 ${checked ? "border-brass/60 bg-brass/25" : "border-hairline bg-raised"}`}
+      className={`relative h-6 w-10 shrink-0 rounded-full border transition-colors pointer-coarse:h-7 pointer-coarse:w-12 ${checked ? "border-brass-ink/60 bg-brass/25" : "border-hairline bg-raised"}`}
     >
       <span
-        className={`absolute top-1/2 left-0.5 size-4.5 -translate-y-1/2 rounded-full shadow-e2 transition-[translate,background-color] duration-100 ease-out pointer-coarse:size-5.5 ${checked ? "translate-x-4.5 bg-brass pointer-coarse:translate-x-5.5" : "translate-x-0 bg-mist"}`}
+        className={`absolute top-1/2 left-0.5 size-4.5 -translate-y-1/2 rounded-full shadow-e2 transition-[translate,background-color] duration-100 ease-out pointer-coarse:size-5.5 ${checked ? "translate-x-4.5 bg-brass-ink pointer-coarse:translate-x-5.5" : "translate-x-0 bg-mist"}`}
       />
     </button>
   );

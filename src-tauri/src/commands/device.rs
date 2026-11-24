@@ -6,7 +6,7 @@
 
 use super::{run, AppState, CmdResult};
 use crate::clock::ClockStatus;
-use crate::storage::device::DeviceInfo;
+use crate::storage::device::{DeviceInfo, Theme};
 use crate::storage::ProfileInfo;
 use tauri::State;
 
@@ -31,6 +31,23 @@ pub async fn device_finish_setup(state: State<'_, AppState>) -> CmdResult<Device
 #[tauri::command]
 pub async fn device_set_time_check(state: State<'_, AppState>, on: bool) -> CmdResult<DeviceInfo> {
     run(&state, move |c| c.device_set_time_check(on)).await
+}
+
+/// `system`, `light` or `dark`. Also tells the native window, so the title bar and the system dialogs follow.
+#[tauri::command]
+pub async fn device_set_theme(state: State<'_, AppState>, theme: Theme) -> CmdResult<DeviceInfo> {
+    let info = run(&state, move |c| c.device_set_theme(theme)).await?;
+    state.apply_theme(theme);
+    Ok(info)
+}
+
+/// How long a copied secret stays on the clipboard: 15, 30 or 60 seconds.
+#[tauri::command]
+pub async fn device_set_clipboard_clear(
+    state: State<'_, AppState>,
+    seconds: u32,
+) -> CmdResult<DeviceInfo> {
+    run(&state, move |c| c.device_set_clipboard_clear(seconds)).await
 }
 
 #[tauri::command]

@@ -225,10 +225,11 @@ class ManifestTests(Base):
         self.assertIn("<!-- AndroidTV support -->", text, "comments survive")
         self.assertIn('android:authorities="${applicationId}.fileprovider"', text)
         before_app, after_app = before.find("application"), after.find("application")
-        self.assertEqual(before_app.attrib, after_app.attrib)
+        backup = {A + k for k in ("allowBackup", "fullBackupContent", "dataExtractionRules")}
+        self.assertEqual(before_app.attrib, {k: v for k, v in after_app.attrib.items() if k not in backup})
         self.assertEqual(
             [(e.tag, e.attrib) for e in before.iter() if isinstance(e.tag, str) and e.tag not in ("intent-filter", "action", "category")],
-            [(e.tag, e.attrib) for e in after.iter()
+            [(e.tag, {k: v for k, v in e.attrib.items() if k not in backup}) for e in after.iter()
              if isinstance(e.tag, str) and e.tag not in ("intent-filter", "action", "category", "activity-alias")
              # the two removal markers the script adds on purpose (VIBRATE, optional camera): they are checked in their own test
              and not (e.tag in ("uses-permission", "uses-feature") and e.get(T + "node") in ("remove", "replace"))],
@@ -238,6 +239,36 @@ class ManifestTests(Base):
         main = after_app.find("activity")
         self.assertEqual(main.get(A + "launchMode"), "singleTask")
         self.assertEqual(main.get(A + "label"), "@string/main_activity_title")
+
+    def test_nothing_is_ever_backed_up_or_transferred(self):
+        """After an uninstall a reinstall must start empty: Android's cloud backup must not put the vault files back."""
+        self.apply()
+        app = parse(self.manifest).find("application")
+        self.assertEqual(app.get(A + "allowBackup"), "false")
+        self.assertEqual(app.get(A + "fullBackupContent"), "false")
+        self.assertEqual(app.get(A + "dataExtractionRules"), "@xml/data_extraction_rules")
+        rules = parse(self.res / "xml" / "data_extraction_rules.xml")
+        self.assertEqual(rules.tag, "data-extraction-rules")
+        for section, domains in (
+            ("cloud-backup", {"root", "file", "database", "sharedpref", "external"}),
+            ("device-transfer", {"root", "file", "database", "sharedpref", "external", "device_root", "device_file"}),
+        ):
+            node = rules.find(section)
+            self.assertIsNotNone(node, section)
+            self.assertEqual({e.get("domain") for e in node.findall("exclude")}, domains, section)
+            self.assertEqual(node.findall("include"), [], "nothing is ever included")
+            self.assertTrue(all(e.get("path") == "." for e in node.findall("exclude")))
+
+    def test_a_manifest_that_allows_backup_is_corrected(self):
+        text = self.manifest.read_text(encoding="utf-8").replace(
+            '<application\n', '<application\n        android:allowBackup="true"\n        android:fullBackupContent="@xml/old_rules"\n', 1)
+        self.manifest.write_text(text, encoding="utf-8")
+        self.assertEqual(self.run_script("--check")[0], 1)
+        self.apply()
+        app = parse(self.manifest).find("application")
+        self.assertEqual(app.get(A + "allowBackup"), "false")
+        self.assertEqual(app.get(A + "fullBackupContent"), "false")
+        self.assertEqual(self.run_script("--check")[0], 0)
 
     def test_no_permission_is_ever_granted(self):
         before = {e.get(A + "name") for e in parse(self.manifest).iter("uses-permission")}
@@ -445,6 +476,9 @@ class ActivityAndKeepRuleTests(Base):
         for needle in (
             "class MainActivity : TauriActivity()", "enableEdgeToEdge()", "moveTaskToBack(true)",
             "window.__hexisBack", "WindowInsetsCompat.Type.ime()", "OnBackPressedCallback", "override fun onWebViewCreate(webView: WebView)",
+            # the system bars' icon colour follows what the page draws (Settings > Theme), not only the phone's own setting
+            '@JavascriptInterface', 'fun setLook(look: String)', 'addJavascriptInterface(BarsBridge(), "HexisBars")',
+            "isAppearanceLightStatusBars = light", "isAppearanceLightNavigationBars = light",
         ):
             self.assertIn(needle, src)
         self.assertEqual(src.count("{"), src.count("}"))

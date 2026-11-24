@@ -6,17 +6,48 @@
 //!   straight away, with no setup screens, so a reset does not announce itself.
 //! * `timeCheck`: ask a few HTTPS servers for the real time (`crate::clock`). On by default.
 //! * `demoProfile`: the id of the demo vault while one exists (`storage/demo.rs`).
+//! * `theme`: `system` (follow the device's light or dark setting), `light` or `dark`.
+//! * `clipboardClear`: how many seconds a copied secret stays on the clipboard (15, 30 or 60).
 //!
-//! The file leaks nothing a vault holds: a place name, two switches and a random id. A missing,
-//! unreadable or oversized file is the defaults and never blocks anything.
+//! The last two used to live in the web view's own storage. They are here so the web view can run without
+//! writing anything to disk (`storage/webview_data.rs`), and so the lock screen, which is shown before any
+//! vault is open, already has the right colours.
+//!
+//! The file leaks nothing a vault holds: a place name, a few switches and a random id. A missing,
+//! unreadable or oversized file is the defaults and never blocks anything. A value that is not one of the
+//! known choices (a hand edit) is the default for that one setting only.
 
 use crate::storage::{files, StorageError};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::Path;
 
 pub const DEVICE_FILE: &str = "device.json";
 const MAX_FILE_BYTES: u64 = 4096;
 const MAX_ZONE_CHARS: usize = 64;
+
+/// The colours of the screen. `System` follows the device's own light or dark setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// The seconds a copied secret may stay on the clipboard.
+pub const CLIPBOARD_CHOICES: [u32; 3] = [15, 30, 60];
+pub const DEFAULT_CLIPBOARD_CLEAR: u32 = 30;
+
+fn lenient_theme<'de, D: Deserializer<'de>>(d: D) -> Result<Theme, D::Error> {
+    // an unknown word is "system", not a reason to forget the zone and the other settings
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value::<Theme>(v).unwrap_or_default())
+}
+
+fn thirty() -> u32 {
+    DEFAULT_CLIPBOARD_CLEAR
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +60,10 @@ pub struct DeviceSettings {
     pub time_check: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demo_profile: Option<String>,
+    #[serde(default, deserialize_with = "lenient_theme")]
+    pub theme: Theme,
+    #[serde(default = "thirty")]
+    pub clipboard_clear: u32,
 }
 
 fn yes() -> bool {
@@ -42,6 +77,8 @@ impl Default for DeviceSettings {
             setup_done: false,
             time_check: true,
             demo_profile: None,
+            theme: Theme::System,
+            clipboard_clear: DEFAULT_CLIPBOARD_CLEAR,
         }
     }
 }
@@ -54,6 +91,9 @@ pub struct DeviceInfo {
     pub time_zone: Option<String>,
     pub setup_done: bool,
     pub time_check: bool,
+    pub theme: Theme,
+    /// Seconds a copied secret stays on the clipboard: 15, 30 or 60.
+    pub clipboard_clear: u32,
 }
 
 impl From<&DeviceSettings> for DeviceInfo {
@@ -62,6 +102,8 @@ impl From<&DeviceSettings> for DeviceInfo {
             time_zone: s.time_zone.clone(),
             setup_done: s.setup_done,
             time_check: s.time_check,
+            theme: s.theme,
+            clipboard_clear: s.clipboard_clear,
         }
     }
 }
@@ -102,7 +144,19 @@ pub fn load(dir: &Path) -> DeviceSettings {
         .and_then(|b| serde_json::from_slice::<DeviceSettings>(&b).ok())
         .unwrap_or_default();
     s.time_zone = s.time_zone.as_deref().and_then(|z| validate_zone(z).ok());
+    if !CLIPBOARD_CHOICES.contains(&s.clipboard_clear) {
+        s.clipboard_clear = DEFAULT_CLIPBOARD_CLEAR;
+    }
     s
+}
+
+/// Is `seconds` one of the clipboard choices?
+pub fn validate_clipboard_clear(seconds: u32) -> Result<u32, StorageError> {
+    if CLIPBOARD_CHOICES.contains(&seconds) {
+        Ok(seconds)
+    } else {
+        Err(StorageError::invalid("Choose 15, 30 or 60 seconds."))
+    }
 }
 
 pub fn store(dir: &Path, settings: &DeviceSettings) -> Result<(), StorageError> {
@@ -156,6 +210,8 @@ mod tests {
             setup_done: true,
             time_check: false,
             demo_profile: Some("abc".into()),
+            theme: Theme::Dark,
+            clipboard_clear: 60,
         };
         store(dir.path(), &s).unwrap();
         assert_eq!(load(dir.path()), s);
@@ -172,6 +228,65 @@ mod tests {
         let d = load(dir.path());
         assert_eq!(d.time_zone, None);
         assert!(d.setup_done && !d.time_check);
+    }
+
+    #[test]
+    fn an_unknown_theme_or_clipboard_time_only_costs_that_one_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(DEVICE_FILE),
+            r#"{"timeZone":"Asia/Dhaka","setupDone":true,"timeCheck":false,"theme":"pink","clipboardClear":7}"#,
+        )
+        .unwrap();
+        let d = load(dir.path());
+        assert_eq!(d.theme, Theme::System);
+        assert_eq!(d.clipboard_clear, DEFAULT_CLIPBOARD_CLEAR);
+        assert_eq!(
+            d.time_zone.as_deref(),
+            Some("Asia/Dhaka"),
+            "the rest is kept"
+        );
+        assert!(d.setup_done && !d.time_check);
+        // a theme of the wrong kind is the same
+        std::fs::write(
+            dir.path().join(DEVICE_FILE),
+            r#"{"setupDone":true,"theme":5}"#,
+        )
+        .unwrap();
+        let d = load(dir.path());
+        assert_eq!((d.theme, d.setup_done), (Theme::System, true));
+        // a file written before these settings existed reads as the defaults for them
+        std::fs::write(
+            dir.path().join(DEVICE_FILE),
+            r#"{"timeZone":"UTC","setupDone":true}"#,
+        )
+        .unwrap();
+        let d = load(dir.path());
+        assert_eq!((d.theme, d.clipboard_clear), (Theme::System, 30));
+    }
+
+    #[test]
+    fn the_wire_names_are_plain_words() {
+        for (t, word) in [
+            (Theme::System, "system"),
+            (Theme::Light, "light"),
+            (Theme::Dark, "dark"),
+        ] {
+            assert_eq!(serde_json::to_string(&t).unwrap(), format!("\"{word}\""));
+            assert_eq!(
+                serde_json::from_str::<Theme>(&format!("\"{word}\"")).unwrap(),
+                t
+            );
+        }
+        let json = serde_json::to_string(&DeviceInfo::from(&DeviceSettings::default())).unwrap();
+        assert!(
+            json.contains(r#""theme":"system""#) && json.contains(r#""clipboardClear":30"#),
+            "{json}"
+        );
+        assert!(validate_clipboard_clear(15).is_ok() && validate_clipboard_clear(60).is_ok());
+        for bad in [0, 14, 31, 61, 300] {
+            assert!(validate_clipboard_clear(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

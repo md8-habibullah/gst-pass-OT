@@ -362,9 +362,12 @@ impl Vault {
             .ok_or_else(|| StorageError::invalid("This item has no one-time code."))?;
         let account = totp_account(secret)?;
         let secs = now_millis() / 1000;
-        let code = account.code_at(secs);
+        let window = account.window_at(secs);
+        let code = window.current;
         Ok(TotpNow {
             code: code.code,
+            previous: window.previous,
+            next: window.next,
             period: code.period,
             digits: code.digits,
             seconds_remaining: code.seconds_remaining,

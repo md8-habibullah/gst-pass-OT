@@ -197,6 +197,8 @@ fn the_whole_contract_works_over_real_ipc() {
     let code = h.ok("totp_now", json!({"id": id}));
     for k in [
         "code",
+        "previous",
+        "next",
         "period",
         "digits",
         "secondsRemaining",

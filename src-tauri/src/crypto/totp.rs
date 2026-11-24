@@ -36,6 +36,14 @@ impl From<TotpAlgorithm> for Algorithm {
     }
 }
 
+/// The codes of three neighbouring windows (see [`TotpAccount::window_at`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TotpWindow {
+    pub previous: String,
+    pub current: TotpCode,
+    pub next: String,
+}
+
 /// What the UI gets: never the secret.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -206,6 +214,24 @@ impl TotpAccount {
         }
     }
 
+    /// The code of the window before the one `unix_secs` is in, of that window, and of the window after it.
+    /// What a person looking at a code about to expire wants to see (the next one), and what a server whose clock runs a
+    /// little behind may still accept (the previous one). Same secret, same rules; nothing here leaves Rust except the digits.
+    pub fn window_at(&self, unix_secs: u64) -> TotpWindow {
+        let period = self.inner.step();
+        TotpWindow {
+            previous: self
+                .inner
+                .generate(unix_secs.saturating_sub(period))
+                .to_string(),
+            current: self.code_at(unix_secs),
+            next: self
+                .inner
+                .generate(unix_secs.saturating_add(period))
+                .to_string(),
+        }
+    }
+
     pub fn code_now(&self) -> Result<TotpCode> {
         Ok(self.code_at(unix_now()?))
     }
@@ -336,6 +362,28 @@ mod tests {
         // The code is stable inside a window and changes at the boundary.
         assert_eq!(at(30).code, at(59).code);
         assert_ne!(at(59).code, at(60).code);
+    }
+
+    #[test]
+    fn the_neighbouring_windows_are_the_codes_of_their_own_windows() {
+        let a = acct(SHORT, TotpAlgorithm::Sha1, 6, 30);
+        let t = 1_700_000_010; // inside a window, 10 s from its start
+        let w = a.window_at(t);
+        assert_eq!(w.current, a.code_at(t));
+        assert_eq!(w.previous, a.code_at(t - 30).code);
+        assert_eq!(w.next, a.code_at(t + 30).code);
+        // the next code becomes the current one exactly when the window ends
+        let ends = t + w.current.seconds_remaining;
+        assert_eq!(a.code_at(ends).code, w.next);
+        assert_eq!(a.window_at(ends).previous, w.current.code);
+        // another period and another digit count follow their own steps
+        let b = acct(SHORT, TotpAlgorithm::Sha256, 8, 60);
+        let wb = b.window_at(1_700_000_000);
+        assert_eq!(wb.next, b.code_at(1_700_000_060).code);
+        assert_eq!(wb.previous, b.code_at(1_699_999_940).code);
+        assert_eq!(wb.next.len(), 8);
+        // no window exists before the epoch: the first one repeats itself instead of wrapping around
+        assert_eq!(a.window_at(5).previous, a.code_at(0).code);
     }
 
     #[test]

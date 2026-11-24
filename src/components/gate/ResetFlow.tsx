@@ -2,23 +2,33 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { TriangleAlert } from "lucide-react";
 import { BackendError } from "../../backend";
 import { prettyEquation } from "../../lib/gateRules";
-import { resetAppData, resetChallenge } from "../../state/app";
+import { prepareUninstall, resetAppData, resetChallenge } from "../../state/app";
 import { Button } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 
-const STEPS = [
-  { title: "Reset this app?", body: "This removes every vault on this device: the items, files, backup settings and the app lock. It is meant for when you cannot get in any more.", go: "Continue" },
+/** "erase": back to a fresh app (the lock screen's way out when the passcode is lost). "remove": the app removes everything it keeps, for uninstalling. */
+export type WipeKind = "erase" | "remove";
+
+const ERASE_STEPS = [
+  { title: "Reset this app?", body: "This removes every vault on this device: the items, files, backup settings and the app lock. It is meant for when you cannot get in any more. Hexis keeps only its display settings (time zone, theme, clipboard time).", go: "Continue" },
   { title: "This cannot be undone", body: "Changes that were never backed up are lost for good, and nobody can bring them back. Backups already in your S3 buckets are not touched, but this device forgets how to reach them.", go: "I understand, continue" },
   { title: "Erase everything now?", body: "This is the last step. Work out the sum and type the answer. Only the right answer erases this device. The app then returns to how it looked on first launch.", go: "Erase everything" },
+] as const;
+
+const REMOVE_STEPS = [
+  { title: "Remove Hexis from this device?", body: "Do this before you uninstall Hexis, so that nothing is left behind. It removes every vault on this device (the items, files, backup settings and the app lock) and everything else Hexis keeps here: its settings, and anything its window stored as cache or cookies.", go: "Continue" },
+  { title: "This cannot be undone", body: "Changes that were never backed up are lost for good, and nobody can bring them back. Backups in your S3 buckets are not on this device and are not touched: delete them in your storage provider's console if you want them gone. Once this is done, Hexis cannot reach them either.", go: "I understand, continue" },
+  { title: "Remove everything now?", body: "This is the last step. Work out the sum and type the answer. Only the right answer removes everything. Nothing is made again afterwards, not even an empty vault.", go: "Remove everything" },
 ] as const;
 
 /**
  * Three separate warnings, then the same wipe the panic triggers use. The last step is a long sum that the core made up
  * and keeps the answer to, so nobody erases a device by tapping through three screens. A wrong answer erases nothing and
- * brings a new sum.
+ * brings a new sum. "remove" is the same walk; the app then shows `RemovedScreen`.
  */
-export function ResetFlow({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ResetFlow({ open, onClose, kind = "erase" }: { open: boolean; onClose: () => void; kind?: WipeKind }) {
+  const STEPS = kind === "remove" ? REMOVE_STEPS : ERASE_STEPS;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,16 +64,20 @@ export function ResetFlow({ open, onClose }: { open: boolean; onClose: () => voi
     setBusy(true);
     setError(null);
     try {
-      await resetAppData(typed);
+      if (kind === "remove") {
+        await prepareUninstall(typed); // the app moves on to its last screen; this sheet goes with the page that hosts it
+      } else {
+        await resetAppData(typed);
+      }
     } catch (err) {
       setBusy(false);
       if (err instanceof BackendError && err.code === "wrong_answer") {
-        setError("That is not the answer. Nothing was erased. Here is a new sum.");
+        setError(`That is not the answer. Nothing was ${kind === "remove" ? "removed" : "erased"}. Here is a new sum.`);
         setAnswer("");
         setSum(null);
         void loadSum();
       } else {
-        setError(err instanceof BackendError || err instanceof Error ? err.message : "The reset did not finish.");
+        setError(err instanceof BackendError || err instanceof Error ? err.message : kind === "remove" ? "The removal did not finish." : "The reset did not finish.");
       }
     }
   }
@@ -81,7 +95,7 @@ export function ResetFlow({ open, onClose }: { open: boolean; onClose: () => voi
             >
               {sum ? <>{prettyEquation(sum)} <span className="text-fog">= ?</span></> : <span className="text-fog">…</span>}
             </p>
-            <Field label="Your answer" hint="A wrong answer erases nothing and gives you a new sum.">
+            <Field label="Your answer" hint={`A wrong answer ${kind === "remove" ? "removes" : "erases"} nothing and gives you a new sum.`}>
               {({ id, describedBy, invalid }) => (
                 <TextInput
                   id={id} data-autofocus mono inputMode="numeric" pattern="[0-9]*" enterKeyHint="go"

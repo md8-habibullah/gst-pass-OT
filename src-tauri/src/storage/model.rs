@@ -778,6 +778,10 @@ pub struct VersionEntry {
 #[serde(rename_all = "camelCase")]
 pub struct TotpNow {
     pub code: String,
+    /// The code of the window before this one and the one of the window after it, so the person can see what is
+    /// coming while the current code runs out. Withheld exactly like `code` (they come from the same call).
+    pub previous: String,
+    pub next: String,
     pub period: u64,
     pub digits: u8,
     pub seconds_remaining: u64,

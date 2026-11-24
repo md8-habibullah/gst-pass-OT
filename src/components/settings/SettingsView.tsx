@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, LockKeyhole, Palette, ShieldCheck, Upload, UsersRound, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
 import { plural } from "../../lib/format";
 import { useLayout } from "../../lib/layout";
 import { zoneLabel } from "../../lib/zones";
@@ -19,6 +19,7 @@ import { DisguiseGroup } from "./Disguise";
 import { HelpPage } from "./HelpPage";
 import { Group, LinkRow } from "./parts";
 import { SecurityPage } from "./SecurityPage";
+import { ThemePage } from "./ThemePage";
 
 interface Category {
   id: SettingsPageId;
@@ -33,6 +34,7 @@ const CATEGORIES: Category[] = [
   { id: "applock", title: "App lock", icon: LockKeyhole, about: "A passcode before the account list, and when open vaults lock by themselves." },
   { id: "accounts", title: "Accounts", icon: UsersRound, about: "The vaults on this device." },
   { id: "time", title: "Date and time", icon: Clock, about: "Hexis saves every time in UTC and writes it in your zone. Changing the zone changes only how times look." },
+  { id: "theme", title: "Theme", icon: SunMoon, about: "Light, dark, or the same as your device." },
   { id: "appearance", title: "App icon and name", icon: Palette, about: "Change how the app looks in your launcher." },
   { id: "data", title: "Backup and files", icon: CloudUpload, about: "Backups, encrypted files, import and export." },
   { id: "help", title: "Help and shortcuts", icon: Keyboard, about: "Keyboard shortcuts and common questions." },
@@ -52,6 +54,7 @@ function useSummaries(): Record<SettingsPageId, string> {
     applock: gate?.enabled ? "Passcode on" : "Passcode off",
     accounts: plural(profiles.length, "account"),
     time: device?.timeZone ? zoneLabel(device.timeZone) : "Not chosen",
+    theme: device?.theme === "light" ? "Light" : device?.theme === "dark" ? "Dark" : "Same as your device",
     appearance: `Shown as ${name}`,
     data: backup.title,
     help: "Press ? for shortcuts",
@@ -78,6 +81,7 @@ function PageContent({ id }: { id: SettingsPageId }): ReactNode {
     case "applock": return <AppLockGroup heading={false} />;
     case "accounts": return <AccountsGroup heading={false} />;
     case "time": return <DateTimePage />;
+    case "theme": return <ThemePage />;
     case "appearance": return <DisguiseGroup heading={false} />;
     case "data": return <BackupPage />;
     case "help": return <HelpPage />;
@@ -131,7 +135,7 @@ export function SettingsView() {
             {CATEGORIES.map((c) => (
               <li key={c.id} className="border-b border-hairline last:border-b-0">
                 <button type="button" onClick={() => setSettingsPage(c.id)} className="pressable flex min-h-16 w-full items-center gap-4 px-4 text-left hover:bg-raised/60">
-                  <span className="grid size-10 shrink-0 place-items-center rounded-sm bg-raised text-brass"><c.icon className="size-[18px]" aria-hidden /></span>
+                  <span className="grid size-10 shrink-0 place-items-center rounded-sm bg-raised text-brass-ink"><c.icon className="size-[18px]" aria-hidden /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium">{c.title}</span>
                     <span className="block truncate text-[0.93em] text-mist">{summaries[c.id]}</span>
@@ -160,7 +164,7 @@ export function SettingsView() {
                   type="button" onClick={() => setSettingsPage(c.id)} aria-current={on ? "page" : undefined}
                   className={`pressable flex min-h-11 w-full items-center gap-3 rounded-sm px-3 text-left ${on ? "bg-raised text-frost" : "text-mist hover:bg-raised/60 hover:text-frost"}`}
                 >
-                  <c.icon className={`size-[18px] shrink-0 ${on ? "text-brass" : ""}`} aria-hidden />
+                  <c.icon className={`size-[18px] shrink-0 ${on ? "text-brass-ink" : ""}`} aria-hidden />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{c.title}</span>
                     <span className="hidden truncate text-[0.8em] text-fog min-[1100px]:block">{summaries[c.id]}</span>

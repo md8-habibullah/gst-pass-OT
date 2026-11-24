@@ -73,7 +73,7 @@ export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: 
           max={GEN_LENGTH_MAX}
           value={opts.length}
           onChange={(e) => change({ length: Number(e.target.value) })}
-          className="mt-2 h-6 w-full accent-[var(--color-brass)] pointer-coarse:h-9"
+          className="mt-2 h-6 w-full accent-[var(--color-brass-ink)] pointer-coarse:h-9"
         />
       </div>
       <ul className="flex flex-col gap-1">

@@ -64,7 +64,7 @@ export function ZonePicker({ value, onChange, autoFocus = false, height = "h-64"
               >
                 <span className="min-w-0 flex-1 truncate">{z.label}</span>
                 <span className="shrink-0 font-mono text-[0.86em] text-fog tabular-nums">{z.offset}</span>
-                <Check className={`size-4 shrink-0 text-brass ${on ? "" : "invisible"}`} aria-hidden />
+                <Check className={`size-4 shrink-0 text-brass-ink ${on ? "" : "invisible"}`} aria-hidden />
               </button>
             </li>
           );

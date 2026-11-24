@@ -42,12 +42,12 @@ export function DisguiseGroup({ heading = true }: { heading?: boolean }) {
         <p className="text-[0.93em] text-mist">Change how the app looks in your launcher and on its own screens, so it does not announce what it is. The name is shown as <span className="font-medium text-frost">{view.appliedName}</span>.</p>
 
         <div role="radiogroup" aria-label="Icon" className="flex flex-wrap gap-2">
-          <button type="button" role="radio" aria-checked={view.presetId === null} disabled={busy} onClick={() => void save({ ...input, presetId: null })} className={`${tile} ${view.presetId === null ? "bg-raised ring-2 ring-brass" : "hover:bg-raised/60"}`}>
+          <button type="button" role="radio" aria-checked={view.presetId === null} disabled={busy} onClick={() => void save({ ...input, presetId: null })} className={`${tile} ${view.presetId === null ? "bg-raised ring-2 ring-brass-ink" : "hover:bg-raised/60"}`}>
             <span className="grid size-14 place-items-center rounded-[22%] bg-pane"><VaultMark size={34} /></span>
             <span className="text-[0.86em]">{label(ORIGINAL_NAME)}</span>
           </button>
           {DISGUISES.map((d) => (
-            <button key={d.id} type="button" role="radio" aria-checked={view.presetId === d.id} disabled={busy} onClick={() => void save({ ...input, presetId: d.id })} title={d.description} className={`${tile} ${view.presetId === d.id ? "bg-raised ring-2 ring-brass" : "hover:bg-raised/60"}`}>
+            <button key={d.id} type="button" role="radio" aria-checked={view.presetId === d.id} disabled={busy} onClick={() => void save({ ...input, presetId: d.id })} title={d.description} className={`${tile} ${view.presetId === d.id ? "bg-raised ring-2 ring-brass-ink" : "hover:bg-raised/60"}`}>
               <img src={disguiseTile(d.id)} alt="" width={56} height={56} className="size-14" draggable={false} />
               <span className="text-[0.86em]">{label(d.name)}</span>
             </button>

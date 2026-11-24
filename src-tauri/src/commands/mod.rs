@@ -31,6 +31,16 @@ mod importer;
 pub struct AppState {
     core: Arc<AppCore>,
     gate: Arc<ExitGate>,
+    hooks: std::sync::Mutex<Hooks>,
+}
+
+/// What only the running application can do, handed in by `lib.rs` (the shim and the tests leave them out).
+#[derive(Default)]
+struct Hooks {
+    /// Tell the native window which colours to use (title bar, system dialogs).
+    theme: Option<Arc<dyn Fn(crate::storage::device::Theme) + Send + Sync>>,
+    /// Close the application.
+    exit: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl AppState {
@@ -38,6 +48,39 @@ impl AppState {
         Self {
             core: Arc::new(core),
             gate: Arc::new(ExitGate::default()),
+            hooks: std::sync::Mutex::new(Hooks::default()),
+        }
+    }
+
+    fn hooks(&self) -> std::sync::MutexGuard<'_, Hooks> {
+        self.hooks.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Production only: how the native window learns the chosen theme.
+    pub fn set_theme_hook(
+        &self,
+        f: impl Fn(crate::storage::device::Theme) + Send + Sync + 'static,
+    ) {
+        self.hooks().theme = Some(Arc::new(f));
+    }
+
+    /// Production only: how the application is closed after "remove Hexis from this device".
+    pub fn set_exit_hook(&self, f: impl Fn() + Send + Sync + 'static) {
+        self.hooks().exit = Some(Arc::new(f));
+    }
+
+    /// Tell the native window about the theme (no-op without a hook).
+    pub fn apply_theme(&self, theme: crate::storage::device::Theme) {
+        let hook = self.hooks().theme.clone();
+        if let Some(f) = hook {
+            f(theme);
+        }
+    }
+
+    fn request_exit(&self) {
+        let hook = self.hooks().exit.clone();
+        if let Some(f) = hook {
+            f();
         }
     }
 
@@ -688,6 +731,8 @@ pub fn invoke_handler<R: tauri::Runtime>(
         device::device_set_time_zone,
         device::device_finish_setup,
         device::device_set_time_check,
+        device::device_set_theme,
+        device::device_set_clipboard_clear,
         device::clock_status,
         device::clock_sync,
         device::demo_spawn,
@@ -701,6 +746,7 @@ pub fn invoke_handler<R: tauri::Runtime>(
         gate::gate_close,
         gate::gate_configure,
         gate::app_reset,
+        gate::app_prepare_uninstall,
         gate::app_reset_challenge,
         gate::app_leave,
         gate::app_return,

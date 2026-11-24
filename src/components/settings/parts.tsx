@@ -27,7 +27,7 @@ export function Row({ title, description, children }: { title: string; descripti
 export function LinkRow({ title, description, filter, icon, before }: { title: string; description: string; filter: Filter; icon: ReactNode; before?: () => void }) {
   return (
     <button type="button" onClick={() => { before?.(); setFilter(filter); }} className="pressable flex w-full items-center gap-4 border-b border-hairline px-4 py-3.5 text-left last:border-b-0 hover:bg-raised/60">
-      <span className="grid size-9 shrink-0 place-items-center rounded-sm bg-raised text-brass">{icon}</span>
+      <span className="grid size-9 shrink-0 place-items-center rounded-sm bg-raised text-brass-ink">{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{title}</span>
         <span className="block text-[0.93em] text-mist">{description}</span>

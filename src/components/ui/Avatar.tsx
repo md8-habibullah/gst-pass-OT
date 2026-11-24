@@ -11,8 +11,9 @@ export function Avatar({ title, size = 40, dim }: { title: string; size?: number
         width: size,
         height: size,
         fontSize: Math.round(size * 0.38),
-        background: `linear-gradient(160deg, hsl(${h} 34% ${dim ? 17 : 25}%), hsl(${h} 38% ${dim ? 13 : 19}%))`,
-        color: `hsl(${h} 62% ${dim ? 62 : 80}%)`,
+        // the lightness steps come from the palette (tokens.css): deep tiles with light letters, or pale tiles with dark letters
+        background: `linear-gradient(160deg, hsl(${h} 34% var(${dim ? "--av-bg1-dim" : "--av-bg1"})), hsl(${h} 38% var(${dim ? "--av-bg2-dim" : "--av-bg2"})))`,
+        color: `hsl(${h} 62% var(${dim ? "--av-fg-dim" : "--av-fg"}))`,
         boxShadow: `inset 0 1px 0 hsl(${h} 50% 45% / 0.28), inset 0 0 0 1px hsl(${h} 40% 40% / 0.28)`,
       }}
     >

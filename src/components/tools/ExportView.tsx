@@ -60,7 +60,7 @@ export function ExportView() {
 
       <section className="surface flex flex-col gap-4 rounded-lg p-5">
         <div className="flex items-start gap-4">
-          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileLock2 className="size-5 text-brass" aria-hidden /></span>
+          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileLock2 className="size-5 text-brass-ink" aria-hidden /></span>
           <div className="min-w-0">
             <h3 className="font-semibold">Encrypted vault file</h3>
             <p className="mt-1 text-[0.93em] text-mist">A complete copy of this vault, every item and every earlier version, still sealed with your master password. Without that password the file is unreadable.</p>

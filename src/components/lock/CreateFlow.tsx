@@ -74,7 +74,7 @@ function Details({ onBack, onCreated }: { onBack: () => void; onCreated: () => v
         {({ id, describedBy, invalid }) => <TextInput id={id} type={reveal ? "text" : "password"} autoComplete="new-password" value={confirm} disabled={busy} invalid={invalid} aria-describedby={describedBy} onChange={(e) => setConfirm(e.target.value)} mono={reveal} />}
       </Field>
       <label className="flex cursor-pointer items-start gap-3 rounded-sm py-1 text-[0.93em] text-mist pointer-coarse:py-2">
-        <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass)] pointer-coarse:size-5.5" />
+        <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass-ink)] pointer-coarse:size-5.5" />
         I understand that {brandName} cannot recover a forgotten master password.
       </label>
       <Button type="submit" variant="key" block busy={busy} disabled={!ready} className="mt-1 min-h-11">

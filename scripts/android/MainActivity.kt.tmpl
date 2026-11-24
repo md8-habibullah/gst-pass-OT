@@ -3,11 +3,13 @@ package __PACKAGE__
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 /**
@@ -22,9 +24,27 @@ import androidx.core.view.WindowInsetsCompat
  * 2. With edge-to-edge (forced on Android 15+ for apps that target API 35 or higher) the window is no longer resized
  *    when the keyboard opens, so a sheet fixed to the bottom of the page ended up behind the keyboard. The content
  *    view is padded by the keyboard's height instead, which shrinks the page exactly like "adjustResize" used to.
+ *
+ * It also lets the page say which colours it draws (light or dark, chosen in Settings > Theme or taken from the phone). The
+ * status and navigation bars are drawn by the system over the page; their icon colour follows the PHONE's setting unless
+ * told otherwise, so a light page on a dark phone would have pale icons on a pale ground. `HexisBars.setLook` (see
+ * src/lib/theme.ts) sets the icon colour from what the page really draws.
  */
 class MainActivity : TauriActivity() {
   private var page: WebView? = null
+
+  /** The page's way to tell the system bars what it draws. Only the two words "light" and "dark" mean anything. */
+  inner class BarsBridge {
+    @JavascriptInterface
+    fun setLook(look: String) {
+      val light = look == "light"
+      runOnUiThread {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = light
+        controller.isAppearanceLightNavigationBars = light
+      }
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -68,5 +88,6 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     page = webView
+    webView.addJavascriptInterface(BarsBridge(), "HexisBars")
   }
 }

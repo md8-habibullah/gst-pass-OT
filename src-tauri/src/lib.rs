@@ -58,6 +58,11 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             // A build made before the final name kept its data under the previous bundle identifier: adopt it.
             storage::legacy::adopt_previous_folder(&dir, &app.config().identifier);
+            // Older builds let the web view keep its browser storage in this folder; the window is incognito now
+            // (`tauri.conf.json`), so what they left is unused and is removed. Not needed on a phone: the web view
+            // keeps its data outside this folder there, and uninstalling removes all of it.
+            #[cfg(not(mobile))]
+            storage::webview_data::remove(&dir);
             let picker = std::sync::Arc::new(commands::DialogPicker::new(app.handle().clone()));
             let opener = std::sync::Arc::new(commands::PluginOpener::new(app.handle().clone()));
             let state = commands::prepare_state(&dir, picker, opener)?;
@@ -67,6 +72,37 @@ pub fn run() {
             ));
             // Start asking the time servers in the background (checked UTC time, see `clock`).
             state.core().start_clock();
+            // The native window follows the chosen theme (title bar, system dialogs). A phone has no such setting.
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                let apply = move |theme: storage::device::Theme| {
+                    let theme = match theme {
+                        storage::device::Theme::System => None,
+                        storage::device::Theme::Light => Some(tauri::Theme::Light),
+                        storage::device::Theme::Dark => Some(tauri::Theme::Dark),
+                    };
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.set_theme(theme);
+                    }
+                };
+                apply(state.core().device_get().theme);
+                state.set_theme_hook(apply);
+            }
+            // "Remove Hexis from this device" ends by closing the app. A moment's wait lets the answer reach the screen first.
+            // Not on a phone: Android would show a crash dialog when the process is cut short (see MainActivity.kt.tmpl), and
+            // the screen tells the person to uninstall from the system settings instead.
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                state.set_exit_hook(move || {
+                    let handle = handle.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(900));
+                        handle.exit(0);
+                    });
+                });
+            }
             app.manage(state);
             // The disguise: install the launcher (window, launcher entry) and re-apply the saved look.
             commands::disguise::install(app.handle());

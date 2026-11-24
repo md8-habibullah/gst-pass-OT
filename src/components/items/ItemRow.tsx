@@ -51,7 +51,7 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
           <motion.span
             layoutId="row-edge"
             aria-hidden
-            className="absolute top-3 bottom-3 left-0 w-[3px] rounded-full bg-brass"
+            className="absolute top-3 bottom-3 left-0 w-[3px] rounded-full bg-brass-ink"
             transition={{ type: "spring", stiffness: 560, damping: 42 }}
           />
         )}
@@ -64,10 +64,10 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
           <span className="whitespace-nowrap">{relativeTime(item.updatedAt)}</span>
           <span className="flex items-center gap-1.5">
             {item.archived && <Archive className="size-3.5" aria-label="Archived" />}
-            {item.reprompt && <KeyRound className="size-3.5 text-brass" aria-label="Asks for the master password" />}
+            {item.reprompt && <KeyRound className="size-3.5 text-brass-ink" aria-label="Asks for the master password" />}
             {showType && item.type !== "login" && <TypeIcon className="size-3.5" aria-hidden />}
             {item.hasTotp && <Timer className="size-3.5 text-verdigris" aria-label="Has a one-time code" />}
-            {item.favorite && <Star className="size-3.5 fill-brass text-brass" aria-label="Favorite" />}
+            {item.favorite && <Star className="size-3.5 fill-brass-ink text-brass-ink" aria-label="Favorite" />}
           </span>
         </span>
       </button>

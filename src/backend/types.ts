@@ -23,7 +23,15 @@ export interface ProfileInfo {
   demo?: boolean;
 }
 
-/** What the core keeps about this install in `device.json` (not secret; survives an erase). */
+/** Light or dark colours; `system` follows the device's own setting. */
+export type Theme = "system" | "light" | "dark";
+/** Seconds a copied secret stays on the clipboard. */
+export type ClipboardClear = 15 | 30 | 60;
+
+/**
+ * What the core keeps about this install in `device.json` (not secret; survives an erase). The screen itself keeps nothing:
+ * no local storage, no cookies, so nothing of the app is left in the web view when it is removed.
+ */
 export interface DeviceInfo {
   /** IANA name chosen on the first screen; `null` until then. */
   timeZone: string | null;
@@ -31,6 +39,8 @@ export interface DeviceInfo {
   setupDone: boolean;
   /** Ask a few HTTPS servers for the real time. */
   timeCheck: boolean;
+  theme: Theme;
+  clipboardClear: ClipboardClear;
 }
 
 /** The core's clock: UTC checked online, not the device date. */
@@ -163,6 +173,9 @@ export interface VersionEntry {
 
 export interface TotpNow {
   code: string;
+  /** The code of the window before this one and of the window after it (withheld together with `code`). */
+  previous: string;
+  next: string;
   period: number;
   digits: number;
   secondsRemaining: number;
@@ -437,6 +450,12 @@ export interface Backend {
   appResetChallenge(): Promise<string>;
   /** The manual reset, after the third confirmation and the answer to the sum (`wrong_answer`; ask for a new sum). */
   appReset(answer: string): Promise<void>;
+  /**
+   * "Remove Hexis from this device": the same three confirmations and the sum as `appReset`, then everything Hexis keeps
+   * on this device is removed (vaults, settings, the web view's leftovers) and the app closes. Nothing new is made.
+   * S3 backups are not touched. Not available while the app lock is closed.
+   */
+  appPrepareUninstall(answer: string): Promise<void>;
   appSettingsGet(): Promise<AppSettings>;
   appSettingsSet(input: AppSettings): Promise<AppSettings>;
   /** Tells the core the person is active, so the inactivity timer restarts. */
@@ -482,6 +501,8 @@ export interface Backend {
   /** The first-run welcome was seen. */
   deviceFinishSetup(): Promise<DeviceInfo>;
   deviceSetTimeCheck(on: boolean): Promise<DeviceInfo>;
+  deviceSetTheme(theme: Theme): Promise<DeviceInfo>;
+  deviceSetClipboardClear(seconds: ClipboardClear): Promise<DeviceInfo>;
   clockStatus(): Promise<ClockStatus>;
   /** Checks the time online now (up to about ten seconds). A failure is in `problem`, not an error. */
   clockSync(): Promise<ClockStatus>;

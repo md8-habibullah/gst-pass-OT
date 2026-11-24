@@ -23,7 +23,7 @@ export function CountdownRing({
   return (
     <span role={label ? "img" : undefined} aria-label={label} className="relative inline-grid shrink-0 place-items-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 -rotate-90" aria-hidden>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(155 178 185 / 0.16)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} style={{ stroke: "var(--ring-track)" }} />
         <motion.circle
           key={windowKey}
           cx={size / 2}

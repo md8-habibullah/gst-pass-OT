@@ -27,7 +27,7 @@ pub use error::{CryptoError, Result};
 pub use kdf::KdfParams;
 pub use secret::{MasterPassword, SecretKey32, SecretVec};
 pub use subkey::{derive_subkey, KeyPurpose};
-pub use totp::{TotpAccount, TotpAlgorithm, TotpCode, TotpParams};
+pub use totp::{TotpAccount, TotpAlgorithm, TotpCode, TotpParams, TotpWindow};
 pub use vault_keys::{
     change_password, create, unlock, verify_password, VaultKeyBundle, VaultRootKey,
 };

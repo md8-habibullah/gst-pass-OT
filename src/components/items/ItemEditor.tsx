@@ -41,7 +41,7 @@ function TagInput({ tags, onChange }: { tags: string[]; onChange: (t: string[]) 
     else if (e.key === "Backspace" && !text && tags.length) onChange(tags.slice(0, -1));
   };
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-sm border border-hairline bg-raised p-1.5 shadow-e1 focus-within:border-brass/70">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-sm border border-hairline bg-raised p-1.5 shadow-e1 focus-within:border-brass-ink/70">
       {tags.map((t) => (
         <span key={t} className="inline-flex items-center gap-1 rounded-full bg-hover py-0.5 pr-1 pl-2.5 text-[0.9em]">
           {t}
@@ -74,7 +74,7 @@ function SecretField({ spec, value, onChange, itemType }: { spec: FieldSpec; val
         label={spec.label}
         trailing={
           generate ? (
-            <button type="button" onClick={() => setGen((g) => !g)} aria-expanded={gen} className="pressable inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-[0.86em] font-semibold text-brass hover:text-brass-hi pointer-coarse:min-h-10">
+            <button type="button" onClick={() => setGen((g) => !g)} aria-expanded={gen} className="pressable inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-[0.86em] font-semibold text-brass-ink hover:text-brass-ink-hi pointer-coarse:min-h-10">
               <Wand2 className="size-3.5" aria-hidden /> Generate
             </button>
           ) : undefined
@@ -254,7 +254,7 @@ export function ItemEditor() {
             const { icon: Icon, hint } = TYPE_META[type];
             return (
               <button key={type} type="button" onClick={() => { const d = blank(type); setDraft(d); setInitial(JSON.stringify(d)); }} className="pressable group flex items-center gap-4 rounded-lg border border-hairline bg-raised px-4 py-3 text-left shadow-e1 hover:bg-hover pointer-coarse:py-3.5">
-                <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1 group-hover:text-brass"><Icon className="size-5" aria-hidden /></span>
+                <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1 group-hover:text-brass-ink"><Icon className="size-5" aria-hidden /></span>
                 <span className="min-w-0">
                   <span className="block font-semibold">{TYPE_LABEL[type]}</span>
                   <span className="block text-[0.93em] text-mist">{hint}</span>

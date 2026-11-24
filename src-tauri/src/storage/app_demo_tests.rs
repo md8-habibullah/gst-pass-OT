@@ -4,6 +4,7 @@
 
 use super::app::AppCore;
 use super::demo::{DEMO_NAME, DEMO_PASSWORD};
+use super::device;
 use super::files::TestPicker;
 use super::session::{SessionConfig, EDIT_TOKEN_TTL};
 use super::StorageError;
@@ -188,4 +189,32 @@ fn the_zone_is_checked_and_survives_a_restart() {
     let d = fx.app.device_get();
     assert_eq!(d.time_zone.as_deref(), Some("Europe/London"));
     assert!(d.setup_done);
+}
+
+#[test]
+fn the_theme_and_the_clipboard_time_survive_a_restart_and_an_erase() {
+    let mut fx = Fx::new();
+    let d = fx.app.device_get();
+    assert_eq!(d.theme, device::Theme::System);
+    assert_eq!(d.clipboard_clear, 30);
+
+    fx.app.device_set_theme(device::Theme::Dark).unwrap();
+    fx.app.device_set_clipboard_clear(60).unwrap();
+    for bad in [0, 10, 31, 3600] {
+        assert!(
+            fx.app.device_set_clipboard_clear(bad).is_err(),
+            "{bad} was accepted"
+        );
+    }
+    assert_eq!(fx.app.device_get().clipboard_clear, 60);
+
+    fx.restart();
+    let d = fx.app.device_get();
+    assert_eq!((d.theme, d.clipboard_clear), (device::Theme::Dark, 60));
+
+    // "erase this device" keeps how the app looks and behaves, like the zone
+    fx.app.demo_spawn().unwrap();
+    fx.app.wipe_with(&mut NoObserver).unwrap();
+    let d = fx.app.device_get();
+    assert_eq!((d.theme, d.clipboard_clear), (device::Theme::Dark, 60));
 }

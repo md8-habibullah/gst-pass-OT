@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { KeyRound, Lock } from "lucide-react";
+import { KeyRound, Lock, Trash2 } from "lucide-react";
 import { BackendError } from "../../backend";
 import { app, be, lockVault, pushToast, setClipboardClear, type ClipboardClear } from "../../state/app";
 import { useStore } from "../../state/store";
+import { ResetFlow } from "../gate/ResetFlow";
 import { StrengthMeter } from "../lock/StrengthMeter";
 import { Button } from "../ui/Button";
 import { Field, Segmented, TextInput } from "../ui/Inputs";
@@ -34,7 +35,7 @@ function ChangePassword({ open, onClose }: { open: boolean; onClose: () => void 
   }
 
   return (
-    <Sheet open={open} onClose={close} title="Change master password" variant="dialog" size="sm" dismissible={!busy} titleIcon={<KeyRound className="size-5 text-brass" aria-hidden />}>
+    <Sheet open={open} onClose={close} title="Change master password" variant="dialog" size="sm" dismissible={!busy} titleIcon={<KeyRound className="size-5 text-brass-ink" aria-hidden />}>
       <form onSubmit={submit} className="flex flex-col gap-4 pt-1">
         <Field label="Current master password" error={error}>
           {({ id, describedBy, invalid }) => <TextInput id={id} data-autofocus type="password" autoComplete="current-password" value={current} invalid={invalid} aria-describedby={describedBy} disabled={busy} onChange={(e) => setCurrent(e.target.value)} />}
@@ -60,6 +61,7 @@ export function SecurityPage() {
   const clipboardClear = useStore(app, (s) => s.clipboardClear);
   const demo = useStore(app, (s) => s.profile?.demo === true);
   const [changing, setChanging] = useState(false);
+  const [removing, setRemoving] = useState(false);
   return (
     <>
       <Group title="Security" heading={false}>
@@ -75,7 +77,13 @@ export function SecurityPage() {
           </Row>
         )}
       </Group>
+      <Group title="Remove Hexis from this device">
+        <Row title="Remove everything Hexis keeps here" description="Before you uninstall Hexis, use this so that nothing is left behind: every vault and file, the app lock, its settings, and anything its window stored as cache or cookies. Backups in your S3 buckets are not touched.">
+          <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setRemoving(true)}>Remove…</Button>
+        </Row>
+      </Group>
       <ChangePassword open={changing} onClose={() => setChanging(false)} />
+      <ResetFlow kind="remove" open={removing} onClose={() => setRemoving(false)} />
     </>
   );
 }

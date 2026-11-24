@@ -1,7 +1,6 @@
 /* Ground, focus, scrollbars and the surface utilities. Spec: UI_DESIGN_SYSTEM.md §1-2. */
 
 :root {
-  color-scheme: dark;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -37,7 +36,7 @@ body {
 }
 
 ::selection {
-  background: rgb(226 178 89 / 0.32);
+  background: var(--sel-bg);
   color: var(--color-frost);
 }
 
@@ -45,7 +44,7 @@ body {
   outline: none;
 }
 :focus-visible {
-  outline: 2px solid var(--color-brass);
+  outline: 2px solid var(--color-brass-ink);
   outline-offset: 2px;
   border-radius: inherit;
 }
@@ -73,17 +72,28 @@ button:disabled {
 /* thin scrollbars that match the panes (desktop) */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(155 178 185 / 0.28) transparent;
+  scrollbar-color: var(--scroll-thumb-firefox) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgb(155 178 185 / 0.24);
+  background: var(--scroll-thumb);
   border-radius: 9999px;
   border: 3px solid transparent;
   background-clip: padding-box;
+}
+
+/* The two small shadows. Written by hand (not from the theme) so that they follow the light or dark palette; they compose
+   with Tailwind's ring utilities the same way the generated ones did. */
+@utility shadow-e1 {
+  --tw-shadow: var(--shadow-e1);
+  box-shadow: var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000), var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+@utility shadow-e2 {
+  --tw-shadow: var(--shadow-e2);
+  box-shadow: var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000), var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
 /* Surfaces. A pane is a solid step up from the ground with a hairline edge; a floating layer (menu, sheet, toast)
@@ -114,16 +124,16 @@ button:disabled {
     background: var(--color-brass-lo);
   }
   &:disabled:not([aria-busy="true"]) {
-    background: rgb(226 178 89 / 0.15);
-    color: rgb(237 195 120 / 0.7);
-    box-shadow: inset 0 0 0 1px rgb(226 178 89 / 0.22);
+    background: var(--key-off-bg);
+    color: var(--key-off-fg);
+    box-shadow: inset 0 0 0 1px var(--key-off-ring);
   }
 }
 
 /* Secret pill: a quiet inset field. */
 @utility frosted {
-  background: rgb(155 178 185 / 0.1);
-  box-shadow: inset 0 0 0 1px rgb(190 230 240 / 0.08);
+  background: var(--frosted-bg);
+  box-shadow: inset 0 0 0 1px var(--frosted-ring);
 }
 
 @utility pressable {

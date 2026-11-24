@@ -11,7 +11,7 @@ export type LockFlow = "create" | "import" | "restore";
 export type LockIntent = LockFlow | "choose";
 
 /** The pages of Settings. `null` is the list of categories (a phone) or the first page (a wide screen). */
-export type SettingsPageId = "security" | "applock" | "accounts" | "time" | "appearance" | "data" | "help" | "about";
+export type SettingsPageId = "security" | "applock" | "accounts" | "time" | "theme" | "appearance" | "data" | "help" | "about";
 
 export interface UiState {
   editor: EditorRequest | null;

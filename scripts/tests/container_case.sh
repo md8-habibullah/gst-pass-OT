@@ -60,7 +60,23 @@ run
 [ "$(cat /tmp/install.rc)" = 0 ] || fail "running the installer a second time failed"
 ok "a second run succeeds (upgrade in place)"
 
+# what the app keeps for this account (the smoke run above may have made some of it already)
+data="${HOME:-/root}/.local/share/dev.habibullah.hexis"; cache="${HOME:-/root}/.cache/dev.habibullah.hexis"
+mkdir -p "$data/localstorage" "$cache"; echo sealed >"$data/vault.db"; echo cached >"$cache/blob"
+
+# no terminal and no --yes: the uninstall must refuse and change nothing (it would delete the vault)
+export HEXIS_TTY=/nonexistent/terminal
 run --uninstall
+unset HEXIS_TTY
+[ "$(cat /tmp/install.rc)" != 0 ] || fail "uninstall removed data without anyone confirming"
+[ -f "$data/vault.db" ] || fail "a refused uninstall still touched the data"
+if ! command -v hexis >/dev/null 2>&1 && [ ! -e /usr/local/bin/hexis ]; then fail "a refused uninstall still removed the program"; fi
+ok "uninstall without a terminal or --yes refuses and changes nothing"
+
+run --uninstall --yes
 [ "$(cat /tmp/install.rc)" = 0 ] || fail "uninstall exited with $(cat /tmp/install.rc)"
 if command -v hexis >/dev/null 2>&1 || [ -e /usr/local/bin/hexis ]; then fail "hexis is still there after the uninstall"; fi
 ok "uninstalled; nothing left on the PATH"
+[ ! -e "$data" ] && [ ! -e "$cache" ] || fail "Hexis's data or cache folder is still there after the uninstall"
+grep -q "Nothing is kept" /tmp/install.log || fail "the uninstall did not say that nothing is kept"
+ok "its data and cache folders are gone, and the uninstall said so"

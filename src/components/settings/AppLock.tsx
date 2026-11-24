@@ -110,7 +110,7 @@ function AppLockSheet({ open, onClose, gate }: { open: boolean; onClose: () => v
   }
 
   return (
-    <Sheet open={open} onClose={() => !busy && onClose()} title="App lock" variant="form" size="md" dismissible={!busy} titleIcon={<ShieldCheck className="size-5 text-brass" aria-hidden />}>
+    <Sheet open={open} onClose={() => !busy && onClose()} title="App lock" variant="form" size="md" dismissible={!busy} titleIcon={<ShieldCheck className="size-5 text-brass-ink" aria-hidden />}>
       <form onSubmit={submit} className="flex flex-col gap-5 pt-1" noValidate>
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -152,7 +152,7 @@ function AppLockSheet({ open, onClose, gate }: { open: boolean; onClose: () => v
 
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="flex items-center gap-2 font-medium"><Fingerprint className="size-4 text-brass" aria-hidden /> Fingerprint</p>
+                <p className="flex items-center gap-2 font-medium"><Fingerprint className="size-4 text-brass-ink" aria-hidden /> Fingerprint</p>
                 <p className="text-[0.93em] text-mist">{gate.biometricAvailable ? "Also opens the account list. It never opens a vault." : "Not available on this device. Fingerprint unlock is for Android."}</p>
               </div>
               <Switch label="Fingerprint" checked={biometric && gate.biometricAvailable} onChange={setBiometric} />

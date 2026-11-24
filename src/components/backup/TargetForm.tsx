@@ -143,7 +143,7 @@ export function TargetForm({ mode, initial, submitLabel, onSubmit, onCancel, can
         <legend className="mb-1.5 text-[0.86em] font-medium text-mist">Provider</legend>
         <div className="grid grid-cols-2 gap-2">
           {PROVIDERS.map((p) => (
-            <button key={p.id} type="button" aria-pressed={p.id === provider.id} onClick={() => pick(p)} className={`pressable min-h-10 rounded-sm border px-3 text-left text-[0.93em] font-medium ${p.id === provider.id ? "border-brass/60 bg-brass/15 text-brass-hi" : "border-hairline bg-raised text-mist hover:text-frost"}`}>
+            <button key={p.id} type="button" aria-pressed={p.id === provider.id} onClick={() => pick(p)} className={`pressable min-h-10 rounded-sm border px-3 text-left text-[0.93em] font-medium ${p.id === provider.id ? "border-brass-ink/60 bg-brass/15 text-brass-ink-hi" : "border-hairline bg-raised text-mist hover:text-frost"}`}>
               {p.label}
             </button>
           ))}
@@ -196,14 +196,14 @@ export function TargetForm({ mode, initial, submitLabel, onSubmit, onCancel, can
       {mode !== "restore" && (
         <div className="flex flex-col gap-3 rounded-lg bg-pane/70 p-4 shadow-e1">
           <label className="flex cursor-pointer items-start gap-3 text-[0.95em]">
-            <input type="checkbox" checked={v.shareInMaster} onChange={(e) => set("shareInMaster", e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass)] pointer-coarse:size-5.5" />
+            <input type="checkbox" checked={v.shareInMaster} onChange={(e) => set("shareInMaster", e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass-ink)] pointer-coarse:size-5.5" />
             <span>
               <span className="block font-medium">Also keep these credentials in the master backup</span>
               <span className="block text-mist">The credentials are sealed inside your vault. When you restore from the master backup on a new device, this backup comes back already set up. You will not have to type its keys again.</span>
             </span>
           </label>
           <label className="flex cursor-pointer items-start gap-3 text-[0.95em]">
-            <input type="checkbox" checked={v.master} onChange={(e) => set("master", e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass)] pointer-coarse:size-5.5" />
+            <input type="checkbox" checked={v.master} onChange={(e) => set("master", e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass-ink)] pointer-coarse:size-5.5" />
             <span>
               <span className="block font-medium">Use this as the master backup</span>
               <span className="block text-mist">The master backup is the one you point a fresh install at. Only one backup is the master; choosing this moves the label here.</span>

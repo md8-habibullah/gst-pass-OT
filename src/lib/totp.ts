@@ -19,6 +19,6 @@ export function ringTone(secondsRemaining: number): RingTone {
 
 export const TONE_COLOR: Record<RingTone, string> = {
   fresh: "var(--color-verdigris)",
-  low: "var(--color-brass)",
+  low: "var(--color-brass-ink)",
   critical: "var(--color-ember)",
 };

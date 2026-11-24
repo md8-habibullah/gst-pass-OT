@@ -430,17 +430,24 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 **`device.json`** (data folder, owner-only 0600, atomic replace; read at start, never an error: a missing, unreadable, oversized (over 4 KiB) or damaged file is the defaults). Plaintext JSON:
 
 ```json
-{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "demoProfile": "<uuid>"}
+{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "theme": "system", "clipboardClear": 30, "demoProfile": "<uuid>"}
 ```
 
 * `timeZone`: the IANA name from the first page, only used to *show* UTC times and to read times the person types. Absent until chosen.
 * `setupDone`: the first-run welcome was seen.
 * `timeCheck`: the online time check (on by default).
+* `theme`: `system` (follow the device, the default), `light` or `dark`. Any other value reads as `system`.
+* `clipboardClear`: seconds a copied secret stays on the clipboard, 15, 30 (default) or 60. Added 2026-11-25; before that it was web view storage and is not carried over.
 * `demoProfile`: the id of the demo vault while one exists. It stays inside the core; `DeviceInfo` (what the screen reads) has no such field.
 
-It leaks a place name, two switches and a random id; no name, item or key. **It survives the erase on purpose** (D30): the wipe only knows its fixed list of files, and `forget_demo_if_any` clears just the demo id. A reset therefore opens straight into a fresh demo vault with no zone page.
+It leaks a place name, a colour preference, a few switches and a random id; no name, item or key. **It survives the erase on purpose** (D30): the wipe only knows its fixed list of files, and `forget_demo_if_any` clears just the demo id. A reset therefore opens straight into a fresh demo vault with no zone page.
 
 **The demo vault** is an ordinary vault in `vaults/<id>/vault.db` named "Hexis123" with the master password "Hexis123" (public on purpose: it holds nothing real). `AppCore::demo_spawn` runs only when the registry is empty: `profile_create`, then `Session::seed_items` with the 15 to 25 items from `storage/demo.rs` (one invented person, Hexis Alden: logins for Google, Microsoft, GitHub, Amazon and others, with random passwords and one-time-code secrets made at spawn time; cards that are the published test numbers; an identity, a secure note, an SSH key; created at back-dated times so the list shows groups from "Last 7 days" to "Older"), then the id is written to `device.json`. A failure after the vault exists removes it again. `demo_open` selects it and unlocks it with the public password, and only for the id in `device.json`. Deleting it (Settings, Accounts, with its password and `CONFIRM`) forgets the id; the app then makes a new one if no vault is left.
 
 **Time.** Every time written to a vault, a backup object, a file's metadata or `profiles.json` is UTC milliseconds since 1970 (`crypto::now_millis`, which reads `TrustedClock::now_ms`: checked UTC when there is one, the device clock otherwise). Nothing stored depends on the zone.
 
+### Web view data and "remove from this device" (2026-11-25)
+
+**The web view keeps nothing** (D32). The window is incognito, and the screen stores nothing itself. Builds up to 0.2.0 let WebKitGTK write into the data folder; `storage/webview_data.rs` lists the names it used (`localstorage`, `indexeddb`, `databases`, `storage`, `CacheStorage`, `WebKitCache`, `mediakeys`, `deviceidhashsalts`, `itp`, `ResourceLoadStatistics`, `serviceworkers`, `applicationcache`, `offlineapplicationcache`, `cookies`, `hsts-storage.sqlite` and its `-journal`, `-wal`, `-shm`). `remove(dir)` deletes exactly those, directly inside the data folder, never following a link, and runs at every start (non-mobile) and inside the wipe (`WipeReport.web_view_removed`). They are not secret, so they are unlinked, not overwritten. The wipe's scan no longer counts these names as "unknown files", so a folder that holds only them is removed.
+
+**`app_prepare_uninstall`** (D34) runs the wipe and then `forget_device_files`: `device.json` goes, and the data folder itself when it is empty. A folder that still holds a file Hexis does not know is left as it is, with that file. Nothing is created again: the demo vault is made on the next start of an *installed* app, which is what a fresh install does anyway.

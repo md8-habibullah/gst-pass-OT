@@ -90,7 +90,7 @@ export function ImportView() {
 
       <section className="surface flex flex-col gap-4 rounded-lg p-5" aria-label="Choose a file">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileUp className="size-5 text-brass" aria-hidden /></span>
+          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileUp className="size-5 text-brass-ink" aria-hidden /></span>
           <div className="min-w-0 flex-1 basis-56">
             <h3 className="truncate font-semibold">{pick ? pick.fileName : "No file chosen"}</h3>
             <p className="text-[0.93em] text-mist">{pick ? `${formatBytes(pick.size)}. ${pick.format === "unknown" ? "Not recognised: pick what it is below." : `Looks like ${formatLabel(pick.format)}.`}` : "The file is opened and read on this device and never uploaded."}</p>
@@ -101,7 +101,7 @@ export function ImportView() {
         {pick && (
           <Field label="This file is from">
             {({ id }) => (
-              <select id={id} value={effective ?? ""} onChange={(e) => { setFormat((e.target.value || null) as ImportFormat | null); setPreview(null); setCsv(null); }} className="min-h-11 w-full rounded-sm border border-hairline bg-raised px-3 outline-none focus-visible:border-brass">
+              <select id={id} value={effective ?? ""} onChange={(e) => { setFormat((e.target.value || null) as ImportFormat | null); setPreview(null); setCsv(null); }} className="min-h-11 w-full rounded-sm border border-hairline bg-raised px-3 outline-none focus-visible:border-brass-ink">
                 {!effective && <option value="">Choose…</option>}
                 {["Password managers", "KeePass", "Browsers", "Code apps", "Other"].map((g) => (
                   <optgroup key={g} label={g}>{FORMATS.filter((f) => f.group === g).map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}</optgroup>
@@ -113,7 +113,7 @@ export function ImportView() {
 
         {needsPassword && (
           <div className="flex flex-col gap-3 rounded-lg bg-pane/70 p-4">
-            <p className="flex items-center gap-2 font-medium"><KeyRound className="size-4 text-brass" aria-hidden /> This KeePass database is locked</p>
+            <p className="flex items-center gap-2 font-medium"><KeyRound className="size-4 text-brass-ink" aria-hidden /> This KeePass database is locked</p>
             <Field label="Database password">{({ id }) => <TextInput id={id} type="password" autoComplete="off" value={password} onChange={(e) => { setPassword(e.target.value); setPreview(null); }} />}</Field>
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={() => void chooseKeyfile()}>{keyfile ? "Choose another key file" : "Add a key file (optional)"}</Button>
@@ -130,7 +130,7 @@ export function ImportView() {
               {FIELDS.map((f) => (
                 <Field key={f.key} label={f.label + (f.required ? " (needed)" : "")}>
                   {({ id }) => (
-                    <select id={id} value={mapping[f.key] ?? ""} onChange={(e) => { setMapping({ ...mapping, [f.key]: e.target.value || undefined }); setPreview(null); }} className="min-h-10 w-full rounded-sm border border-hairline bg-raised px-3 outline-none focus-visible:border-brass">
+                    <select id={id} value={mapping[f.key] ?? ""} onChange={(e) => { setMapping({ ...mapping, [f.key]: e.target.value || undefined }); setPreview(null); }} className="min-h-10 w-full rounded-sm border border-hairline bg-raised px-3 outline-none focus-visible:border-brass-ink">
                       <option value="">None</option>
                       {csv.headers.map((h) => <option key={h} value={h}>{h}</option>)}
                     </select>
@@ -153,7 +153,7 @@ export function ImportView() {
             <legend className="mb-1 font-medium">If something is already in your vault</legend>
             {MODES.map((m) => (
               <label key={m.id} className="flex cursor-pointer items-start gap-3 rounded-lg px-3 py-2 hover:bg-raised/50">
-                <input type="radio" name="import-mode" checked={mode === m.id} onChange={() => { setMode(m.id); setPreview(null); }} className="mt-1 size-4 accent-[var(--color-brass)]" />
+                <input type="radio" name="import-mode" checked={mode === m.id} onChange={() => { setMode(m.id); setPreview(null); }} className="mt-1 size-4 accent-[var(--color-brass-ink)]" />
                 <span><span className="block font-medium">{m.title}</span><span className="block text-[0.93em] text-mist">{m.text}</span></span>
               </label>
             ))}
@@ -175,7 +175,7 @@ export function ImportView() {
             {preview.skipped > 0 && <li className="rounded-full bg-raised px-3 py-1">{preview.skipped} not importable</li>}
           </ul>
           {preview.warnings.length > 0 && (
-            <ul className="flex flex-col gap-1 text-[0.93em] text-mist">{preview.warnings.slice(0, 6).map((w, i) => <li key={i} className="flex gap-2"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-brass" aria-hidden />{w}</li>)}</ul>
+            <ul className="flex flex-col gap-1 text-[0.93em] text-mist">{preview.warnings.slice(0, 6).map((w, i) => <li key={i} className="flex gap-2"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-brass-ink" aria-hidden />{w}</li>)}</ul>
           )}
           {preview.titles.length > 0 && (
             <details className="text-[0.93em]"><summary className="cursor-pointer text-mist">Show the names</summary><p className="mt-2 text-fog">{preview.titles.join(", ")}{preview.entries > preview.titles.length ? ` and ${preview.entries - preview.titles.length} more` : ""}</p></details>
@@ -191,9 +191,9 @@ export function ImportView() {
         <section className="flex flex-col gap-3 rounded-lg bg-pane/70 p-5 shadow-e1" role="status" aria-label="Import finished">
           <p className="font-semibold">{plural(outcome.added + outcome.appended, "item")} imported{outcome.appended ? `, ${outcome.appended} as new versions` : ""}{outcome.skipped ? `, ${outcome.skipped} skipped` : ""}{outcome.failed ? `, ${outcome.failed} could not be saved` : ""}.</p>
           {outcome.warnings.length > 0 && (
-            <ul className="flex flex-col gap-1 text-[0.93em] text-mist">{outcome.warnings.slice(0, 6).map((w, i) => <li key={i} className="flex gap-2"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-brass" aria-hidden />{w}</li>)}</ul>
+            <ul className="flex flex-col gap-1 text-[0.93em] text-mist">{outcome.warnings.slice(0, 6).map((w, i) => <li key={i} className="flex gap-2"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-brass-ink" aria-hidden />{w}</li>)}</ul>
           )}
-          <p className="flex items-start gap-2 text-[0.93em] text-mist"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-brass" aria-hidden />The file you imported from is not encrypted. Delete it from your disk (and empty the trash) now that everything is safe in your vault.</p>
+          <p className="flex items-start gap-2 text-[0.93em] text-mist"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-brass-ink" aria-hidden />The file you imported from is not encrypted. Delete it from your disk (and empty the trash) now that everything is safe in your vault.</p>
           <div><Button onClick={() => setFilter("all")}>Open your vault</Button></div>
         </section>
       )}

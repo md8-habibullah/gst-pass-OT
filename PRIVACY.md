@@ -12,9 +12,23 @@ library, which Google documents as able to send technical usage metrics (see "An
 * **Your last password generator settings** (the length and which character types) are kept inside the encrypted vault, so they
   are in your backups and follow the vault to your other devices. The generated passwords themselves are never stored.
 * **Not encrypted, next to the vaults:** the list of account names, the app lock's settings and hashes, the icon and name you chose
-  for the disguise, and `device.json` (your time zone, whether the first-run welcome was seen, the time-check switch and the id of the
-  demo vault). None of them holds an item, a key or a password. Erasing everything removes all of them except `device.json`'s zone and
-  switches, so that an erased app can open without asking again.
+  for the disguise, and `device.json` (your time zone, your colour theme, how long a copied secret stays on the clipboard, whether the
+  first-run welcome was seen, the time-check switch and the id of the demo vault). None of them holds an item, a key or a password.
+  Erasing everything removes all of them except `device.json`'s settings, so that an erased app can open without asking again.
+* **No cache, no cookies, no stored page data.** The app's window runs without a persistent profile: it keeps no cookies, no cache and
+  no local storage on disk, and the screen itself stores nothing in the window (your theme and the clipboard time are in `device.json`).
+  Versions up to 0.2.0 let the window keep a few such files in the data folder; this version removes them when it starts and when you erase.
+* **Removing Hexis completely.** **Settings > Security > Remove Hexis from this device** (three confirmations and a sum, then it works
+  without asking again) destroys every vault on the device and the app lock (each file is overwritten with zeros before it is deleted), then deletes
+  the settings and the window's leftovers, makes nothing new and closes the app. After that you uninstall it like any other program. The
+  installer's `--uninstall` does the same clean-up for the files (without overwriting them) and then removes the program. Removing the
+  program with a package manager alone (`apt remove`, `dnf remove`, `pacman -R`) leaves your data: by the rules of every distribution a
+  package never touches your home folder. **What a removal cannot do:** a deleted or overwritten file can survive on an SSD or in a
+  file-system journal until the space is reused; your backups in S3 buckets are not on the device and stay until you delete them with
+  your storage provider; other accounts on the same computer keep their own data; and files you exported or copied somewhere yourself
+  are yours to delete. Hexis never touches system-wide folders, such as a font cache or your desktop's recent-files list.
+* **Android.** Android's automatic backup (to your Google account, or to a new phone) is switched off for Hexis, so a vault cannot be
+  restored behind your back after a reinstall. Uninstalling the app removes its private data folder.
 * **Network.** Two things reach the internet. (1) **Your S3-compatible backup targets**, only when you add one, and then only
   that endpoint, over HTTPS (plain HTTP is accepted for the loopback address only, for testing). What leaves the device is
   ciphertext plus the object names, sizes and timestamps the storage provider sees by nature. Sync runs on three
