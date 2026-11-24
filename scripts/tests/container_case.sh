@@ -8,6 +8,14 @@ set -u
 fail() { printf 'FAIL: %s\n' "$*"; exit 1; }
 ok() { printf 'PASS: %s\n' "$*"; }
 
+# ---- what this container is, printed before anything is installed (public facts only: no environment, no secrets)
+printf 'container: %s, %s, kernel %s\n' "$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"')" "$(uname -m)" "$(uname -r)"
+printf '           /bin/sh is %s; %s cpus; memory %s; limit of this container %s; disk free on / %s\n' \
+    "$(readlink -f /bin/sh 2>/dev/null || echo unknown)" "$(nproc 2>/dev/null || echo '?')" \
+    "$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf "%.1f GiB total, %.1f GiB available", t/1048576, a/1048576}' /proc/meminfo 2>/dev/null)" \
+    "$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo unknown)" \
+    "$(df -h / 2>/dev/null | awk 'NR==2{print $4}')"
+
 # ---- what a minimal image lacks: curl, and (for the smoke test) a virtual display
 if [ -r /etc/os-release ]; then ID=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"'); else ID=unknown; fi
 quiet() { "$@" >/dev/null 2>&1; }

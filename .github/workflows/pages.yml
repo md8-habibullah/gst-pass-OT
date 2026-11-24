@@ -55,6 +55,25 @@ jobs:
     permissions:
       actions: write
     steps:
+      # First step of every job: this machine's public details; the copies are kept identical by scripts/tests/test_ci_system_info.py
+      - name: System details (public information only)
+        continue-on-error: true
+        run: |
+          {
+            echo "### System: ${GITHUB_JOB:-?} on ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
+            echo '```'
+            echo "time      $(date -u '+%Y-%m-%d %H:%M:%S') UTC   commit ${GITHUB_SHA:-?}"
+            echo "runner    ${RUNNER_NAME:-?}   image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "system    $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"'), kernel $(uname -r), $(uname -m)"
+            echo "cpu       $(nproc) cores, $(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)"
+            echo "memory    $(free -h | awk '/^Mem:/{print $2" total, "$7" available"}'), swap $(free -h | awk '/^Swap:/{print $2}')"
+            echo "disk      $(df -h / | awk 'NR==2{print $2" total, "$4" free"}') on /, $(df -h . | awk 'NR==2{print $4" free"}') in the workspace"
+            echo "load      $(cut -d' ' -f1-3 /proc/loadavg)"
+            for t in git node npm python3 rustc cargo java docker gh; do
+              if command -v "$t" >/dev/null 2>&1; then printf '%-9s %s\n' "$t" "$( ("$t" --version 2>&1 || "$t" -version 2>&1) | head -n 1)"; fi
+            done
+            echo '```'
+          } 2>&1 | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}"
@@ -64,6 +83,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # First step of every job: this machine's public details; the copies are kept identical by scripts/tests/test_ci_system_info.py
+      - name: System details (public information only)
+        continue-on-error: true
+        run: |
+          {
+            echo "### System: ${GITHUB_JOB:-?} on ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
+            echo '```'
+            echo "time      $(date -u '+%Y-%m-%d %H:%M:%S') UTC   commit ${GITHUB_SHA:-?}"
+            echo "runner    ${RUNNER_NAME:-?}   image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "system    $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"'), kernel $(uname -r), $(uname -m)"
+            echo "cpu       $(nproc) cores, $(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)"
+            echo "memory    $(free -h | awk '/^Mem:/{print $2" total, "$7" available"}'), swap $(free -h | awk '/^Swap:/{print $2}')"
+            echo "disk      $(df -h / | awk 'NR==2{print $2" total, "$4" free"}') on /, $(df -h . | awk 'NR==2{print $4" free"}') in the workspace"
+            echo "load      $(cut -d' ' -f1-3 /proc/loadavg)"
+            for t in git node npm python3 rustc cargo java docker gh; do
+              if command -v "$t" >/dev/null 2>&1; then printf '%-9s %s\n' "$t" "$( ("$t" --version 2>&1 || "$t" -version 2>&1) | head -n 1)"; fi
+            done
+            echo '```'
+          } 2>&1 | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: actions/setup-node@v7
@@ -123,5 +161,24 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # First step of every job: this machine's public details; the copies are kept identical by scripts/tests/test_ci_system_info.py
+      - name: System details (public information only)
+        continue-on-error: true
+        run: |
+          {
+            echo "### System: ${GITHUB_JOB:-?} on ${RUNNER_OS:-?} ${RUNNER_ARCH:-?}"
+            echo '```'
+            echo "time      $(date -u '+%Y-%m-%d %H:%M:%S') UTC   commit ${GITHUB_SHA:-?}"
+            echo "runner    ${RUNNER_NAME:-?}   image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "system    $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"'), kernel $(uname -r), $(uname -m)"
+            echo "cpu       $(nproc) cores, $(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)"
+            echo "memory    $(free -h | awk '/^Mem:/{print $2" total, "$7" available"}'), swap $(free -h | awk '/^Swap:/{print $2}')"
+            echo "disk      $(df -h / | awk 'NR==2{print $2" total, "$4" free"}') on /, $(df -h . | awk 'NR==2{print $4" free"}') in the workspace"
+            echo "load      $(cut -d' ' -f1-3 /proc/loadavg)"
+            for t in git node npm python3 rustc cargo java docker gh; do
+              if command -v "$t" >/dev/null 2>&1; then printf '%-9s %s\n' "$t" "$( ("$t" --version 2>&1 || "$t" -version 2>&1) | head -n 1)"; fi
+            done
+            echo '```'
+          } 2>&1 | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - id: deployment
         uses: actions/deploy-pages@v5
