@@ -1382,13 +1382,45 @@ fn clone_is_password_gated_and_never_returns_secrets() {
 
     let copy = fx.app.item_clone(&src.id, Some(PW.into())).unwrap();
     // what crosses back to the UI is the summary only: no secret value anywhere in it
-    let wire = serde_json::to_string(&copy).unwrap();
-    for secret in ["4111", "737", "SECRET-BANK-REF"] {
+    let wire = serde_json::to_value(&copy).unwrap();
+    let text = wire.to_string();
+    // The long secrets cannot turn up by chance. A short one can: "737" or "4111" sit inside a random id or a
+    // millisecond timestamp now and then (this test failed once on CI for that reason), so for those the summary's
+    // shape is what is checked: exactly the known keys, and no value that is the code itself.
+    for secret in ["4111 1111 1111 1111", "4111111111111111", "SECRET-BANK-REF"] {
         assert!(
-            !wire.contains(secret),
+            !text.contains(secret),
             "{secret} leaked into the clone result"
         );
     }
+    let object = wire.as_object().unwrap();
+    let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "archived",
+            "favorite",
+            "folder",
+            "hasTotp",
+            "id",
+            "reprompt",
+            "subtitle",
+            "tags",
+            "title",
+            "type",
+            "updatedAt",
+            "version"
+        ],
+        "the clone result is the summary only: no field values, no custom fields"
+    );
+    for (key, value) in object {
+        assert_ne!(value.as_str(), Some("737"), "the code leaked as {key}");
+    }
+    assert!(
+        !object["subtitle"].as_str().unwrap_or("").contains("4111"),
+        "the subtitle shows the card number"
+    );
     assert_ne!(copy.id, src.id);
     assert_eq!(copy.title, "Travel card (copy)");
     assert_eq!(copy.version, 1);
