@@ -70,13 +70,15 @@ run --uninstall
 unset HEXIS_TTY
 [ "$(cat /tmp/install.rc)" != 0 ] || fail "uninstall removed data without anyone confirming"
 [ -f "$data/vault.db" ] || fail "a refused uninstall still touched the data"
-if ! command -v hexis >/dev/null 2>&1 && [ ! -e /usr/local/bin/hexis ]; then fail "a refused uninstall still removed the program"; fi
+# (a subshell: dash remembers where `command -v` found a program, and would then still "find" it after it was removed)
+if ! ( command -v hexis >/dev/null 2>&1 ) && [ ! -e /usr/local/bin/hexis ]; then fail "a refused uninstall still removed the program"; fi
 ok "uninstall without a terminal or --yes refuses and changes nothing"
 
 run --uninstall --yes
 [ "$(cat /tmp/install.rc)" = 0 ] || fail "uninstall exited with $(cat /tmp/install.rc)"
+hash -r 2>/dev/null || true
 if command -v hexis >/dev/null 2>&1 || [ -e /usr/local/bin/hexis ]; then fail "hexis is still there after the uninstall"; fi
 ok "uninstalled; nothing left on the PATH"
-[ ! -e "$data" ] && [ ! -e "$cache" ] || fail "Hexis's data or cache folder is still there after the uninstall"
+if [ -e "$data" ] || [ -e "$cache" ]; then fail "Hexis's data or cache folder is still there after the uninstall"; fi
 grep -q "Nothing is kept" /tmp/install.log || fail "the uninstall did not say that nothing is kept"
 ok "its data and cache folders are gone, and the uninstall said so"
