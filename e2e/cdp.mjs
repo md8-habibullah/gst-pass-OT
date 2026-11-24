@@ -7,7 +7,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function launch({ width = 1440, height = 900, port = 9333, profile, mobile = false } = {}) {
   mkdirSync(profile, { recursive: true });
-  const proc = spawn("chromium", [
+  // CHROME_BIN lets CI use the runner's google-chrome; on the dev machine the default is the `chromium` on the PATH.
+  const proc = spawn(process.env.CHROME_BIN || "chromium", [
     "--headless=new", "--disable-gpu", "--no-first-run", "--disable-extensions", "--hide-scrollbars",
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
     "--force-device-scale-factor=1", "--disable-background-networking", "--no-sandbox", "about:blank",

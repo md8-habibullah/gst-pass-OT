@@ -2,6 +2,9 @@
 
 These drive the **real Rust core** (the same command layer the app uses, real Argon2id / ML-KEM / XChaCha20, real SQLite files) from a headless Chromium. Nothing here touches the desktop: no synthetic keystrokes, no real windows.
 
+**One command, as CI runs it:** `scripts/ci_e2e.sh` builds the shim, starts Vite, runs every script below and stops what it started.
+It uses the `chromium` on the PATH; set `CHROME_BIN` (for example `CHROME_BIN=google-chrome`) to use another Chrome or Chromium.
+
 ```
 npm run dev -- --port 1431                          # the UI (Vite)
 (cd src-tauri && cargo build --example e2e_server)  # the dev-only loopback shim around the core

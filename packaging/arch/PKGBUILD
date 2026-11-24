@@ -1,0 +1,40 @@
+# Arch Linux package for Passman: builds the committed source of this repository (it is meant to be run from
+# packaging/arch/ inside a clone: `makepkg -si`). Tauri has no pacman bundler, so this compiles the binary itself.
+# Replace the maintainer line and, for an AUR upload, switch `source` to the release tarball and fill in its checksum.
+# Maintainer: you <you@example.com>
+pkgname=passman
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Post-quantum zero-knowledge password vault (local-first, optional S3 sync)'
+arch=('x86_64')
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'openssl')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'git' 'librsvg')
+options=('!lto')
+# No download: the sources come from the clone this file sits in (committed files only, so the build is reproducible).
+source=()
+sha256sums=()
+
+prepare() {
+  local repo="$startdir/../.."
+  mkdir -p "$srcdir/$pkgname"
+  git -C "$repo" archive --prefix="$pkgname/" HEAD | tar -x -C "$srcdir"
+  # The package version must be the version the app reports.
+  local appver
+  appver=$(sed -n 's/^  "version": "\(.*\)",/\1/p' "$srcdir/$pkgname/src-tauri/tauri.conf.json" | head -n1)
+  [ "$appver" = "$pkgver" ] || { echo "pkgver ($pkgver) does not match tauri.conf.json ($appver)" >&2; return 1; }
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  npm ci
+  npm run tauri build -- --no-bundle
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  install -Dm755 src-tauri/target/release/passman "$pkgdir/usr/bin/passman"
+  install -Dm644 packaging/passman.desktop "$pkgdir/usr/share/applications/passman.desktop"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/passman.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

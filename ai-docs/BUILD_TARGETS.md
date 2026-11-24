@@ -34,31 +34,15 @@ Configured in `src-tauri/tauri.conf.json` → `bundle.targets = ["deb", "rpm", "
 | `.deb` | `npm run tauri build -- --bundles deb` | Output in `src-tauri/target/release/bundle/deb/`. Build on the **oldest** distro you support (glibc is forward-compatible only). Ubuntu 22.04 or newer ships `libwebkit2gtk-4.1`. |
 | `.rpm` | `npm run tauri build -- --bundles rpm` | Output in `…/bundle/rpm/`. |
 | `.AppImage` | `npm run tauri build -- --bundles appimage` | Downloads linuxdeploy at build time (network needed). On Arch/CachyOS, if the bundler fails in the `strip` step, retry with `NO_STRIP=true` (known issue with recent toolchains) **[unverified here]**. Build on an older glibc for wide compatibility. |
-| Arch package | `makepkg -si` using the template below | Tauri has no pacman bundler. |
-| `.tar.gz` | `npm run tauri build -- --no-bundle` then `tar czf passman-<ver>-linux-x86_64.tar.gz -C src-tauri/target/release passman` (+ desktop file/icons) | Plain binary archive; needs webkit2gtk-4.1 at runtime. |
+| Arch package | `makepkg -si` in `packaging/arch/` (see below) | Tauri has no pacman bundler. |
+| `.tar.gz` | `npm run tauri build -- --no-bundle` then `tar czf passman-<ver>-linux-x86_64.tar.gz -C src-tauri/target/release passman` (+ desktop file/icons) | Plain binary archive; needs webkit2gtk-4.1 at runtime. CI builds it (`passman-<version>-linux-x86_64.tar.gz`). |
 
-### Arch `PKGBUILD` template (to be added under `packaging/arch/` in Phase 5)
+### Arch `PKGBUILD` (`packaging/arch/PKGBUILD`, written 2026-11-24)
 
-```bash
-pkgname=passman
-pkgver=0.1.0
-pkgrel=1
-pkgdesc='Post-quantum zero-knowledge password vault'
-arch=('x86_64' 'aarch64')
-license=('MIT')            # placeholder: set the real license before release
-depends=('webkit2gtk-4.1' 'gtk3' 'libappindicator-gtk3' 'openssl')
-makedepends=('rust' 'cargo' 'nodejs' 'npm')
-source=("$pkgname-$pkgver.tar.gz")   # fill in release URL + checksum
-sha256sums=('SKIP')
-
-build()   { cd "$pkgname-$pkgver"; npm ci; npm run tauri build -- --no-bundle; }
-package() {
-  cd "$pkgname-$pkgver"
-  install -Dm755 src-tauri/target/release/passman "$pkgdir/usr/bin/passman"
-  install -Dm644 packaging/passman.desktop "$pkgdir/usr/share/applications/passman.desktop"
-  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/passman.png"
-}
-```
+Tauri has no pacman bundler, so the package compiles the binary itself. It builds the *committed* files of the clone it sits in (`git archive HEAD` into `$srcdir`; no download,
+so no checksum to maintain), refuses to build when `pkgver` differs from `tauri.conf.json`, runs `npm ci` and `npm run tauri build -- --no-bundle`, and installs the binary,
+`packaging/passman.desktop`, the 128 px icon and the licence. Use: `cd packaging/arch && makepkg -si`. **Syntax and `makepkg --printsrcinfo` were checked; a full `makepkg` build was
+not run.** For an AUR upload, switch `source` to the release tarball and fill in its checksum. The `tar.gz` that CI publishes contains the same binary, desktop entry and icon.
 
 ### Wayland / X11 notes
 
@@ -66,28 +50,78 @@ package() {
 * Clipboard (Phase 3): `arboard` with its Wayland data-control support, falling back to `wl-copy`/`wl-paste` when the compositor lacks it; auto-clear timer 15 / 30 / 60 s, clearing only if the clipboard still holds our value.
 * System tray/appindicator libraries listed above are needed only if a tray icon is added later.
 
-## 4. Android (minSdk 28 / Android 9, targetSdk 36 / Android 16, API 37+ later)
+## 4. Android (minSdk 28 / Android 9; the Tauri template compiles and targets API 37)
 
-Prerequisites (Tauri docs): Android Studio; `JAVA_HOME=/opt/android-studio/jbr` (path varies); SDK Manager → Android SDK Platform, Platform-Tools, NDK (Side by side), Build-Tools, Command-line Tools; then
+**Built for real on 2026-11-24** (debug APK, arm64, Android 16 device attached; the install on that device was blocked by
+the phone's own settings, see "Installing on a Xiaomi phone" below). What follows is what was actually run, not a plan.
+
+### 4.1 Toolchain (user level, no sudo)
+
+`scripts/setup_android_toolchain.sh phase1` downloads the command-line tools and Temurin JDK 21 (both checksum-verified) and
+adds the Rust target; `phase2` installs the SDK pieces with `sdkmanager`. **Google's current command-line tools deprecate
+`sdkmanager --licenses` (it prints a notice and records nothing); the replacement is the bundled `android` CLI, which shows
+the SDK terms on first run and writes `licenses/android-sdk-license`.** The pieces that ended up installed: `platform-tools`,
+`platforms;android-36` and `platforms;android-37.0` (the generated Gradle project uses `compileSdk = 37` and `targetSdk = 37`;
+Gradle fetches the second itself once the licence file exists), `build-tools;36.0.0`, `ndk;28.2.13676358`.
+`eval "$(scripts/setup_android_toolchain.sh env)"` exports `JAVA_HOME`, `ANDROID_HOME`, `NDK_HOME` and `PATH`.
+JDK 21 is required: Gradle and the Android Gradle plugin do not run on newer JDKs.
+
+### 4.2 The generated project is not committed
+
+`src-tauri/gen/android/` is created by Tauri and is git-ignored. It is recreated by exactly these steps (CI runs the same):
+
 ```
-export ANDROID_HOME="$HOME/Android/Sdk"
-export NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 $ANDROID_HOME/ndk)"
+npm ci
+npm run tauri android init -- --ci --skip-targets-install       # creates src-tauri/gen/android
+python3 scripts/android_patch_manifest.py src-tauri/gen/android # disguise aliases + icons + DisguisePlugin.kt + manifest markers
+mkdir -p src-tauri/gen/android/app/src/main/java/app/passman/securescreen
+cp scripts/android/SecureScreenPlugin.kt src-tauri/gen/android/app/src/main/java/app/passman/securescreen/
+python3 scripts/check_no_notifications.py                       # no POST_NOTIFICATIONS, no foreground service, no tray crate
+npm run tauri android build -- --debug --apk --target aarch64   # debug APK (or without --debug for the release APK)
 ```
 
-Steps (Phase 3 onwards, **[unverified]**):
-1. `npm run tauri android init` → generates `src-tauri/gen/android/` (commit it; it is meant to be customized).
-2. **minSdk 28**: `bundle.android.minSdkVersion = 28` in `tauri.conf.json` (already set; the schema key was verified).
-3. **targetSdk / compileSdk 36**: edit `src-tauri/gen/android/app/build.gradle.kts` (`compileSdk = 36`, `targetSdk = 36`) if the generated template uses a lower value. Raise to 37+ (Android 17+) once the toolchain supports it and the app has been tested; Google Play requires targeting a recent API level.
-4. **`FLAG_SECURE`** (blocks screenshots and the recents thumbnail): in `MainActivity.kt` `onCreate`, call `window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)`. Phase 3 may make it dynamic per screen through a small command.
-5. Build: `npm run tauri android build -- --apk` (or `--aab`), dev: `npm run tauri android dev`. Release builds must be signed (keystore kept **outside** the repo).
-6. **Biometrics** (Phase 3): `tauri-plugin-biometric` (mobile only). Compatibility plan:
-   * API 28–29 (Android 9–10): `BiometricPrompt` exists but `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` cannot be combined; offer biometric only, and fall back to Quick PIN / Master Password in our own UI.
-   * API 30+ (Android 11+): combined authenticators are allowed; Class-3 biometrics can gate an Android Keystore key.
-   * Always detect `canAuthenticate()`; on `NONE_ENROLLED` / `NO_HARDWARE` / lockout silently fall back to PIN, then Master Password.
-   * The session key lives in the Android Keystore (hardware-backed, StrongBox where available, `setInvalidatedByBiometricEnrollment(true)`), never in app storage.
-7. Test matrix before release: Android 9 (API 28), 10, 11, 12, 13, 14, 15, 16 — at least one device/emulator image each of the oldest, the middle (API 33) and the newest.
+The patch script (idempotent, 37 tests) also adds two manifest *removal* markers after the real build showed what the merge produces:
+`VIBRATE` (declared by the QR-scanner plugin for a command Passman never grants) is removed, and `android.hardware.camera.any` becomes
+`required="false"` so the app installs on devices without a camera. The merged manifest was inspected with `apkanalyzer`: permissions
+`INTERNET`, `ACCESS_NETWORK_STATE`, `CAMERA`, `USE_BIOMETRIC`, `USE_FINGERPRINT` (plus an AndroidX-internal receiver permission); no
+`POST_NOTIFICATIONS`, no `FOREGROUND_SERVICE*`. Library `<service>` entries exist (CameraX `MetadataHolderService`, disabled; ML Kit and
+Google data-transport discovery services); none is a foreground service. `DisguisePlugin` and `SecureScreenPlugin` are both in the dex.
 
-Android memory note: Argon2id at 64 MiB × 4 passes is acceptable on typical devices; the allowed range (up to 1 GiB) is user-configurable, so the UI must warn on low-RAM devices.
+### 4.3 Signing and the release APK
+
+Gradle produces `app-universal-release-unsigned.apk`. CI aligns it with `zipalign` and signs it with `apksigner` using the repository
+secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+(`scripts/github-setup.sh android-key` prints the commands to create and store a key). Without them the APK is signed with a throw-away key
+made inside that CI run and its file name ends in `-testkey`: it installs, but cannot be updated by a build signed with another key. The
+keystore never lives in the repository (`*.jks`, `*.keystore`, `keystore.properties` are git-ignored).
+
+### 4.4 Installing on a Xiaomi phone (what blocked the on-device check)
+
+`adb install` returned `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user` on a Xiaomi (HyperOS) phone that was asleep and locked.
+MIUI/HyperOS asks for approval on the screen and, in addition, has the developer option **Install via USB** (it can require a Mi account).
+Unlock the phone, enable that option, then run the install again and accept the prompt:
+```
+adb -s <id> install -r -t src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+adb -s <id> shell am start -n app.passman.vault/.AliasOriginal
+```
+
+### 4.5 What has not been verified on a device
+
+Everything that needs the running app on a phone: `FLAG_SECURE` (check with `adb exec-out screencap -p` while a drive file is open: the image must
+be black, or `adb shell dumpsys window | grep -i secure`), locking on background, the launcher icon switching between the 12 aliases, the
+biometric prompt, the camera QR scan, and `adb reverse` sync against `scripts/mock_s3.py`. The Android file dialog returns `content://` URIs,
+so import, drive add and save-a-copy do not work there yet.
+
+### 4.6 Biometrics, camera and the QR scanner
+
+* API 28-29: `BiometricPrompt` cannot combine `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`; offer biometric only and fall back to the gate credential or master password in our own UI.
+* API 30+: combined authenticators are allowed. The fingerprint only opens the Stage 1 **gate**; it never wraps or caches a vault key (decision D13).
+* **QR scanning uses Google ML Kit through Google Play services (`play-services-mlkit-barcode-scanning` 18.1.0). Google documents that ML Kit may send
+  technical usage metrics, and the APK contains Google's data-transport runtime. This is the only known path by which an Android build might talk to a
+  third party; it has not been measured. Open task: replace it with an on-device decoder (the webview already bundles `jsqr`) or remove the data-transport
+  components and verify the scanner still works.** See `PRIVACY.md`.
+
+Android memory note: Argon2id at 64 MiB x 4 passes is acceptable on typical devices; the allowed range (up to 1 GiB) is user-configurable, so the UI must warn on low-RAM devices.
 
 ## 5. Verifying crypto without GUI libraries
 
@@ -186,3 +220,41 @@ Linux note for section 3: the disguise writes `$XDG_DATA_HOME/applications/<iden
 3. Rust side, already in the tree: `commands::drive::secure_screen::init()` registers a plugin named `secure-screen` whose setup calls `register_android_plugin("app.passman.securescreen", "SecureScreenPlugin")`; `lib.rs` adds it under `#[cfg(target_os = "android")]`; `screen_secure` calls `run_mobile_plugin("setSecure", {on})` and answers a fixed sentence on failure. Not compiled for an Android target here.
 4. No manifest change, no Android permission, no Gradle dependency beyond what a Tauri app has.
 5. Known gap: the Android file dialog answers `content://` URIs; the drive's picker interface works with local paths. Adding and saving files on Android needs a picker that hands back readers and writers; it is not built (the commands fail with a clear sentence instead of misbehaving).
+
+## 9. CI/CD and releases (`.github/workflows/`)
+
+Written 2026-11-24. **The workflows have never run on GitHub** (the repository was private and empty of workflows when they were written); every command in them
+was run locally in the same order (results in `CHANGELOG_AND_STATE.md`, "Local dry run"), but the runner-specific parts (apt packages on `ubuntu-22.04`, the runner's preinstalled SDK, artifact upload, `gh release`)
+are unverified until the first push. Read the first run's log before trusting it.
+
+| Workflow / job | Trigger | What it does |
+|---|---|---|
+| `ci.yml` `checks` | every push, every PR | `scripts/verify_all.sh`: `tsc`, vitest, `vite build`, no dev-only strings in `dist/`, notification check, patch-script tests, `cargo fmt`, `clippy -D warnings`, `cargo test --locked` |
+| `ci.yml` `e2e` | after `checks` | `scripts/ci_e2e.sh`: builds the dev shim, starts Vite, runs every `e2e/*.mjs` against the real core in headless Chrome (`CHROME_BIN`) |
+| `ci.yml` `site` | every push, every PR | builds the website and fails on a broken link or anchor or a third-party request |
+| `ci.yml` `linux` | after `checks` | `npm run tauri build -- --bundles deb,rpm,appimage` on `ubuntu-22.04` (old glibc), plus a `tar.gz`; artifacts kept 14 days |
+| `ci.yml` `android` | after `checks` | the steps of section 4.2 with the release build, then align and sign; artifact kept 14 days |
+| `ci.yml` `nightly` | push to `main`, after `checks`, `linux`, `android` | deletes and recreates the `nightly` pre-release with all files and `SHA256SUMS` |
+| `ci.yml` `release` | tag `v*`, after everything including `e2e` and `site` | verifies the tag equals the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, then creates a **draft** release |
+| `pages.yml` | push to `main` touching docs or `site/` | builds the site with `SITE_URL` from `actions/configure-pages` and deploys it |
+
+Design choices: only GitHub's own actions are used (`checkout`, `setup-node`, `setup-java`, `cache`, `upload/download-artifact`, `configure-pages`,
+`upload-pages-artifact`, `deploy-pages`), so no third-party action can alter a build; tag builds never restore a cache; `permissions` default to read-only and
+only the publishing jobs get `contents: write`; a tag release is a draft so a human looks before anything is published. The `android` job accepts Google's SDK
+licence on behalf of whoever owns the workflow (one commented line). Windows, macOS and iOS are not built: the Rust core has `#[cfg(unix)]` file-permission code
+and has never been compiled or tested there. Not done: build provenance attestations (need a public repository or a paid plan), an `aarch64` Linux build
+(arm runners are not free for private repositories), an AAB for Google Play, a scheduled dependency audit.
+
+`scripts/github-setup.sh` holds the one-time repository settings (Pages source, private vulnerability reporting, topics, the Android key secrets). It is run by the owner;
+it changes no visibility and contains no commit or push. A GitHub Pages site is public even when the repository is private, and Pages on a private repository needs a
+paid plan.
+
+## 10. The website (`scripts/build-site.mjs`, `site/site.css`)
+
+A static site built from this repository's own Markdown (README, `ai-docs/`, CONTRIBUTING, SECURITY, PRIVACY, CHANGELOG, the code of conduct, the licence) plus a hand-written
+home and download page. `npm run`-free: `node scripts/build-site.mjs` writes `site-dist/` (git-ignored). The only dependency is `marked` (pinned `18.2.0`, chosen over the
+just-published 18.3.0 because it is 15 days old). The OFL fonts the app bundles (Fraunces, Instrument Sans, IBM Plex Mono) are copied from `node_modules` with their licences.
+The script exits 1 on: an internal link or `#anchor` that does not resolve, a remote `src`/`href`, a `<script>` other than JSON-LD, or a title over 60 characters (warning).
+Raw HTML in Markdown is shown as text; images are dropped (the README badge is a request to github.com). No JavaScript, no cookies, no analytics; light and dark follow the system.
+Environment: `SITE_URL` (absolute base for canonical, sitemap and JSON-LD) and `SITE_REPO_URL` (where repository links point); CI passes both from `actions/configure-pages` and `github.repository`.
+

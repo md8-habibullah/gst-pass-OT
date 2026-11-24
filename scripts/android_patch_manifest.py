@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Apply the Q2 disguise ("App icon and name") to a generated Tauri Android project.
 
-UNVERIFIED ON A DEVICE: there is no Android SDK on the dev machine. The script itself is tested
-against synthetic projects (`python3 -m unittest discover -s scripts/tests`); the Gradle build,
-the manifest merge, the launcher refresh and the Kotlin plugin have never been run.
+The script is tested against synthetic projects (`python3 -m unittest discover -s scripts/tests`) and, since 2026-11-24, has
+been run against a real `tauri android init` project: the Gradle build, the manifest merge and both Kotlin plugins compile into
+a debug APK. The launcher refresh and the plugins' behaviour on a device are checked separately (see
+ai-docs/CHANGELOG_AND_STATE.md).
 
     python3 scripts/android_patch_manifest.py src-tauri/gen/android            # apply
     python3 scripts/android_patch_manifest.py src-tauri/gen/android --dry-run  # print the plan, write nothing
@@ -30,7 +31,10 @@ What it does, from assets/disguise/presets.json (the single source of truth for 
   PackageManager.setComponentEnabledSetting(..., DONT_KILL_APP). The Rust side (commands/disguise.rs)
   registers it with `register_android_plugin`; no change to MainActivity is needed.
 
-It never adds an `android.permission.*` entry (no notifications, no foreground service).
+It never GRANTS the app a permission (no notifications, no foreground service). It does add two removal markers to the
+manifest: `<uses-permission android:name="android.permission.VIBRATE" tools:node="remove"/>` (the QR-scanner plugin declares
+it for a command Passman never uses) and `<uses-feature android:name="android.hardware.camera.any" android:required="false"
+tools:node="replace"/>` (the scan has a typed-key alternative, so the app must stay installable without a camera).
 
 Limits that no script can lift: a launcher label is a static resource, so a free-text custom name
 changes only the title inside the app and the recent-apps label (set by the plugin); the lower-case
@@ -56,6 +60,13 @@ from pathlib import Path
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 A = "{%s}" % ANDROID_NS
+TOOLS_NS = "http://schemas.android.com/tools"
+T = "{%s}" % TOOLS_NS
+# Permissions that a library adds to the merged manifest and that Passman never uses: removed with tools:node="remove".
+# (The barcode-scanner plugin declares VIBRATE for a vibrate command that is not granted to the app.)
+UNUSED_PERMISSIONS = ("android.permission.VIBRATE",)
+# The camera is optional: the QR scan has a typed-key alternative, so the app must stay installable on devices without one.
+OPTIONAL_FEATURES = ("android.hardware.camera.any",)
 ACTION_MAIN = "android.intent.action.MAIN"
 CATEGORY_LAUNCHER = "android.intent.category.LAUNCHER"
 
@@ -330,6 +341,19 @@ def detect_indent(root: ET.Element, application: ET.Element) -> tuple[str, str]:
     return child_nl, unit
 
 
+def _insert_before(root: ET.Element, anchor: ET.Element, elem: ET.Element, nl: str) -> None:
+    """Insert `elem` just before `anchor`, indented like its siblings."""
+    kids = list(root)
+    i = kids.index(anchor)
+    if i == 0:
+        elem.tail = root.text
+        root.text = nl
+    else:
+        elem.tail = kids[i - 1].tail
+        kids[i - 1].tail = nl
+    root.insert(i, elem)
+
+
 def patch_manifest(root: ET.Element, presets: list[Preset]) -> tuple[list[str], list[str]]:
     """Mutate the manifest in place. Returns (changes, warnings); no changes means it is already right."""
     changes: list[str] = []
@@ -415,7 +439,35 @@ def patch_manifest(root: ET.Element, presets: list[Preset]) -> tuple[list[str], 
             anchor = elem
             changes.append(f"add <activity-alias> {name}")
 
-    # 4. aliases of this kind that presets.json no longer has: report, never delete
+    # 4. permissions and features that libraries add but that Passman does not need (removal markers, never a grant)
+    ET.register_namespace("tools", TOOLS_NS)
+    root_nl = child_nl[: -len(unit)] if child_nl.endswith(unit) else "\n    "  # newline + the indentation of <application> itself
+    anchor_el = application
+    for perm in UNUSED_PERMISSIONS:
+        have = [e for e in root.findall("uses-permission") if e.get(A + "name") == perm]
+        if any(e.get(T + "node") == "remove" for e in have):
+            continue
+        if have:
+            for e in have:
+                e.set(T + "node", "remove")
+        else:
+            elem = ET.Element("uses-permission", {A + "name": perm, T + "node": "remove"})
+            _insert_before(root, anchor_el, elem, root_nl)
+        changes.append(f"remove the {perm.rsplit('.', 1)[-1]} permission that a library adds (Passman never uses it)")
+    for feat in OPTIONAL_FEATURES:
+        have = [e for e in root.findall("uses-feature") if e.get(A + "name") == feat]
+        if any(e.get(A + "required") == "false" and e.get(T + "node") == "replace" for e in have):
+            continue
+        if have:
+            for e in have:
+                e.set(A + "required", "false")
+                e.set(T + "node", "replace")
+        else:
+            elem = ET.Element("uses-feature", {A + "name": feat, A + "required": "false", T + "node": "replace"})
+            _insert_before(root, anchor_el, elem, root_nl)
+        changes.append(f"make {feat} optional (the QR scan has a typed-key alternative)")
+
+    # 5. aliases of this kind that presets.json no longer has: report, never delete
     for name in aliases:
         if name and MANAGED_ALIAS.match(name) and name not in want_names:
             warnings.append(f"the manifest has {name}, which is not in presets.json; left alone")

@@ -1,0 +1,290 @@
+# CI and release pipeline.
+#
+#   every push and pull request   checks -> e2e, site, linux bundles, android apk   (all kept as artifacts for 14 days)
+#   push to main                  ... then replaces the rolling `nightly` pre-release with those artifacts
+#   push of a tag vX.Y.Z          ... then opens a DRAFT release for you to review and publish by hand
+#
+# Only GitHub's own actions are used (checkout, setup-node, setup-java, cache, upload/download-artifact) and the
+# preinstalled `gh` CLI: no third-party action runs in this pipeline, so nothing outside GitHub can alter a build.
+# Releases and caches are never shared between tag builds and branch builds: tag builds start from a clean cache.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push replaces an unfinished run of the same branch, never a run on main or on a tag.
+  cancel-in-progress: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  NODE_VERSION: "24"
+  # Tauri's Linux prerequisites (Debian / Ubuntu), see ai-docs/BUILD_TARGETS.md section 2.
+  LINUX_DEPS: libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+jobs:
+  # ------------------------------------------------------------------------------------------------------------------
+  checks:
+    name: Checks (types, tests, rustfmt, clippy, cargo test)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS librsvg2-bin
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - name: Cargo cache
+        if: github.ref_type != 'tag'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-checks-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-checks-${{ runner.os }}-
+      - run: npm ci
+      - name: Every project check
+        run: scripts/verify_all.sh
+
+  # ------------------------------------------------------------------------------------------------------------------
+  e2e:
+    name: End-to-end (real Rust core, headless Chrome)
+    needs: checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      CHROME_BIN: google-chrome
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Cargo cache
+        if: github.ref_type != 'tag'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-e2e-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-e2e-${{ runner.os }}-
+      - run: npm ci
+      - run: google-chrome --version
+      - name: Build the dev shim, start Vite, run every e2e script
+        run: scripts/ci_e2e.sh
+
+  # ------------------------------------------------------------------------------------------------------------------
+  site:
+    name: Website builds and every link resolves
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - run: npm ci
+      - run: node scripts/build-site.mjs
+
+  # ------------------------------------------------------------------------------------------------------------------
+  linux:
+    name: Linux bundles (deb, rpm, AppImage, tar.gz)
+    needs: checks
+    runs-on: ubuntu-22.04 # the oldest glibc we support: bundles built here run on newer distributions
+    timeout-minutes: 60
+    env:
+      NO_STRIP: "true" # known linuxdeploy 'strip' failure with recent toolchains
+      APPIMAGE_EXTRACT_AND_RUN: "1" # runners have no FUSE
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Cargo cache
+        if: github.ref_type != 'tag'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-linux-registry-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-linux-registry-${{ runner.os }}-
+      - run: npm ci
+      - name: Build the bundles
+        run: npm run tauri build -- --bundles deb,rpm,appimage
+      - name: Collect, name and archive
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          out=release-files; mkdir -p "$out" "pkg/passman-$VERSION"
+          B=src-tauri/target/release/bundle
+          cp "$B"/deb/*.deb "$B"/rpm/*.rpm "$B"/appimage/*.AppImage "$out"/
+          install -Dm755 src-tauri/target/release/passman "pkg/passman-$VERSION/passman"
+          install -Dm644 packaging/passman.desktop "pkg/passman-$VERSION/passman.desktop"
+          install -Dm644 src-tauri/icons/128x128.png "pkg/passman-$VERSION/passman.png"
+          install -Dm644 LICENSE "pkg/passman-$VERSION/LICENSE"
+          tar -C pkg -czf "$out/passman-$VERSION-linux-x86_64.tar.gz" "passman-$VERSION"
+          ls -l "$out"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-bundles
+          path: release-files/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------------------------------
+  android:
+    name: Android APK (arm64)
+    needs: checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      NDK_VERSION: "28.2.13676358"
+      BUILD_TOOLS: "36.0.0"
+      # Release signing (optional). Without them the APK is signed with a throw-away key made by this run.
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - uses: actions/setup-java@v6
+        with: { distribution: temurin, java-version: "21" } # Gradle and the Android plugin do not run on newer JDKs
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends librsvg2-bin
+      - run: rustup toolchain install stable --profile minimal --target aarch64-linux-android && rustup default stable
+      - name: Android SDK pieces
+        run: |
+          set -euo pipefail
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          # NOTE: this line accepts Google's Android SDK licence on behalf of whoever owns this workflow file.
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platform-tools" "platforms;android-37.0" "build-tools;$BUILD_TOOLS" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Generate the Android project, apply the disguise and the screen-protection plugin
+        run: |
+          set -euo pipefail
+          npm run tauri android init -- --ci --skip-targets-install
+          python3 scripts/android_patch_manifest.py src-tauri/gen/android
+          d=src-tauri/gen/android/app/src/main/java/app/passman/securescreen
+          mkdir -p "$d" && cp scripts/android/SecureScreenPlugin.kt "$d"/
+          python3 scripts/check_no_notifications.py
+      - name: Build the release APK (arm64)
+        run: npm run tauri android build -- --apk --target aarch64
+      - name: Align and sign
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-unsigned.apk' | head -n1)
+          test -n "$APK" || { echo "no unsigned APK was produced"; find src-tauri/gen/android/app/build/outputs -type f; exit 1; }
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          mkdir -p release-files
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > release.jks
+            KS=release.jks; ALIAS="$KEY_ALIAS"; KS_PASS="$KEYSTORE_PASSWORD"; K_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"; SUFFIX=""
+          else
+            echo "No release key configured: signing with a throw-away key. The file name says so."
+            KS_PASS=$(openssl rand -hex 24); echo "::add-mask::$KS_PASS"; K_PASS="$KS_PASS"; ALIAS=ci
+            keytool -genkeypair -keystore ephemeral.jks -storepass "$KS_PASS" -keypass "$K_PASS" -alias "$ALIAS" \
+              -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Passman CI test key" > /dev/null
+            KS=ephemeral.jks; SUFFIX="-testkey"
+          fi
+          export KS_PASS K_PASS
+          "$BT/apksigner" sign --ks "$KS" --ks-key-alias "$ALIAS" --ks-pass env:KS_PASS --key-pass env:K_PASS \
+            --v4-signing-enabled false --out "release-files/passman-$VERSION-android-arm64$SUFFIX.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "release-files/passman-$VERSION-android-arm64$SUFFIX.apk"
+          rm -f release.jks ephemeral.jks
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: release-files/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------------------------------
+  nightly:
+    name: Publish the rolling nightly pre-release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [checks, linux, android]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { path: files, merge-multiple: true }
+      - name: Checksums and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd files && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
+          {
+            echo "Automatic build of \`main\` at ${GITHUB_SHA::12} ($(date -u +%Y-%m-%d))."
+            echo
+            echo "**Pre-release, not audited.** This replaces itself on every push to \`main\`. Check files with \`sha256sum -c SHA256SUMS --ignore-missing\`."
+            echo "The Android APK in this release is signed with a key that is not the project's release key unless the file name lacks \`-testkey\`; it cannot update an app installed from a different build."
+          } > notes.md
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create nightly --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "Nightly (main, ${GITHUB_SHA::7})" --notes-file notes.md files/*
+
+  # ------------------------------------------------------------------------------------------------------------------
+  release:
+    name: Draft release for a version tag
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [checks, e2e, site, linux, android]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: The tag must match every version in the tree
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          a=$(node -p "require('./package.json').version")
+          b=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          c=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+          echo "tag=$tag package.json=$a tauri.conf.json=$b Cargo.toml=$c"
+          [ "$tag" = "$a" ] && [ "$tag" = "$b" ] && [ "$tag" = "$c" ] || { echo "version mismatch"; exit 1; }
+      - uses: actions/download-artifact@v8
+        with: { path: files, merge-multiple: true }
+      - name: Checksums and draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd files && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes \
+            --title "Passman ${GITHUB_REF_NAME#v}" files/*
+          echo "Draft created. Review it, then publish it from the Releases page."

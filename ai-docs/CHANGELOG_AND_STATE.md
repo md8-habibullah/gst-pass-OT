@@ -2,6 +2,45 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, later): Android builds, the repository got CI, releases and a website
+
+**What changed**
+
+* **Android was built for the first time** (it had never been built before). With the SDK installed (see `BUILD_TARGETS.md` 4.1), `tauri android init`, the manifest patch script, the secure-screen plugin and a
+  debug build for aarch64 all worked: a 252 MB debug APK. Findings from the real build, all fixed or recorded: the disguise patch script ran against a real generated project for the first time (125 changes,
+  idempotent); `check_no_notifications.py` takes no path argument (my earlier invocation was wrong); the merged manifest carried `VIBRATE` (now removed by the patch script) and a *required* camera feature
+  (now optional); the template compiles against API 37, not 36. `apkanalyzer` shows `DisguisePlugin` and `SecureScreenPlugin` in the dex and no notification or foreground-service permission.
+* **On-device checks did not run: the phone refused the install** (`INSTALL_FAILED_USER_RESTRICTED`; it was asleep and locked, and Xiaomi's "Install via USB" needs the owner). Steps in `BUILD_TARGETS.md` 4.4.
+  FLAG_SECURE, lock on background, the 12 launcher aliases, biometrics, camera scan and `adb reverse` sync therefore remain **unverified**.
+* **New privacy finding (open):** the QR scanner plugin uses Google ML Kit via Play services and the APK contains Google's data-transport runtime. ML Kit may send technical usage metrics to Google. Passman's own
+  code sends none, but "no telemetry" can no longer be stated without this Android exception (`PRIVACY.md` and the README now say so). Not measured. Fix options: an on-device decoder (`jsqr` is already bundled) or
+  removing the transport services and re-testing the scanner.
+* **`scripts/verify_all.sh` had a bug:** the three Rust steps ran in a subshell, so a failing `cargo test` or `clippy` set `fail` only inside it and the script could still print `ALL CHECKS PASSED`. Fixed (the steps now run
+  in the main shell). Earlier "passed" results were read from the test logs directly, but any run before this fix relied on the script's last line alone for the Rust part.
+* **Repository set up for release:** `LICENSE` (MIT; the copyright holder line is the owner's to confirm), `CONTRIBUTING.md`, `SECURITY.md`, `PRIVACY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, issue forms and a pull-request template,
+  Dependabot, a full `README.md`, `packaging/arch/PKGBUILD`, `.github/workflows/ci.yml` and `pages.yml`, the website builder, and `scripts/github-setup.sh`. Details and limits: `BUILD_TARGETS.md` sections 9 and 10.
+* The `README.md` was never longer than a short stub (597, 1,117, then 2,634 bytes over three commits); nothing had been cut. The architecture lives in `ai-docs/` (eight files, about 285 KB, unchanged).
+
+**Local dry run of the CI build jobs (2026-11-24, real tree, same commands; the packaging and signing steps were extracted from `ci.yml` and executed as written)**
+
+| Step | Result |
+|---|---|
+| `npm run tauri build -- --bundles deb,rpm,appimage` (release, LTO) | exit 0; Rust release compile 7 min 28 s; `Passman_0.1.0_amd64.deb` 8.1 MiB (Depends `libwebkit2gtk-4.1-0, libgtk-3-0`), `Passman-0.1.0-1.x86_64.rpm` 8.1 MiB (requires `libwebkit2gtk-4.1.so.0`), `Passman_0.1.0_amd64.AppImage` 112.7 MiB |
+| CI step "Collect, name and archive" | exit 0; `passman-0.1.0-linux-x86_64.tar.gz` holds the binary, `passman.desktop`, `passman.png`, `LICENSE` |
+| `npm run tauri android build -- --apk --target aarch64` (release) | exit 0; 18.2 MB APK |
+| CI step "Align and sign" (no release key, so a throw-away key) | exit 0; `passman-0.1.0-android-arm64-testkey.apk`; `apksigner verify` passes for minSdk 28; the run exposed a stray `.idsig` file, now disabled with `--v4-signing-enabled false` |
+| R8 on the release APK | `DisguisePlugin` and `SecureScreenPlugin` survive; permissions are `INTERNET`, `ACCESS_NETWORK_STATE`, `CAMERA`, `USE_BIOMETRIC`, `USE_FINGERPRINT` (no `VIBRATE`, no notification, no foreground service) |
+| `scripts/verify_all.sh` (the `checks` job) | `ALL CHECKS PASSED`, exit 0: 764 Rust tests, 66 frontend tests, clippy and fmt clean |
+| `scripts/ci_e2e.sh` (the `e2e` job) | all 7 suites OK, 179 checks, 0 failures (`run` 60, `real-gate` 35, `real-drive` 18, `real-import` 13, `real-disguise` 16, `real-backup` 12, `real-sync` 25). The first run found a bug in the script itself (it probed Vite on `127.0.0.1` while Vite listens on `localhost`); fixed |
+| Site build with its link and anchor check | 18 pages; a deliberate broken link and a broken anchor each make it exit 1; injected raw HTML is shown as text |
+| Workflow files | parse as YAML; every `needs` target exists; every action is a first-party `actions/*@vN` |
+
+**Not verified (new)**
+
+1. **The GitHub workflows have never run.** Nothing was pushed. The commands inside them ran locally, but not on a GitHub runner: the `ubuntu-22.04` apt packages, the runner's own Android SDK and `sdkmanager` (the workflow installs `platforms;android-37.0`, `build-tools;36.0.0`, `ndk;28.2.13676358` and accepts the licence), artifact upload and download, `gh release create` and the draft-release path, and signing *with* the secrets (only the throw-away-key branch ran). Read the first run before relying on it.
+2. **GitHub Pages:** the repository is private. Pages from a private repository needs a paid plan and the site is public regardless; the first deployment has not happened.
+3. A full `makepkg` of the PKGBUILD; Windows and macOS builds (not targets); build provenance attestations; an `aarch64` Linux build.
+
 ## Current state (2026-11-24): the five queued slices (Q0 to Q4) are built, merged into one tree and verified
 
 Phase 2 (storage, history, trash, UI), Phase 4a (multi-S3 backup, master backup, restore) and the five slices of `FEATURE_QUEUE.md` are in one tree: **Q0** event-driven sync (three triggers, no timers, pull and reconcile), **Q1** Stage 1 gate with decoy maths, panic and wipe and the idle lock in Rust, **Q2** the 11-name disguise, **Q3** the encrypted 50 MB drive (schema v4), **Q4** the Rust importer and plaintext exporter (its attachments go into the drive). Each section below this one has its own log entry, contract and honest limits.
@@ -137,12 +176,18 @@ Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), k
 * Wrote the five `ai-docs/` files before any application code.
 * Standing rule recorded in the global and project memory: at the start of any project, web-check the very latest stable versions before pinning anything.
 
-## Next steps (2026-11-24)
+## Next steps (2026-11-24, updated after the Android build and the CI work)
 
-1. **Owner: accept the Android SDK licences** so the Android build can be set up (the assistant cannot accept licences for you): `JAVA_HOME=$HOME/.local/jdks/temurin-21 yes | $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/Android/Sdk --licenses`. Then `scripts/setup_android_toolchain.sh phase2` installs platform-tools, platform 36, build-tools 36.0.0 and NDK 28.2.13676358; after `tauri android init`, run `python3 scripts/android_patch_manifest.py <src-tauri/gen/android>`, copy `scripts/android/SecureScreenPlugin.kt` into the generated project, run `scripts/check_no_notifications.py` again, build a debug APK and check on a device: `FLAG_SECURE` (a screenshot must come back black), lock on leaving the app, no `POST_NOTIFICATIONS` or foreground service in the manifest, the disguise aliases, sync against the mock S3 through `adb reverse`, and the camera and fingerprint by hand.
-2. **Owner: a manual smoke test in the real window** (`npm run tauri dev`): create a vault, add a login with a code, import your own export (Import page), add a file to the drive, turn on the app lock and close and reopen the app, change the disguise and look at the launcher.
-3. **Owner: choose the real bundle identifier** (decision D9) and make the commit yourself when ready (the assistant never commits or pushes).
-4. **Open work:** Android `content://` pickers for import, drive and export (the dialog plugin returns addresses, not paths); real-vendor checks of the importer formats that are only synthetic so far; real S3 providers; bundles and the release checklist (Phase 6).
+1. **Owner: let the phone accept the install**, then run the on-device checks. Unlock the phone, enable Developer options, **Install via USB**, run
+   `adb -s <id> install -r -t src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` and accept the prompt on the screen (`BUILD_TARGETS.md` 4.4). Then check
+   `FLAG_SECURE` (black `adb exec-out screencap -p` while a drive file is open), lock on background, the 12 launcher aliases, and `adb reverse` sync to `scripts/mock_s3.py`. The camera scan and the fingerprint need the owner's hands.
+2. **Owner: review the working tree and commit it** (the assistant never commits or pushes). Before the first push run `scripts/github-setup.sh plan`, then `apply` (Pages source first, see its header). After the push read the first CI run: the workflows have never executed (`BUILD_TARGETS.md` 9).
+3. **Owner: decide the visibility.** Pages on a private repository needs a paid plan and the site is public either way; making the repository public is the owner's call, not scripted.
+4. **Owner: create the Android release key** (`scripts/github-setup.sh android-key`) so tagged releases are signed with a stable key; until then APKs are `-testkey`.
+5. **Decision needed: the QR scanner's ML Kit telemetry path** (see the update at the top): keep and document (done), replace with an on-device decoder, or strip the data-transport services and re-test.
+6. **Owner: a manual smoke test in the real window** (`npm run tauri dev`): create a vault, add a login with a code, import your own export (Import page), add a file to the drive, turn on the app lock and close and reopen the app, change the disguise and look at the launcher.
+7. **Owner: choose the real bundle identifier** (decision D9) before the first public release; an Android `applicationId` cannot change afterwards.
+8. **Open work:** Android `content://` pickers for import, drive and export (the dialog plugin returns addresses, not paths); real-vendor checks of the importer formats that are only synthetic so far; real S3 providers; a scheduled dependency audit; build provenance attestations.
 
 ## 2026-11-24: Q2 disguise (app icon and name)
 

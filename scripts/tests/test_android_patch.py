@@ -33,6 +33,7 @@ sys.modules["android_patch_manifest"] = apm
 _spec.loader.exec_module(apm)
 
 A = "{http://schemas.android.com/apk/res/android}"
+T = "{http://schemas.android.com/tools}"
 
 # Modelled on the manifest `tauri android init` generates (Tauri 2.x template): comments, a blank
 # line before the provider, a leanback category in the launcher filter, the `tools` namespace.
@@ -228,7 +229,9 @@ class ManifestTests(Base):
         self.assertEqual(
             [(e.tag, e.attrib) for e in before.iter() if isinstance(e.tag, str) and e.tag not in ("intent-filter", "action", "category")],
             [(e.tag, e.attrib) for e in after.iter()
-             if isinstance(e.tag, str) and e.tag not in ("intent-filter", "action", "category", "activity-alias")],
+             if isinstance(e.tag, str) and e.tag not in ("intent-filter", "action", "category", "activity-alias")
+             # the two removal markers the script adds on purpose (VIBRATE, optional camera): they are checked in their own test
+             and not (e.tag in ("uses-permission", "uses-feature") and e.get(T + "node") in ("remove", "replace"))],
         )
         prov = after_app.find("provider")
         self.assertEqual(prov.find("meta-data").get(A + "resource"), "@xml/file_paths")
@@ -236,11 +239,11 @@ class ManifestTests(Base):
         self.assertEqual(main.get(A + "launchMode"), "singleTask")
         self.assertEqual(main.get(A + "label"), "@string/main_activity_title")
 
-    def test_no_permission_is_ever_added(self):
+    def test_no_permission_is_ever_granted(self):
         before = {e.get(A + "name") for e in parse(self.manifest).iter("uses-permission")}
         self.apply()
-        after = {e.get(A + "name") for e in parse(self.manifest).iter("uses-permission")}
-        self.assertEqual(before, after)
+        granted = {e.get(A + "name") for e in parse(self.manifest).iter("uses-permission") if e.get(T + "node") != "remove"}
+        self.assertEqual(before, granted)
         for p in self.project.rglob("*"):
             if p.is_file() and p.suffix in (".xml", ".kt") and p != self.manifest:
                 self.assertNotIn("android.permission", p.read_text(encoding="utf-8"), p)
@@ -272,6 +275,31 @@ class ManifestTests(Base):
         filters = main.findall("intent-filter")
         self.assertEqual(len(filters), 1)
         self.assertEqual(filters[0].find("data").get(A + "scheme"), "passman")
+
+    def test_the_vibrate_permission_and_the_required_camera_are_dealt_with(self):
+        self.apply()
+        root = parse(self.manifest)
+        vib = [e for e in root.findall("uses-permission") if e.get(A + "name") == "android.permission.VIBRATE"]
+        self.assertEqual([e.get(T + "node") for e in vib], ["remove"])
+        cam = [e for e in root.findall("uses-feature") if e.get(A + "name") == "android.hardware.camera.any"]
+        self.assertEqual([(e.get(A + "required"), e.get(T + "node")) for e in cam], [("false", "replace")])
+        text = self.manifest.read_text(encoding="utf-8")
+        self.assertIn("xmlns:tools=", text.split(">", 2)[1] if text.startswith("<?xml") else text)
+        self.assertNotIn("ns0", text)
+        # they sit before <application>, indented like the other children of <manifest>
+        self.assertLess(text.index("android.permission.VIBRATE"), text.index("<application"))
+        self.assertRegex(text, r'\n    <uses-permission android:name="android.permission.VIBRATE"')
+
+    def test_an_existing_vibrate_permission_is_turned_into_a_removal_marker(self):
+        text = MANIFEST.replace(
+            '<uses-permission android:name="android.permission.INTERNET" />',
+            '<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.VIBRATE" />',
+        )
+        self.manifest.write_text(text, encoding="utf-8")
+        self.apply()
+        vib = [e for e in parse(self.manifest).findall("uses-permission") if e.get(A + "name") == "android.permission.VIBRATE"]
+        self.assertEqual(len(vib), 1)
+        self.assertEqual(vib[0].get(T + "node"), "remove")
 
     def test_tools_attributes_survive(self):
         text = MANIFEST.replace(

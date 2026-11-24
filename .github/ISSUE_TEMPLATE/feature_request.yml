@@ -1,0 +1,22 @@
+name: Feature or improvement
+description: Suggest something that would make Passman better.
+labels: ["improvement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do
+      description: Describe the situation first, then the change you would like.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to happen
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Does it touch secrets, the network or the storage format
+      description: Passman has no server, no telemetry and no background activity by design (see ARCHITECTURE.md). Say how your idea fits that.
