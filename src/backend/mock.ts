@@ -405,7 +405,7 @@ let appSettings: AppSettings = { lockAfterMinutes: 5 };
 let disguise: DisguiseInput = { presetId: null, customName: null, lowercase: false };
 function disguiseView(): DisguiseView {
   const preset = DISGUISES.find((d) => d.id === disguise.presetId);
-  const base = disguise.customName ?? preset?.name ?? "Passman";
+  const base = disguise.customName ?? preset?.name ?? "Hexis";
   return { ...disguise, appliedName: disguise.lowercase ? base.toLowerCase() : base, note: "Preview only: nothing outside this page changes." };
 }
 
@@ -496,7 +496,7 @@ export const previewBackend: Backend = {
   async exportVaultFile(password) {
     const p = requireUnlocked(); await verify(password, p);
     await delay(300);
-    return { path: `~/Documents/${p.info.displayName}-${new Date().toISOString().slice(0, 10)}.passman` };
+    return { path: `~/Documents/${p.info.displayName}-${new Date().toISOString().slice(0, 10)}.hexis` };
   },
 
   async listItems() {
@@ -815,9 +815,9 @@ export async function seedPreview(): Promise<void> {
   const a: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Marlowe", createdAt: Date.now() - 40 * 86_400_000, lastUsedAt: Date.now() - 3_600_000 }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
   seedInto(a);
   a.targets.push(
-    { id: crypto.randomUUID(), name: "Cloudflare R2", endpoint: "https://0123abcd.r2.cloudflarestorage.example", region: "auto", bucket: "passman-main", prefix: "marlowe/", accessKeyId: "AKIAPREVIEWR2KEY", secretAccessKey: "preview-secret-r2", pathStyle: false, enabled: true, master: true, shareInMaster: true, queued: 0, lastSuccessAt: Date.now() - 2 * MIN, lastCheckedAt: Date.now() - 2 * MIN, lastError: null, tested: true },
+    { id: crypto.randomUUID(), name: "Cloudflare R2", endpoint: "https://0123abcd.r2.cloudflarestorage.example", region: "auto", bucket: "hexis-main", prefix: "marlowe/", accessKeyId: "AKIAPREVIEWR2KEY", secretAccessKey: "preview-secret-r2", pathStyle: false, enabled: true, master: true, shareInMaster: true, queued: 0, lastSuccessAt: Date.now() - 2 * MIN, lastCheckedAt: Date.now() - 2 * MIN, lastError: null, tested: true },
     { id: crypto.randomUUID(), name: "Home MinIO", endpoint: "https://minio.home.example", region: "us-east-1", bucket: "vault-mirror", prefix: "", accessKeyId: "minio-marlowe", secretAccessKey: "preview-secret-minio", pathStyle: true, enabled: true, master: false, shareInMaster: false, queued: 3, lastSuccessAt: Date.now() - 49 * MIN, lastCheckedAt: Date.now() - 6 * MIN, lastError: null, tested: true },
-    { id: crypto.randomUUID(), name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.example", region: "us-west-004", bucket: "passman-offsite", prefix: "", accessKeyId: "004preview", secretAccessKey: "preview-secret-b2", pathStyle: false, enabled: true, master: false, shareInMaster: true, queued: 9, lastSuccessAt: Date.now() - 3 * 3_600_000, lastCheckedAt: Date.now() - 5 * MIN, lastError: "Access denied (403) while uploading.", tested: true },
+    { id: crypto.randomUUID(), name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.example", region: "us-west-004", bucket: "hexis-offsite", prefix: "", accessKeyId: "004preview", secretAccessKey: "preview-secret-b2", pathStyle: false, enabled: true, master: false, shareInMaster: true, queued: 9, lastSuccessAt: Date.now() - 3 * 3_600_000, lastCheckedAt: Date.now() - 5 * MIN, lastError: "Access denied (403) while uploading.", tested: true },
   );
   const b: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Atlas Registry (work)", createdAt: Date.now() - 12 * 86_400_000, lastUsedAt: Date.now() - 2 * 86_400_000 }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
   const c: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Family", createdAt: Date.now() - 80 * 86_400_000, lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };

@@ -1,6 +1,6 @@
-# Contributing to Passman
+# Contributing to Hexis
 
-Thanks for helping. Passman holds people's secrets, so the bar for changes is "correct and verified" before
+Thanks for helping. Hexis holds people's secrets, so the bar for changes is "correct and verified" before
 "fast". This page tells you how to set up, what every change must do, and what a good pull request looks like.
 
 By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). **Security problems are not issues:** follow
@@ -25,7 +25,7 @@ libraries from [`ai-docs/BUILD_TARGETS.md`](ai-docs/BUILD_TARGETS.md) §2 (for D
 
 ```
 git clone <your fork>
-cd passman
+cd hexis
 npm install
 npm run tauri dev        # the real app
 npm run dev              # UI only in a browser, with an in-memory preview backend (not secure)
@@ -44,7 +44,11 @@ scripts/verify_all.sh          # types, unit tests, production build, rustfmt, c
 scripts/verify_all.sh --e2e    # also the real-core end-to-end suites (needs Chromium; see e2e/README.md)
 ```
 
-It must end with `ALL CHECKS PASSED`. CI repeats it on Linux for every push and pull request, and also builds the
+It must end with `ALL CHECKS PASSED`. If you touch the installer (`scripts/install.sh`) or the repository builder
+(`scripts/make-repos.sh`), `shellcheck` runs on them there, and `scripts/tests/test_install_sh.py` tests the installer
+with stub tools and a local server. To try it for real in containers (needs docker; downloads images):
+`scripts/test_installer_containers.sh <folder with the built bundles> ubuntu:22.04 fedora:latest archlinux:latest`.
+The installer must stay plain POSIX `sh` (it runs under dash and busybox). CI repeats it on Linux for every push and pull request, and also builds the
 Linux bundles and the Android APK, so a change that only breaks packaging is caught too.
 
 ### Rules every change follows
@@ -95,9 +99,11 @@ Linux bundles and the Android APK, so a change that only breaks packaging is cau
    (and `Cargo.lock` by building once). CI refuses a tag whose version does not match all three.
 2. Tag the commit `vX.Y.Z` and push the tag. The `ci.yml` workflow builds every variant and opens a **draft** release.
 3. Review the draft (notes, checksums, the list of files), then publish it by hand.
-4. Before the first public release replace the placeholder bundle identifier `app.passman.vault` (decision D9 in
-   `ARCHITECTURE.md`): an Android `applicationId` cannot change once the app has been distributed.
-5. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
+4. The bundle identifier `dev.habibullah.hexis` is final (decision D9 in `ARCHITECTURE.md`): an Android `applicationId`
+   cannot change once the app has been distributed, and the desktop data folder is named after it.
+5. The release description (install commands, downloads table with checksums, the changelog section) is written by
+   `scripts/release_notes.py` from `CHANGELOG.md`; add a `## [X.Y.Z] - date` section there before you tag.
+6. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
 
 ## Licence of contributions
 

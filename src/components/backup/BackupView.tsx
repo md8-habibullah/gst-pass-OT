@@ -10,6 +10,7 @@ import { reprompt } from "../reprompt/Reprompt";
 import { PageBody, PageHeader } from "../shell/PageHeader";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
+import { useBrandName } from "../../state/brand";
 import { TargetForm } from "./TargetForm";
 
 const STATE_LABEL: Record<HealthState, string> = {
@@ -74,6 +75,7 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
 
 /** Backup management: any number of S3-compatible targets, one of which can be the master. */
 export function BackupView() {
+  const brandName = useBrandName();
   const targets = useStore(backups, (s) => s.targets);
   const [sheet, setSheet] = useState<{ kind: "add" } | { kind: "edit"; t: BackupTargetView } | { kind: "remove"; t: BackupTargetView } | null>(null);
   const [running, setRunning] = useState<string | "all" | null>(null);
@@ -158,7 +160,7 @@ export function BackupView() {
           </ul>
           <div className="rounded-lg bg-pane/70 px-4 py-3.5 text-[0.93em] text-mist shadow-e1">
             <p className="font-medium text-frost">How the master backup works</p>
-            <p className="mt-1">On a new device, choose Restore from a backup and enter the keys of the master backup only. Passman downloads your vault, you unlock it with your master password, and every other backup that was ticked “Also keep these credentials in the master backup” is already set up inside it.</p>
+            <p className="mt-1">On a new device, choose Restore from a backup and enter the keys of the master backup only. {brandName} downloads your vault, you unlock it with your master password, and every other backup that was ticked “Also keep these credentials in the master backup” is already set up inside it.</p>
           </div>
         </>
       )}

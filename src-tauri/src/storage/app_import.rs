@@ -269,7 +269,7 @@ impl AppCore {
             .get(&id)
             .map_or_else(|| "vault".to_string(), |e| e.display_name.clone());
         let base = files::suggested_export_name(&name, now_millis());
-        let base = base.strip_suffix(".passman").unwrap_or(&base);
+        let base = base.strip_suffix(".hexis").unwrap_or(&base);
         let suggested = format!("{base}-plaintext.{}", format.extension());
         let picker = Arc::clone(&self.picker);
         let data_dir = self.dir.clone();

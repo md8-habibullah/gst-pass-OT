@@ -72,7 +72,7 @@ const MSG_BLOB_DIFFERS: &str =
 const MSG_META_WAITS: &str =
     "The name of a file is held back until its encrypted data has been backed up.";
 const MSG_TOO_MANY: &str =
-    "This location holds far more files than a Passman vault, so they were not restored.";
+    "This location holds far more files than a vault, so they were not restored.";
 const MSG_LISTING: &str = "The storage service's object listing did not make progress.";
 /// Objects of one kind a restore will look at (the whole bucket is capped at the same number).
 const MAX_LISTED: usize = 100_000;

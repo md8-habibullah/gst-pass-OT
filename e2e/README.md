@@ -8,7 +8,7 @@ It uses the `chromium` on the PATH; set `CHROME_BIN` (for example `CHROME_BIN=go
 ```
 npm run dev -- --port 1431                          # the UI (Vite)
 (cd src-tauri && cargo build --example e2e_server)  # the dev-only loopback shim around the core
-export SP=/tmp/passman-e2e; mkdir -p $SP/shots2     # scratch folder: data, profiles, screenshots
+export SP=/tmp/hexis-e2e; mkdir -p $SP/shots2     # scratch folder: data, profiles, screenshots
 export E2E_BIN=$PWD/src-tauri/target/debug/examples/e2e_server
 node e2e/run.mjs                                    # accounts, items, history, trash, vault file, import, no plaintext on disk
 node e2e/real-gate.mjs                              # Stage 1 gate, decoy maths, panic, wipe, idle lock (scaled timer)

@@ -52,7 +52,7 @@ export interface AppState {
   syncRevision: number;
 }
 
-const PREF_KEY = "passman.prefs.v1";
+const PREF_KEY = "hexis.prefs.v1";
 
 function loadPrefs(): Pick<AppState, "clipboardClear"> {
   try {

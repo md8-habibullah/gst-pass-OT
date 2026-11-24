@@ -5,6 +5,8 @@ import { app, be, lockVault, pushToast, setClipboardClear, setFilter, type Clipb
 import { backups, summarize } from "../../state/backup";
 import { useStore } from "../../state/store";
 import { StrengthMeter } from "../lock/StrengthMeter";
+import { VaultMark } from "../lock/VaultMark";
+import { useBrandName } from "../../state/brand";
 import { Button } from "../ui/Button";
 import { Field, Segmented, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
@@ -93,6 +95,7 @@ function ChangePassword({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 export function SettingsView() {
+  const brandName = useBrandName();
   const clipboardClear = useStore(app, (s) => s.clipboardClear);
   const suite = useStore(app, (s) => s.suite);
   const [changing, setChanging] = useState(false);
@@ -129,7 +132,14 @@ export function SettingsView() {
           <LinkRow title="Export" description="Save an encrypted copy of this vault as a file." filter="export" icon={<Upload className="size-[18px]" />} />
         </Group>
 
-        <Group title="About this vault">
+        <Group title="About">
+          <div className="flex items-center gap-4 border-b border-hairline px-4 py-4">
+            <VaultMark size={44} />
+            <div className="min-w-0">
+              <p className="font-semibold">{brandName}</p>
+              <p className="mt-0.5 text-[0.93em] text-mist">Version {typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev"}. Your vaults stay on this device unless you set up a backup.</p>
+            </div>
+          </div>
           {suite && (
             <>
               <Row title="Key protection" description={`${suite.kem}, so a future quantum computer cannot unwrap your keys from stored data.`} />

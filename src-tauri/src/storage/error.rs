@@ -123,7 +123,7 @@ impl From<rusqlite::Error> for StorageError {
                 C::DiskFull => "The disk is full, so the vault could not be saved.",
                 C::ReadOnly => "The vault database is read-only.",
                 C::NotADatabase | C::DatabaseCorrupt => {
-                    "The vault database file is damaged, or it is not a Passman vault."
+                    "The vault database file is damaged, or it is not a vault this app can open."
                 }
                 C::CannotOpen => "The vault database file could not be opened.",
                 _ => "The vault database reported an error.",

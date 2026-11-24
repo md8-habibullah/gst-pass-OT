@@ -8,7 +8,7 @@ import type { Backend } from "./types";
 // `&legacy=2` does the same but leaves `disguise_get` to the shim (for a binary that already has the disguise commands).
 const LEGACY: Record<string, unknown> = {
   gate_status: { enabled: false, open: true, mode: "pin", biometricAvailable: false, biometric: false, panicButton: false, equation: null, attemptsLeft: null, streak: 0 },
-  disguise_get: { presetId: null, customName: null, lowercase: false, appliedName: "Passman", note: null },
+  disguise_get: { presetId: null, customName: null, lowercase: false, appliedName: "Hexis", note: null },
   app_settings_get: { lockAfterMinutes: 15 },
   activity_ping: null,
   sync_flush: { complete: true },
@@ -26,7 +26,7 @@ export function httpBackend(port: number): Backend {
       throw normalizeError("The end-to-end server is not reachable.");
     }
     // `file_read` answers with raw bytes (like tauri::ipc::Response in the app) and says so in a header.
-    if (res.headers.get("x-passman-binary") === "1") return (await res.arrayBuffer()) as T;
+    if (res.headers.get("x-hexis-binary") === "1") return (await res.arrayBuffer()) as T;
     const body = (await res.json()) as { ok?: T; err?: unknown };
     if (body.err !== undefined) throw normalizeError(body.err);
     return body.ok as T;

@@ -17,6 +17,7 @@ step "frontend unit tests"       npx --no-install vitest run
 step "frontend production build" npx --no-install vite build
 step "no dev-only strings in the production bundle" bash -c '! grep -rlE "seedPreview|PREVIEW_PASSWORD|e2e_server|simulateOtherDeviceEdit|Marlowe" dist/'
 step "no notification or tray code" python3 scripts/check_no_notifications.py
+step "shellcheck: installer and repository scripts" bash -c 'if command -v shellcheck >/dev/null 2>&1; then shellcheck -s sh scripts/install.sh scripts/tests/container_case.sh && shellcheck scripts/make-repos.sh scripts/make-arch-repo.sh scripts/test_installer_containers.sh; else echo "(shellcheck is not installed; skipped)"; fi'
 step "android patch script tests" bash -c 'if [ -d scripts/tests ]; then python3 -m unittest discover -s scripts/tests -t . ; else echo "(no script tests)"; fi'
 # Not in a subshell: a failed step sets `fail` in this shell, so the final line and the exit status tell the truth.
 step "rust format"  bash -c 'cd src-tauri && cargo fmt --check'
@@ -28,7 +29,7 @@ if [ "$mode" = "--e2e" ] || [ "$mode" = "--e2e-only" ]; then
   # The end-to-end scripts drive the REAL Rust core (through the dev-only HTTP shim) from a headless Chromium
   # that talks to the Vite dev server. They need: `npm run dev -- --port 1431` running, chromium on the PATH,
   # and E2E_BIN pointing at the shim built with `cargo build --example e2e_server` (target/debug/examples/e2e_server).
-  export SP="${SP:-/tmp/passman-e2e}"; mkdir -p "$SP/shots2"
+  export SP="${SP:-/tmp/hexis-e2e}"; mkdir -p "$SP/shots2"
   export E2E_BIN="${E2E_BIN:-$ROOT/src-tauri/target/debug/examples/e2e_server}"
   for t in run real-gate real-drive real-import real-disguise real-backup real-sync; do
     [ -f "e2e/$t.mjs" ] && step "e2e: $t" node "e2e/$t.mjs"

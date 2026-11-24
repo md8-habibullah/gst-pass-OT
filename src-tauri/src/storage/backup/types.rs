@@ -363,7 +363,7 @@ mod tests {
             name: "  Home   MinIO ".into(),
             endpoint: Some("http://127.0.0.1:9000/".into()),
             region: "us-east-1".into(),
-            bucket: "passman-test".into(),
+            bucket: "hexis-test".into(),
             prefix: "/backups//mine/".into(),
             access_key_id: "AKIDEXAMPLE".into(),
             secret_access_key: "  s3cr3t-value\n".into(),

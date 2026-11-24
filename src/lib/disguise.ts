@@ -4,7 +4,7 @@ import data from "../../assets/disguise/presets.json";
 
 export interface DisguisePreset { id: string; name: string; description: string; background: string }
 export const DISGUISES: readonly DisguisePreset[] = data.presets;
-export const ORIGINAL_NAME = "Passman";
+export const ORIGINAL_NAME = "Hexis";
 
 const tiles = import.meta.glob<string>("../../assets/disguise/*.svg", { eager: true, query: "?url", import: "default" });
 const urlFor = (file: string) => tiles[`../../assets/disguise/${file}.svg`];

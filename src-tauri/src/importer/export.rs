@@ -5,9 +5,9 @@
 //! the master password first, write the file privately (mode 0600, temp file + rename), and say
 //! so in their messages. The buffers built here are wiped on drop.
 //!
-//! Passman keeps a few things Bitwarden has no place for. They are written as custom fields with
+//! Hexis keeps a few things Bitwarden has no place for. They are written as custom fields with
 //! fixed names ([`TAGS_FIELD`], [`TYPE_FIELD`]) and the importer turns them back into tags and
-//! item types, so an export read by Passman again is lossless; another app simply shows them as
+//! item types, so an export read by Hexis again is lossless; another app simply shows them as
 //! ordinary extra fields.
 
 use super::jsonutil::format_iso;
@@ -18,10 +18,14 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use zeroize::Zeroize;
 
-/// Custom field that carries Passman's tags (a JSON list of names).
-pub const TAGS_FIELD: &str = "Passman tags";
+/// Custom field that carries Hexis's tags (a JSON list of names).
+pub const TAGS_FIELD: &str = "Hexis tags";
 /// Custom field that marks an item Bitwarden cannot represent (`totp`).
-pub const TYPE_FIELD: &str = "Passman item type";
+pub const TYPE_FIELD: &str = "Hexis item type";
+/// The same two fields as exports written by builds made before the final name call them; the importer still reads them,
+/// so an old export brings its tags and code items back.
+pub const PREVIOUS_TAGS_FIELD: &str = "Passman tags";
+pub const PREVIOUS_TYPE_FIELD: &str = "Passman item type";
 
 /// The two plaintext export formats of `export_plain`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +254,7 @@ struct BwDoc<'a> {
     items: Vec<BwItem<'a>>,
 }
 
-/// Extra custom fields Passman adds (kept alive until the document is written).
+/// Extra custom fields Hexis adds (kept alive until the document is written).
 struct Extras {
     tags: String,
 }
@@ -716,6 +720,26 @@ mod tests {
             assert_eq!(e.modified, Some(rec.updated_at));
             assert_eq!(e.source_id.as_deref(), Some(rec.id.as_str()));
             assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        }
+    }
+
+    #[test]
+    fn an_export_from_before_the_rename_still_brings_its_tags_and_code_items_back() {
+        let recs = records();
+        let out = bitwarden_json(&recs).unwrap();
+        let text = std::str::from_utf8(out.as_slice())
+            .unwrap()
+            .replace(TAGS_FIELD, PREVIOUS_TAGS_FIELD)
+            .replace(TYPE_FIELD, PREVIOUS_TYPE_FIELD);
+        assert!(text.contains(PREVIOUS_TAGS_FIELD) && !text.contains(TAGS_FIELD));
+        let back = bitwarden::parse_json(text.as_bytes()).unwrap();
+        for (rec, e) in recs.iter().zip(&back.entries) {
+            assert_eq!(
+                e.to_draft().draft,
+                rec.draft,
+                "round trip of {}",
+                rec.draft.title
+            );
         }
     }
 

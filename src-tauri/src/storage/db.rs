@@ -10,7 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// `PRAGMA application_id` of every Passman vault file ("PMV1").
+/// `PRAGMA application_id` of every Hexis vault file ("PMV1").
 pub const APPLICATION_ID: i64 = 0x504D_5631;
 /// Schema version this build writes (2 = backup targets, outbox, remote object bookkeeping;
 /// 3 = copies of an item's state that arrived from another device,
@@ -193,7 +193,7 @@ fn from_i64(v: i64) -> Result<u64> {
 }
 
 impl Store {
-    /// Open (creating if needed) and migrate. Refuses files that are not Passman vaults and
+    /// Open (creating if needed) and migrate. Refuses files that are not Hexis vaults and
     /// vaults written by a newer schema.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -229,7 +229,7 @@ impl Store {
         let app_id: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
         if version > SCHEMA_VERSION {
             return Err(StorageError::Storage(
-                "This vault was created by a newer version of Passman. Update the app to open it."
+                "This vault was created by a newer version of this app. Update the app to open it."
                     .into(),
             ));
         }
@@ -239,7 +239,7 @@ impl Store {
                 tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
             if tables > 0 || app_id != 0 {
                 return Err(StorageError::Storage(
-                    "That file is not a Passman vault.".into(),
+                    "That file is not a vault this app can open.".into(),
                 ));
             }
             tx.execute_batch(MIGRATION_V1)?;
@@ -249,7 +249,7 @@ impl Store {
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else if app_id != APPLICATION_ID {
             return Err(StorageError::Storage(
-                "That file is not a Passman vault.".into(),
+                "That file is not a vault this app can open.".into(),
             ));
         } else {
             // Older vaults are brought forward step by step, all in this one transaction: a
@@ -972,7 +972,7 @@ mod tests {
         })
         .unwrap();
 
-        let out = dir.path().join("copy.passman");
+        let out = dir.path().join("copy.hexis");
         s.export_to(&out).unwrap();
         // the live database is untouched
         assert_eq!(all(&s, "targets"), 2);

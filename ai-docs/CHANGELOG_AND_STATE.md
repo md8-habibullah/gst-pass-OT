@@ -2,6 +2,26 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, evening): first CI run, the one-line installer, signed package repositories
+
+**First run on GitHub (the owner's push, commit `maga-v2`):** all jobs passed (`checks`, `e2e`, `site`, `linux`, `android`, `nightly`); the `nightly` pre-release holds the deb, rpm, AppImage, tar.gz, the
+Android APK (`-testkey`, verified with `apksigner`: v3 scheme, `dev.habibullah.hexis`, minSdk 28, targetSdk 37) and `SHA256SUMS`. The Pages site deployed (`status: built`, HTTPS enforced) while the repository is
+still private. A later run on the Dependabot pull request failed once in `e2e`: the first headless Chrome on the runner did not answer within 10 s; `e2e/cdp.mjs` now waits 20 s and retries (this fix is in the
+tree, not yet pushed). The CI-built binary needs glibc 2.34 (the local CachyOS build needs 2.39, which is why the local files must not be used for compatibility tests); the AppImage's libraries need 2.35.
+
+**One-line installer (`scripts/install.sh`)**, built after studying `dl.brave.com/install.sh` (a thin script that registers the vendor's signed repository and lets apt/dnf install and update). Hexis's version
+detects the system and picks a signed apt or rpm repository, or a checksum-verified tarball/AppImage/APK; details, flow, trust model and the verified matrix are in `BUILD_TARGETS.md` section 11. Also new:
+`scripts/make-repos.sh`, `scripts/make-arch-repo.sh`, the `pages.yml` repository step, `scripts/github-setup.sh repo-key`, the `installer` CI job (`scripts/test_installer_containers.sh`, `scripts/tests/container_case.sh`),
+33 hermetic tests (`scripts/tests/test_install_sh.py`), the Download page and `/download/install-script/` on the site, and the README, SECURITY, PRIVACY, CONTRIBUTING and CHANGELOG sections.
+
+**Verified for real (containers, CI-built files):** Ubuntu 22.04, Debian 12, Fedora, openSUSE Tumbleweed, Arch (installs through the signed repository of each family, libraries resolve, runs under Xvfb, uninstall), refusals on Alpine, Ubuntu 20.04, aarch64;
+tampered checksum refused; APK download. **Not verified:** the Pages repository build on a real runner (needs `REPO_SIGNING_KEY` and a published stable release), the `installer` CI job itself (written after the run),
+`pkexec`/`run0`/`doas`, rpm-ostree and SteamOS hosts, `make-arch-repo.sh` on a GitHub runner, aarch64 Linux. **Needs the owner:** make anonymous downloads possible (see below), create the signing key
+(`scripts/github-setup.sh repo-key`), tag `v0.1.0`, review and publish the draft release.
+
+**Private-repository caveat:** while the repository is private, release assets answer 404 to anonymous downloads, so the one-liner cannot download release files for anyone who is not signed in with `gh` (the installer
+tries `gh release download` as a fallback). The package repositories are an exception: they live on Pages, which is public, and are built from the stable release with the workflow's own token.
+
 ## Update (2026-11-24, later): Android builds, the repository got CI, releases and a website
 
 **What changed**
@@ -12,7 +32,7 @@ Update this file after every major milestone. Newest entries first.
   (now optional); the template compiles against API 37, not 36. `apkanalyzer` shows `DisguisePlugin` and `SecureScreenPlugin` in the dex and no notification or foreground-service permission.
 * **On-device checks did not run: the phone refused the install** (`INSTALL_FAILED_USER_RESTRICTED`; it was asleep and locked, and Xiaomi's "Install via USB" needs the owner). Steps in `BUILD_TARGETS.md` 4.4.
   FLAG_SECURE, lock on background, the 12 launcher aliases, biometrics, camera scan and `adb reverse` sync therefore remain **unverified**.
-* **New privacy finding (open):** the QR scanner plugin uses Google ML Kit via Play services and the APK contains Google's data-transport runtime. ML Kit may send technical usage metrics to Google. Passman's own
+* **New privacy finding (open):** the QR scanner plugin uses Google ML Kit via Play services and the APK contains Google's data-transport runtime. ML Kit may send technical usage metrics to Google. Hexis's own
   code sends none, but "no telemetry" can no longer be stated without this Android exception (`PRIVACY.md` and the README now say so). Not measured. Fix options: an on-device decoder (`jsqr` is already bundled) or
   removing the transport services and re-testing the scanner.
 * **`scripts/verify_all.sh` had a bug:** the three Rust steps ran in a subshell, so a failing `cargo test` or `clippy` set `fail` only inside it and the script could still print `ALL CHECKS PASSED`. Fixed (the steps now run
@@ -25,10 +45,10 @@ Update this file after every major milestone. Newest entries first.
 
 | Step | Result |
 |---|---|
-| `npm run tauri build -- --bundles deb,rpm,appimage` (release, LTO) | exit 0; Rust release compile 7 min 28 s; `Passman_0.1.0_amd64.deb` 8.1 MiB (Depends `libwebkit2gtk-4.1-0, libgtk-3-0`), `Passman-0.1.0-1.x86_64.rpm` 8.1 MiB (requires `libwebkit2gtk-4.1.so.0`), `Passman_0.1.0_amd64.AppImage` 112.7 MiB |
-| CI step "Collect, name and archive" | exit 0; `passman-0.1.0-linux-x86_64.tar.gz` holds the binary, `passman.desktop`, `passman.png`, `LICENSE` |
+| `npm run tauri build -- --bundles deb,rpm,appimage` (release, LTO) | exit 0; Rust release compile 7 min 28 s; `Hexis_0.1.0_amd64.deb` 8.1 MiB (Depends `libwebkit2gtk-4.1-0, libgtk-3-0`), `Hexis-0.1.0-1.x86_64.rpm` 8.1 MiB (requires `libwebkit2gtk-4.1.so.0`), `Hexis_0.1.0_amd64.AppImage` 112.7 MiB |
+| CI step "Collect, name and archive" | exit 0; `hexis-0.1.0-linux-x86_64.tar.gz` holds the binary, `hexis.desktop`, `hexis.png`, `LICENSE` |
 | `npm run tauri android build -- --apk --target aarch64` (release) | exit 0; 18.2 MB APK |
-| CI step "Align and sign" (no release key, so a throw-away key) | exit 0; `passman-0.1.0-android-arm64-testkey.apk`; `apksigner verify` passes for minSdk 28; the run exposed a stray `.idsig` file, now disabled with `--v4-signing-enabled false` |
+| CI step "Align and sign" (no release key, so a throw-away key) | exit 0; `hexis-0.1.0-android-arm64-testkey.apk`; `apksigner verify` passes for minSdk 28; the run exposed a stray `.idsig` file, now disabled with `--v4-signing-enabled false` |
 | R8 on the release APK | `DisguisePlugin` and `SecureScreenPlugin` survive; permissions are `INTERNET`, `ACCESS_NETWORK_STATE`, `CAMERA`, `USE_BIOMETRIC`, `USE_FINGERPRINT` (no `VIBRATE`, no notification, no foreground service) |
 | `scripts/verify_all.sh` (the `checks` job) | `ALL CHECKS PASSED`, exit 0: 764 Rust tests, 66 frontend tests, clippy and fmt clean |
 | `scripts/ci_e2e.sh` (the `e2e` job) | all 7 suites OK, 179 checks, 0 failures (`run` 60, `real-gate` 35, `real-drive` 18, `real-import` 13, `real-disguise` 16, `real-backup` 12, `real-sync` 25). The first run found a bug in the script itself (it probed Vite on `127.0.0.1` while Vite listens on `localhost`); fixed |
@@ -64,7 +84,7 @@ Phase 2 (storage, history, trash, UI), Phase 4a (multi-S3 backup, master backup,
 4. **Vendor formats other than the two real files above** were read from public descriptions and synthetic fixtures. KeePass `.kdbx` files are real KDBX but were written by the crate that reads them.
 5. **The Stage 1 gate is a privacy gate, not encryption** (nothing wraps the vault key; a copied data folder resets the attempt counter; the overwrite on wipe cannot be proven on SSD or copy-on-write file systems). The vault itself needs the master password every time.
 6. No third-party review of the crypto, storage, gate or importer code; no external fuzzer; power-loss durability is not measured.
-7. Placeholder bundle identifier `app.passman.vault` (decision D9) must be replaced before any release.
+7. ~~Placeholder bundle identifier~~ Decided: `dev.habibullah.hexis` is final (decision D9, 2026-11-24).
 
 The sections from "Earlier state" down are the 2026-11-23 record; where they say "not built", the slices above supersede them.
 
@@ -102,9 +122,9 @@ After the user ran the system-package command and said "You can continue", Phase
 2. Motion transitions (sheet slides, layout animations, unlock moment) and `backdrop-filter` under load are unchecked in WebKitGTK beyond the first paint. Android WebView is unchecked entirely.
 3. **Android** (`BUILD_TARGETS.md` §4): no SDK/NDK on this machine; `npm run tauri android init` has not been run. The 412x915 screenshots are a Chromium proxy for the layout only.
 4. **Bundles** (deb/rpm/AppImage/PKGBUILD) have not been built.
-5. **Placeholder bundle identifier** `app.passman.vault` (decision D9): choose the real reverse-DNS id before any release or Android signing; it cannot change later without a new app identity.
+5. ~~**Placeholder bundle identifier**~~ Decided 2026-11-24 (D9): `dev.habibullah.hexis` is final; it cannot change later without a new app identity.
 6. The crypto and storage code have had no third-party review. Power-loss durability, byte-level secure deletion after purge, and unlock speed with production Argon2 parameters (64 MiB) are not measured.
-7. In development the app keeps its data in `~/.local/share/app.passman.vault/` (the folder exists, mode 0700, created by the app at launch). `vault.db` has **not** been created yet: the assistant only looked at the first-run screen and never created a vault in the real app.
+7. In development the app keeps its data in `~/.local/share/dev.habibullah.hexis/` (the folder exists, mode 0700, created by the app at launch). `vault.db` has **not** been created yet: the assistant only looked at the first-run screen and never created a vault in the real app.
 
 <details><summary>Phase 1 verification record (unchanged)</summary>
 
@@ -122,8 +142,8 @@ After the user ran the system-package command and said "You can continue", Phase
 | Crate versions tested == versions shipped | harness lock vs `src-tauri/Cargo.lock`: every crate the crypto code uses has the identical version. Extra older duplicates in the real lock (sha2 0.10, digest 0.10, crypto-common 0.1, getrandom 0.3, thiserror 1, base64 0.21) come only from wry, tauri, the gtk/glib bindings, jni and swift-rs; no crypto crate depends on them |
 | Frontend: `npm install`, `npm run typecheck`, `npm run build` | all exit 0 with TypeScript 7.0.2, Vite 8.3.8, plugin-react 6.3.0, Tailwind 4.3.5 (51 packages; bundle 222 kB JS / 8.5 kB CSS) |
 | `dist/index.html` vs the CSP | one external module script, no inline script |
-| Full `passman` crate (after the user installed webkit2gtk-4.1 on 2026-11-23) | `cargo check --locked --all-targets`: 0 warnings; `cargo clippy --all-targets -- -D warnings`: clean; `cargo fmt --check`: clean; `cargo test`: **84 passed, 0 failed, 1 ignored** (same as the harness); `tauri-build` accepted `tauri.conf.json` and `capabilities/default.json` |
-| App launch (`npm run tauri dev`, Wayland/Hyprland) | window `Passman` opens within ~4 s and stays open (sampled for 90 s); a screenshot shows the status page filled from the Rust command `crypto_suite_info` (suite v1, ML-KEM-1024+X25519, Argon2id 64 MiB/4/4, XChaCha20-Poly1305); the strict CSP blocked nothing visible |
+| Full `hexis` crate (after the user installed webkit2gtk-4.1 on 2026-11-23) | `cargo check --locked --all-targets`: 0 warnings; `cargo clippy --all-targets -- -D warnings`: clean; `cargo fmt --check`: clean; `cargo test`: **84 passed, 0 failed, 1 ignored** (same as the harness); `tauri-build` accepted `tauri.conf.json` and `capabilities/default.json` |
+| App launch (`npm run tauri dev`, Wayland/Hyprland) | window `Hexis` opens within ~4 s and stays open (sampled for 90 s); a screenshot shows the status page filled from the Rust command `crypto_suite_info` (suite v1, ML-KEM-1024+X25519, Argon2id 64 MiB/4/4, XChaCha20-Poly1305); the strict CSP blocked nothing visible |
 | `tauri.conf.json` | validated against the downloaded Tauri JSON schema with a stdlib checker (unknown keys, required keys, types, enums); the checker was itself tested by injecting two faults, both caught |
 
 Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), kdf 6, kem 13, rng 1, secret 7, subkey 2, totp 14, vault_keys 14, mod 2.
@@ -161,12 +181,12 @@ Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), k
 * **Polish from screenshot review**: lattice made visible, disabled primary button is now a dimmed brass instead of muddy grey (busy stays vivid), search shows a `/` key badge, item-detail header uses a container query so the title is never squeezed on narrow panes, code tiles centre their chevron, preview seed secrets are distinct per item, version-history state is keyed per item (a reset effect had been closing the dev deep link).
 * **Incident, disclosed:** while trying to verify the real window, the assistant used `wtype` to type into it. The user had switched workspace, so the keystrokes (a throwaway string, Tab, Space) landed in a sign-in form in the user's browser. Nothing was submitted. The approach was dropped for good and recorded in memory: no synthetic input into the user's desktop.
 * Configuration: default window 1200x780 (three panes visible), minimum 360x520.
-* Icon: `scripts/gen_icon.py` now draws the brass keyhole on the deep-marine square (matches the UI); `npm run tauri icon assets/app-icon.png` regenerated `src-tauri/icons/` (desktop, plus the Android and iOS sets the tool always emits; those are unused until the Android project exists).
+* Icon (since replaced by the Hexis logo and `scripts/gen_icons.py`): `scripts/gen_icon.py` drew the brass keyhole on the deep-marine square (matches the UI); `npm run tauri icon assets/app-icon.png` regenerated `src-tauri/icons/` (desktop, plus the Android and iOS sets the tool always emits; those are unused until the Android project exists).
 
 ### 2026-11-23 — Phase 1 complete
 * Wrote `src-tauri/src/crypto/` (~3.1k lines incl. tests): ids, rng, secret (boxed, redacted, constant-time), subkey, kdf (Argon2id with own zeroized work memory), aead, envelope, kem (hybrid), vault_keys (bundle create/unlock/verify/change-password), totp.
 * Added independent verification: generated KATs (`scripts/gen_crypto_kat.py`), RFC 6238 vectors, stored v1 fixtures, pure-Python interop unlock (`scripts/verify_bundle_fixture.py`).
-* Added `scripts/crypto-harness.py` (tests the crypto module without GUI libraries), `scripts/monitor.py` (live job monitor), `scripts/gen_icon.py` (placeholder icon).
+* Added `scripts/crypto-harness.py` (tests the crypto module without GUI libraries), `scripts/monitor.py` (live job monitor), `scripts/gen_icon.py` (placeholder icon; replaced by `scripts/gen_icons.py`).
 * Scaffolded frontend and verified `npm install` / typecheck / build with the newest stable majors (TypeScript 7, Vite 8, React 19.3, Tailwind 4.3); generated icons with `tauri icon`.
 * Resolved the full dependency graph and created `src-tauri/Cargo.lock`.
 * Fixes made along the way (all covered by tests): clippy `unused_imports`, `redundant_guards`, `manual_is_multiple_of`; generated vectors protected from rustfmt; monitor no longer mistakes unrelated Python processes for the job.
@@ -193,9 +213,9 @@ Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), k
 
 Built: `disguise_get` / `disguise_set`, the saved choice, the `Launcher` seam (`NoLauncher` for tests, `RecordingLauncher` for assertions, `TauriLauncher` in the app), the Linux launcher entry writer, the wipe hook, the e2e shim additions, and `scripts/android_patch_manifest.py` with its Python tests.
 
-Verified in this session (in `passman-q2`):
+Verified in this session (in `hexis-q2`):
 * Rust: `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`: 372 passed, 0 failed, 1 ignored (the pre-existing `regenerate_bundle_fixture`); 70 of those are new (`disguise::tests` 18, `disguise::desktop` 22, `commands::disguise` 14, `storage::app_disguise` 16). The 302 pre-existing tests are unchanged and pass.
-* The exact text of the `.desktop` file and its escaping (a name such as `a%u<newline>Exec=evil` leaves exactly one `Exec=` line), idempotent writes (a second identical apply changes nothing on disk), refusal to touch a `.desktop` file that does not carry `X-Passman-Managed=true`, removal on return to the original look, an injected data home so tests never touch the real `~/.local/share`.
+* The exact text of the `.desktop` file and its escaping (a name such as `a%u<newline>Exec=evil` leaves exactly one `Exec=` line), idempotent writes (a second identical apply changes nothing on disk), refusal to touch a `.desktop` file that does not carry `X-Hexis-Managed=true`, removal on return to the original look, an injected data home so tests never touch the real `~/.local/share`.
 * The generated file passes `desktop-file-validate` (a test runs it and prints a skip message when the tool is missing; it was installed here).
 * Window title and icon calls through Tauri's **mock runtime** (the IPC path with real argument conversion; the mock window keeps no title, so the calls are checked through the launcher seam and a `WindowPlan` unit, not by reading the title back).
 * The disguise commands never change vault state; hostile or damaged `disguise.json` files fall back to defaults; concurrent `disguise_set` calls are serialised.
@@ -209,8 +229,8 @@ Verified in this session (in `passman-q2`):
 * Real window title and icon on a live Linux window (only the mock runtime was used; no GUI session was driven, by rule).
 
 Decisions and limits worth remembering:
-* The original look **removes** the launcher entry instead of writing a "Passman" one (a package may already ship its own `passman.desktop`; the removal only touches files that carry our marker). Only a name change without an icon writes an entry that uses the original icon (`original.png`).
-* deb/rpm installs keep their packaged `passman.desktop` next to our `<identifier>.desktop`: both appear in menus while a disguise is active. AppImage and plain binaries have no packaged entry.
+* The original look **removes** the launcher entry instead of writing a "Hexis" one (a package may already ship its own `hexis.desktop`; the removal only touches files that carry our marker). Only a name change without an icon writes an entry that uses the original icon (`original.png`).
+* deb/rpm installs keep their packaged `hexis.desktop` next to our `<identifier>.desktop`: both appear in menus while a disguise is active. AppImage and plain binaries have no packaged entry.
 * `Exec=` points at `$APPIMAGE` when set (and absolute), else the current executable; both must be absolute paths or the write is refused with a fixed sentence.
 * The launcher label on Android is a static resource, so a custom name changes only the in-app title and the recents label; the lower-case option changes the in-app name only. There are 12 aliases (the original plus 11 presets). Adaptive icons (108 dp foreground plus a background colour from `presets.json`) were added beyond the brief because minSdk is 28.
 * The startup re-apply is skipped on Android (the system keeps the enabled alias).
@@ -220,14 +240,14 @@ Decisions and limits worth remembering:
 
 ### Q2: e2e shim additions
 
-* New flag `--xdg-data-home <dir>`. Without it the shim's launcher only **records** (nothing is written, as before). With it the shim's launcher really writes `<dir>/applications/app.passman.vault.desktop` and `<dir>/app.passman.vault/disguise/<id>.png` through the same injected-base-dir writer the app uses; the real `~/.local/share` and `$XDG_DATA_HOME` are never touched. The directory must be absolute, must not be the real `$XDG_DATA_HOME` or `~/.local/share`, and must be empty or created by a previous shim run (it drops a `.passman-e2e` marker file); anything else is refused at start. `Exec=` points at the shim binary; the refresh command is not run.
+* New flag `--xdg-data-home <dir>`. Without it the shim's launcher only **records** (nothing is written, as before). With it the shim's launcher really writes `<dir>/applications/dev.habibullah.hexis.desktop` and `<dir>/dev.habibullah.hexis/disguise/<id>.png` through the same injected-base-dir writer the app uses; the real `~/.local/share` and `$XDG_DATA_HOME` are never touched. The directory must be absolute, must not be the real `$XDG_DATA_HOME` or `~/.local/share`, and must be empty or created by a previous shim run (it drops a `.hexis-e2e` marker file); anything else is refused at start. `Exec=` points at the shim binary; the refresh command is not run.
 * `GET /e2e/disguise-applied` answers the last look the launcher was asked to apply: `{"ok":{"presetId":"kerf","appliedName":"Kerf","customName":null,"lowercase":false,"note":null,"count":1},"presetId":"kerf","appliedName":"Kerf","customName":null,"lowercase":false,"note":null,"count":1}` (the same fields inside `ok` and at the top level, so either spelling works). Before anything was applied: `{"ok":null,"presetId":null,"appliedName":null,"count":0}`. `count` is the number of apply calls, so a test can see that a refused `disguise_set` applied nothing.
-* Expected file lines after setting `kerf` with `--xdg-data-home /abs/dir`: `Name=Kerf`, `Icon=/abs/dir/app.passman.vault/disguise/kerf.png`, `X-Passman-Managed=true`, exactly one `Exec=`. After setting the original look the file is removed.
+* Expected file lines after setting `kerf` with `--xdg-data-home /abs/dir`: `Name=Kerf`, `Icon=/abs/dir/dev.habibullah.hexis/disguise/kerf.png`, `X-Hexis-Managed=true`, exactly one `Exec=`. After setting the original look the file is removed.
 * The shim still supports `--data-dir`, `--port`, `--fast-kdf`, `--fast-backup`.
 
 ### Q2: new dependency
 
-* New dependency: `png = "0.18.1"` (latest stable on crates.io when added; license MIT OR Apache-2.0; pure Rust, no system library, so Android builds stay possible; the crate has no default features, so there was nothing to switch off). Why: the window icon on desktop needs raw RGBA, and the presets ship as PNG; decoding them with the PNG crate (limit 8 MiB, RGBA8 only) avoids a second image stack. `Cargo.lock` gained one `"png"` line under passman's dependencies; the crate itself and its dependencies (`bitflags`, `crc32fast`, `fdeflate`, `flate2`, `miniz_oxide`) were already in the lock through Tauri, so the lock otherwise did not change (checked with a diff against the base copy). The orchestrator will regenerate the lock after merging anyway.
+* New dependency: `png = "0.18.1"` (latest stable on crates.io when added; license MIT OR Apache-2.0; pure Rust, no system library, so Android builds stay possible; the crate has no default features, so there was nothing to switch off). Why: the window icon on desktop needs raw RGBA, and the presets ship as PNG; decoding them with the PNG crate (limit 8 MiB, RGBA8 only) avoids a second image stack. `Cargo.lock` gained one `"png"` line under hexis's dependencies; the crate itself and its dependencies (`bitflags`, `crc32fast`, `fdeflate`, `flate2`, `miniz_oxide`) were already in the lock through Tauri, so the lock otherwise did not change (checked with a diff against the base copy). The orchestrator will regenerate the lock after merging anyway.
 * `scripts/crypto-harness.py` builds the whole crate and will therefore also build `png`; harmless.
 
 ## 2026-11-24: Q1 Stage 1 gate, wipe, panic, idle lock
@@ -249,20 +269,20 @@ not used), Apache-2.0 OR MIT, official Tauri plugin, mobile targets only (`[targ
 
 ## 2026-11-24: Q3 encrypted drive (50 MB)
 
-**Built and verified (tests, copy `passman-q3`):** streaming blob crypto (`crypto/stream.rs`, 22 tests: round trips at 0, 1, 1 MiB - 1, 1 MiB, 1 MiB + 1, 3 MiB + 7 and at the limit; a bit flipped in every region; swapped, dropped, duplicated, appended and moved chunks; wrong key; unique nonces; limit boundary 52,428,800 / 52,428,801 up front and while streaming; a source that grows or shrinks; cleanup after failures); storage (`storage/drive.rs`, `vault_drive.rs`, `session_drive.rs`, `app_drive.rs`; `files` table and outbox migration; 12 unit tests and 32 tests through `AppCore` incl. a 49.9 MB round trip, plaintext scan of `vault.db`/`-wal`/`-shm`/`attachments/*`, 0600 modes, re-prompts, trash rules, purge, lock/unlock/restart, lock during add, damaged blob and metadata, orphan sweep); commands `file_list/file_add/file_rename/file_delete/file_read/file_save_copy/screen_secure` (5 tests over the real IPC dispatch incl. raw bytes of 2.5 MiB and 0 bytes); S3 replication (`storage/backup/files_sync.rs`; 21 tests: in-memory buckets with fault injection, restore skip/count cases, and the real `S3Store` against `scripts/mock_s3.py`); schema migration tests (2 new in `db.rs`); e2e shim support and a scripted smoke run of it. Full suite 396 passed, 1 ignored (the existing KAT regenerator), `cargo fmt --check` and `clippy --all-targets -D warnings` clean. Existing tests changed: in `storage/db.rs` two `schema_version == 2` assertions now compare with `SCHEMA_VERSION` and the expected table list gained `files` (intended); no other existing test was touched.
+**Built and verified (tests, copy `hexis-q3`):** streaming blob crypto (`crypto/stream.rs`, 22 tests: round trips at 0, 1, 1 MiB - 1, 1 MiB, 1 MiB + 1, 3 MiB + 7 and at the limit; a bit flipped in every region; swapped, dropped, duplicated, appended and moved chunks; wrong key; unique nonces; limit boundary 52,428,800 / 52,428,801 up front and while streaming; a source that grows or shrinks; cleanup after failures); storage (`storage/drive.rs`, `vault_drive.rs`, `session_drive.rs`, `app_drive.rs`; `files` table and outbox migration; 12 unit tests and 32 tests through `AppCore` incl. a 49.9 MB round trip, plaintext scan of `vault.db`/`-wal`/`-shm`/`attachments/*`, 0600 modes, re-prompts, trash rules, purge, lock/unlock/restart, lock during add, damaged blob and metadata, orphan sweep); commands `file_list/file_add/file_rename/file_delete/file_read/file_save_copy/screen_secure` (5 tests over the real IPC dispatch incl. raw bytes of 2.5 MiB and 0 bytes); S3 replication (`storage/backup/files_sync.rs`; 21 tests: in-memory buckets with fault injection, restore skip/count cases, and the real `S3Store` against `scripts/mock_s3.py`); schema migration tests (2 new in `db.rs`); e2e shim support and a scripted smoke run of it. Full suite 396 passed, 1 ignored (the existing KAT regenerator), `cargo fmt --check` and `clippy --all-targets -D warnings` clean. Existing tests changed: in `storage/db.rs` two `schema_version == 2` assertions now compare with `SCHEMA_VERSION` and the expected table list gained `files` (intended); no other existing test was touched.
 **Not verified:** everything Android (the Kotlin plugin, the `cfg(target_os = "android")` Rust block, and the picker: the dialog plugin returns `content://` URIs there and `DialogPicker` rejects them with "That location cannot be used. Choose files on this device.", so adding or saving files on Android needs a reader/writer based picker that is **not built**); the production `DialogPicker::open_files` / `save_file` with a real desktop dialog (never opened here; only the trait wiring is covered by tests); timing of 50 MB in a release build (see the performance note); an upload of a 50 MB blob through the real S3 client (tests use 1-3 MiB files; the code path is the same streaming call).
 **Limits:** files from other devices appear after a restore, not by the unlock-time pull; the exact plaintext size is visible from the ciphertext length; one 50 MB request cannot be cancelled once started.
 
 ### Q3: e2e shim additions
 
-* All `file_*` commands and `screen_secure` go through `POST /ipc` like every other command. `file_read` answers the **raw bytes** with `Content-Type: application/octet-stream` and header `x-passman-binary: 1` (exposed to the page via `Access-Control-Expose-Headers`); errors stay `{"err": {code, message}}`.
-* `POST /e2e/pick-next {"paths": ["/abs/a", "/abs/b"]}` queues the answer of the **next** file dialog (an "add files" dialog receives all the paths, a "save a copy" dialog the first one); `{"paths": []}` queues a cancel; with nothing queued the add dialog is cancelled and the save dialogs fall back to `PASSMAN_E2E_SAVE_PATH`. Paths must be absolute (400 otherwise). Note: a queued answer stays queued until a dialog consumes it, and a re-prompt that fails (wrong password) never opens a dialog.
+* All `file_*` commands and `screen_secure` go through `POST /ipc` like every other command. `file_read` answers the **raw bytes** with `Content-Type: application/octet-stream` and header `x-hexis-binary: 1` (exposed to the page via `Access-Control-Expose-Headers`); errors stay `{"err": {code, message}}`.
+* `POST /e2e/pick-next {"paths": ["/abs/a", "/abs/b"]}` queues the answer of the **next** file dialog (an "add files" dialog receives all the paths, a "save a copy" dialog the first one); `{"paths": []}` queues a cancel; with nothing queued the add dialog is cancelled and the save dialogs fall back to `HEXIS_E2E_SAVE_PATH`. Paths must be absolute (400 otherwise). Note: a queued answer stays queued until a dialog consumes it, and a re-prompt that fails (wrong password) never opens a dialog.
 * `GET /e2e/last-saved` -> `{"ok": null}` or `{"ok": {"path", "suggestedName", "exists", "size", "contentBase64"}}` for the destination the most recent save dialog chose (content included up to 8 MiB).
 * Still supported: `--data-dir --port --fast-kdf --fast-backup`, `/e2e/picker`, `/e2e/opened`. Smoke script used to verify it: scripted end to end run through the built binary (add via pick-next, raw read, rename, save copy with mode 0600, wrong password, item attachment, 50 MB + 1 refusal, no plaintext on disk).
 
 ### Q3: performance note (dev builds)
 
-A 50 MiB encrypt + decrypt takes about 14 s in an unoptimized (`dev`/test) build on this machine; the 49.9 MB round-trip test therefore allows 240 s (it took 61 s once, with the whole suite running alongside). The brief's suggestion (`[profile.dev.package.<crate>] opt-level = 3` for `poly1305`, `cipher`, `universal-hash`, ...) does **not** help here: the generic AEAD code is instantiated inside the `passman` crate and compiled at the app's own opt-level (verified by trying it, then reverting). Two real fixes if dev speed matters: a small non-generic helper crate with `opt-level = 3` that exposes "seal chunk / open chunk", or `[profile.dev] opt-level = 1` for the `passman` crate. A release build was not built or timed here (rule: never `--release`); XChaCha20-Poly1305 in release mode is expected to be far faster, **UNVERIFIED**.
+A 50 MiB encrypt + decrypt takes about 14 s in an unoptimized (`dev`/test) build on this machine; the 49.9 MB round-trip test therefore allows 240 s (it took 61 s once, with the whole suite running alongside). The brief's suggestion (`[profile.dev.package.<crate>] opt-level = 3` for `poly1305`, `cipher`, `universal-hash`, ...) does **not** help here: the generic AEAD code is instantiated inside the `hexis` crate and compiled at the app's own opt-level (verified by trying it, then reverting). Two real fixes if dev speed matters: a small non-generic helper crate with `opt-level = 3` that exposes "seal chunk / open chunk", or `[profile.dev] opt-level = 1` for the `hexis` crate. A release build was not built or timed here (rule: never `--release`); XChaCha20-Poly1305 in release mode is expected to be far faster, **UNVERIFIED**.
 
 ## 2026-11-24: Q4 importer and plaintext exporter
 
@@ -271,7 +291,7 @@ A 50 MiB encrypt + decrypt takes about 14 s in an unoptimized (`dev`/test) build
 * **Freshness note for `zip`:** 9.8.2 was less than a day old when pinned (9.8.1 was 3 days old). It is the latest stable; if the orchestrator prefers a release that has had time in the wild, 9.8.1 is the alternative, but the importer's safety checks do not depend on the version (the member count is checked from the end-of-central-directory record before the crate builds its table, and every read is size-budgeted).
 * **KeePass key-derivation guard:** `keepass` 0.17.0 does not bound the Argon2 / AES-KDF cost a file asks for, so a crafted `.kdbx` could demand terabytes of memory. The importer reads the header first and refuses above 1 GiB of memory, 64 GiB-passes of work, 256 lanes, 2^20 iterations or 2^30 AES rounds (`This KeePass database asks for more memory or time to open than this device allows.`). Tested with crafted headers.
 
-**Verified (fresh runs 2026-11-24, in `passman-q4`):** `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`: 458 passed, 0 failed, 1 ignored (the pre-existing KAT fixture rewriter); 156 of those are Q4's (303 existed before). The shim `e2e_server_q4` was driven over loopback with curl: pick, preview, commit (5 added), second commit (all skipped), export to a 0600 file, refusal of a destination in the data folder, `Origin` and relative-path refusals.
+**Verified (fresh runs 2026-11-24, in `hexis-q4`):** `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`: 458 passed, 0 failed, 1 ignored (the pre-existing KAT fixture rewriter); 156 of those are Q4's (303 existed before). The shim `e2e_server_q4` was driven over loopback with curl: pick, preview, commit (5 added), second commit (all skipped), export to a 0600 file, refusal of a destination in the data folder, `Origin` and relative-path refusals.
 
 **Format table** (what each parser was written from and how it is tested):
 

@@ -13,7 +13,7 @@ const bucketKeys = () => walkFiles(S3_DATA).map((f) => { const n = f.slice(S3_DA
 
 let s3;
 async function startS3() {
-  s3 = spawn("python3", ["-I", `${ROOT}/scripts/mock_s3.py`, "--port", String(S3_PORT), "--bucket", "passman-test", "--access-key", "AKIAMOCK", "--secret-key", "mocksecret", "--region", "us-east-1", "--data-dir", S3_DATA], { stdio: ["ignore", "pipe", "pipe"] });
+  s3 = spawn("python3", ["-I", `${ROOT}/scripts/mock_s3.py`, "--port", String(S3_PORT), "--bucket", "hexis-test", "--access-key", "AKIAMOCK", "--secret-key", "mocksecret", "--region", "us-east-1", "--data-dir", S3_DATA], { stdio: ["ignore", "pipe", "pipe"] });
   for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${S3_PORT}/__mock/state`); return; } catch { await sleep(100); } }
   throw new Error("mock S3 did not start");
 }
@@ -21,7 +21,7 @@ async function fillTarget(p, { name }) {
   if (name) await p.typeLabel("Name", name);
   await p.click("button[aria-pressed]", "Other S3-compatible");
   await p.typeLabel("Endpoint", `http://127.0.0.1:${S3_PORT}`);
-  await p.typeLabel("Bucket", "passman-test"); await p.typeLabel("Region", "us-east-1");
+  await p.typeLabel("Bucket", "hexis-test"); await p.typeLabel("Region", "us-east-1");
   await p.typeLabel("Access key ID", "AKIAMOCK"); await p.typeLabel("Secret access key", "mocksecret");
   const pathStyle = await p.eval(`(()=>{const b=[...document.querySelectorAll('[role=switch]')].find(x=>x.getAttribute('aria-label')==='Path-style addressing'); return b? b.getAttribute('aria-checked')==='true': null})()`);
   if (pathStyle === false) await p.click('[role=switch][aria-label="Path-style addressing"]');
@@ -56,7 +56,7 @@ step("add a backup target: test, then save as the master", async (p) => {
 step("the bucket holds ciphertext only", async () => {
   const hits = scanFor(walkFiles(S3_DATA), ["Tr0ub4dor", "Zk9-plain", "marlowe-dev", "ops@marlowe", "GitHub", "Cloudflare", "mocksecret"]);
   check("no plaintext marker, title or secret key in any stored object", hits.length === 0, hits.join("; "));
-  const local = scanFor(walkFiles(DATA), ["mocksecret", "AKIAMOCK", "passman-test", "127.0.0.1"]);
+  const local = scanFor(walkFiles(DATA), ["mocksecret", "AKIAMOCK", "hexis-test", "127.0.0.1"]);
   check("the S3 credentials, bucket and endpoint are not readable on disk (sealed)", local.length === 0, local.join("; "));
 });
 
@@ -68,7 +68,7 @@ step("a failing bucket shows an honest state, then recovers on the next trigger"
   const t = await targetText(p);
   check("the failing target says so and counts the waiting change", /Not reaching|Catching up/.test(t) && /waiting/.test(t), t);
   const sentence = t.split("\n").find((l) => /refused|HTTP/.test(l)) ?? "";
-  check("the error sentence itself names no bucket, key or secret", sentence !== "" && !/passman-test|mocksecret|AKIAMOCK|127\.0\.0\.1/.test(sentence), sentence);
+  check("the error sentence itself names no bucket, key or secret", sentence !== "" && !/hexis-test|mocksecret|AKIAMOCK|127\.0\.0\.1/.test(sentence), sentence);
   await mock("/__mock/fail", { status: null });
   await btn(p, "Back up now");
   await p.waitFor(`(document.querySelector('ul[aria-label="Backup targets"]')?.innerText??'').includes('Up to date')`, { timeout: 20000 });

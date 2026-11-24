@@ -250,8 +250,8 @@ fn refused_choices_say_why_in_fixed_sentences() {
 
 #[test]
 fn applied_name_precedence_and_lowercase() {
-    assert_eq!(input(None, None, false).applied_name(), "Passman");
-    assert_eq!(input(None, None, true).applied_name(), "passman");
+    assert_eq!(input(None, None, false).applied_name(), "Hexis");
+    assert_eq!(input(None, None, true).applied_name(), "hexis");
     assert_eq!(input(Some("kerf"), None, false).applied_name(), "Kerf");
     assert_eq!(input(Some("kerf"), None, true).applied_name(), "kerf");
     assert_eq!(input(Some("kovren"), None, true).applied_name(), "kovren");
@@ -296,7 +296,7 @@ fn json_shapes_are_exactly_the_frontends() {
     let v = serde_json::to_value(DisguiseView::original()).unwrap();
     assert_eq!(
         v,
-        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Passman", "note": null})
+        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Hexis", "note": null})
     );
     let v = serde_json::to_value(input(None, Some("A"), false).view(Some("hello".into()))).unwrap();
     assert_eq!(v["note"], "hello");

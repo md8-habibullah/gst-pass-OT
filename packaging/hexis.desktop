@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Passman
+Name=Hexis
 Comment=Post-quantum zero-knowledge password vault
-Exec=passman
-Icon=passman
+Exec=hexis
+Icon=hexis
 Terminal=false
 Categories=Utility;Security;
-StartupWMClass=passman
+StartupWMClass=hexis

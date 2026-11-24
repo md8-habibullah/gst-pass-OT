@@ -161,8 +161,8 @@ pub const MAX_IMPORT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Structural check of a file somebody offers as a vault, **without any password** and without
 /// letting SQLite parse it yet: it must be a regular file, start with the SQLite magic, and carry
-/// Passman's `application_id` and a schema version this build understands. A file written by a
-/// newer Passman says so instead of calling itself foreign.
+/// Hexis's `application_id` and a schema version this build understands. A file written by a
+/// newer Hexis says so instead of calling itself foreign.
 pub fn check_vault_header(path: &Path) -> Result<()> {
     let meta = std::fs::metadata(path)
         .map_err(|_| unsupported("That file could not be read. Check that it still exists."))?;
@@ -170,26 +170,26 @@ pub fn check_vault_header(path: &Path) -> Result<()> {
         return Err(unsupported("Choose a vault file, not a folder."));
     }
     if meta.len() > MAX_IMPORT_BYTES {
-        return Err(unsupported("That file is too large to be a Passman vault."));
+        return Err(unsupported("That file is too large to be a vault."));
     }
     let mut head = [0u8; 100];
     let mut f = File::open(path)
         .map_err(|_| unsupported("That file could not be read. Check that it still exists."))?;
     if f.read_exact(&mut head).is_err() || &head[..16] != b"SQLite format 3\0" {
         return Err(unsupported(
-            "That file is not a Passman vault file (it is not a database at all).",
+            "That file is not a vault file (it is not a database at all).",
         ));
     }
     let user_version = i64::from(i32::from_be_bytes([head[60], head[61], head[62], head[63]]));
     let app_id = i64::from(i32::from_be_bytes([head[68], head[69], head[70], head[71]]));
     if app_id != APPLICATION_ID {
         return Err(unsupported(
-            "That file is a database, but not a Passman vault.",
+            "That file is a database, but not a vault this app can open.",
         ));
     }
     if user_version > SCHEMA_VERSION {
         return Err(unsupported(
-            "That vault was saved by a newer version of Passman. Update the app to import it.",
+            "That vault was saved by a newer version of this app. Update the app to import it.",
         ));
     }
     if user_version < 1 {
@@ -225,7 +225,7 @@ pub fn ymd_utc(ms: u64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// `<display name>-<yyyy-mm-dd>.passman`, with characters that file systems dislike replaced.
+/// `<display name>-<yyyy-mm-dd>.hexis`, with characters that file systems dislike replaced.
 pub fn suggested_export_name(display_name: &str, now_ms: u64) -> String {
     let cleaned: String = display_name
         .chars()
@@ -240,7 +240,7 @@ pub fn suggested_export_name(display_name: &str, now_ms: u64) -> String {
     let cleaned = cleaned.trim().trim_matches('.');
     let base = if cleaned.is_empty() { "vault" } else { cleaned };
     let (y, m, d) = ymd_utc(now_ms);
-    format!("{base}-{y:04}-{m:02}-{d:02}.passman")
+    format!("{base}-{y:04}-{m:02}-{d:02}.hexis")
 }
 
 /// Test double for the native dialogs: hands back whatever path a test set (or "cancelled"), and
@@ -342,16 +342,13 @@ mod tests {
     fn export_names_are_safe() {
         assert_eq!(
             suggested_export_name("Work", 1_732_320_000_000),
-            "Work-2024-11-23.passman"
+            "Work-2024-11-23.hexis"
         );
         assert_eq!(
             suggested_export_name("a/b\\c:d*e", 0),
-            "a_b_c_d_e-1970-01-01.passman"
+            "a_b_c_d_e-1970-01-01.hexis"
         );
-        assert_eq!(
-            suggested_export_name("  ..  ", 0),
-            "vault-1970-01-01.passman"
-        );
+        assert_eq!(suggested_export_name("  ..  ", 0), "vault-1970-01-01.hexis");
     }
 
     #[test]
@@ -380,12 +377,12 @@ mod tests {
     fn inside_check_resolves_links_and_missing_files() {
         let dir = tempfile::tempdir().unwrap();
         let other = tempfile::tempdir().unwrap();
-        assert!(is_inside(dir.path(), &dir.path().join("x.passman")));
-        assert!(!is_inside(dir.path(), &other.path().join("x.passman")));
+        assert!(is_inside(dir.path(), &dir.path().join("x.hexis")));
+        assert!(!is_inside(dir.path(), &other.path().join("x.hexis")));
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(dir.path(), other.path().join("link")).unwrap();
-            assert!(is_inside(dir.path(), &other.path().join("link/z.passman")));
+            assert!(is_inside(dir.path(), &other.path().join("link/z.hexis")));
         }
     }
 
@@ -402,7 +399,7 @@ mod tests {
         head[..16].copy_from_slice(b"SQLite format 3\0");
         let foreign = dir.path().join("f");
         std::fs::write(&foreign, head).unwrap();
-        assert!(msg(&foreign).contains("not a Passman vault"));
+        assert!(msg(&foreign).contains("not a vault"));
         let mut newer = head;
         newer[68..72].copy_from_slice(&(APPLICATION_ID as i32).to_be_bytes());
         newer[60..64].copy_from_slice(&((SCHEMA_VERSION + 1) as i32).to_be_bytes());

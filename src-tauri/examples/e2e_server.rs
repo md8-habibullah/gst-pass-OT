@@ -3,7 +3,7 @@
 //! desktop window.
 //!
 //! ```text
-//! cargo run --example e2e_server -- --data-dir /tmp/passman-e2e --port 1432 --fast-kdf
+//! cargo run --example e2e_server -- --data-dir /tmp/hexis-e2e --port 1432 --fast-kdf
 //! ```
 //!
 //! * `POST /ipc` with `{"cmd": "item_list", "args": {...}}` runs the command through Tauri's
@@ -40,12 +40,12 @@
 //!   (`gate_*`, `app_reset`, `app_settings_*`, `activity_ping`) is served like every other
 //!   command; with the gate off nothing changes. A wipe here only ever touches `--data-dir`.
 //! * Encrypted drive (`file_*`): `file_read` answers the file's raw bytes with
-//!   `Content-Type: application/octet-stream` and the header `x-passman-binary: 1` (errors keep the
+//!   `Content-Type: application/octet-stream` and the header `x-hexis-binary: 1` (errors keep the
 //!   normal JSON `{err}` shape). The native pickers of `file_add` and `file_save_copy` are driven
 //!   by `POST /e2e/pick-next` with `{"paths": ["/abs/a", "/abs/b"]}`: the next dialog (an "add
 //!   files" dialog gets all the paths, a "save a copy" dialog the first one) answers with that
 //!   entry; `{"paths": []}` cancels it; with nothing queued every dialog is cancelled (the save
-//!   dialogs then fall back to `PASSMAN_E2E_SAVE_PATH`). `GET /e2e/last-saved` answers
+//!   dialogs then fall back to `HEXIS_E2E_SAVE_PATH`). `GET /e2e/last-saved` answers
 //!   `{"ok": null}` or `{"ok": {"path", "suggestedName", "exists", "size", "contentBase64"}}` for
 //!   the file the most recent save dialog chose, a copy of a drive file or a plaintext export
 //!   (content only up to 8 MiB). `pick-next` takes `{"paths": [...]}` or the one-file `{"path": ...}`.
@@ -56,21 +56,21 @@
 //! * a request that carries an `Origin` must come from `http://localhost:1431` or
 //!   `http://127.0.0.1:1431` (the e2e UI dev server) and is the only origin CORS ever allows;
 //!   `POST` needs `Content-Type: application/json`, so other web pages cannot even send one;
-//! * refuses to start on the real app data folder (`~/.local/share/app.passman.vault`), on any
+//! * refuses to start on the real app data folder (`~/.local/share/dev.habibullah.hexis`), on any
 //!   folder containing or inside it, and on any non-empty folder it did not create itself;
-//! * the native file dialogs are replaced by two environment variables, `PASSMAN_E2E_OPEN_PATH`
-//!   (file to import) and `PASSMAN_E2E_SAVE_PATH` (where to export), read again on every call;
+//! * the native file dialogs are replaced by two environment variables, `HEXIS_E2E_OPEN_PATH`
+//!   (file to import) and `HEXIS_E2E_SAVE_PATH` (where to export), read again on every call;
 //!   unset or empty means "the dialog was cancelled". The importer's three dialogs do not read
 //!   them; they use the `POST /e2e/pick-next` queue described above. Neither route can reach the
 //!   app's own data folder: `export_plain` refuses a destination inside it.
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use passman_lib::commands::{invoke_handler, AppState};
-use passman_lib::crypto::KdfParams;
-use passman_lib::disguise::desktop::{exec_target, wm_class_of, LauncherFiles};
-use passman_lib::disguise::{DisguiseView, Launcher, PresetAssets, RecordingLauncher};
-use passman_lib::storage::{
+use hexis_lib::commands::{invoke_handler, AppState};
+use hexis_lib::crypto::KdfParams;
+use hexis_lib::disguise::desktop::{exec_target, wm_class_of, LauncherFiles};
+use hexis_lib::disguise::{DisguiseView, Launcher, PresetAssets, RecordingLauncher};
+use hexis_lib::storage::{
     AppCore, BackupRuntime, FilePicker, RecordingOpener, SessionConfig, StorageError, Timing,
 };
 use serde_json::{json, Value};
@@ -89,9 +89,9 @@ use tauri::{WebviewWindow, WebviewWindowBuilder};
 
 const DEFAULT_PORT: u16 = 1432;
 const ALLOWED_ORIGINS: [&str; 2] = ["http://localhost:1431", "http://127.0.0.1:1431"];
-const OPEN_VAR: &str = "PASSMAN_E2E_OPEN_PATH";
-const SAVE_VAR: &str = "PASSMAN_E2E_SAVE_PATH";
-const MARKER: &str = ".passman-e2e";
+const OPEN_VAR: &str = "HEXIS_E2E_OPEN_PATH";
+const SAVE_VAR: &str = "HEXIS_E2E_SAVE_PATH";
+const MARKER: &str = ".hexis-e2e";
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Most paths one `pick-next` entry may carry (the drive accepts 100 files per add).
@@ -256,10 +256,10 @@ fn resolved(path: &Path) -> PathBuf {
 fn real_data_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(x) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        out.push(PathBuf::from(x).join("app.passman.vault"));
+        out.push(PathBuf::from(x).join("dev.habibullah.hexis"));
     }
     if let Some(h) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
-        out.push(PathBuf::from(h).join(".local/share/app.passman.vault"));
+        out.push(PathBuf::from(h).join(".local/share/dev.habibullah.hexis"));
     }
     out
 }
@@ -267,16 +267,16 @@ fn real_data_dirs() -> Vec<PathBuf> {
 fn check_data_dir(dir: &Path) -> Result<(), String> {
     if dir
         .components()
-        .any(|c| c.as_os_str() == "app.passman.vault")
+        .any(|c| c.as_os_str() == "dev.habibullah.hexis")
     {
-        return Err("refusing: that path names the real Passman data folder".into());
+        return Err("refusing: that path names the real Hexis data folder".into());
     }
     let mine = resolved(dir);
     for real in real_data_dirs() {
         let real = resolved(&real);
         if mine.starts_with(&real) || real.starts_with(&mine) {
             return Err(format!(
-                "refusing: {} is, contains or lies inside the real Passman data folder",
+                "refusing: {} is, contains or lies inside the real Hexis data folder",
                 mine.display()
             ));
         }
@@ -297,7 +297,7 @@ fn check_data_dir(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     std::fs::write(
         dir.join(MARKER),
-        "created by passman examples/e2e_server.rs; safe to delete\n",
+        "created by hexis examples/e2e_server.rs; safe to delete\n",
     )
     .map_err(|e| format!("cannot write into {}: {e}", dir.display()))
 }
@@ -338,7 +338,7 @@ fn check_xdg_data_home(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     std::fs::write(
         dir.join(MARKER),
-        "created by passman examples/e2e_server.rs; safe to delete\n",
+        "created by hexis examples/e2e_server.rs; safe to delete\n",
     )
     .map_err(|e| format!("cannot write into {}: {e}", dir.display()))
 }
@@ -377,7 +377,7 @@ fn app_identifier() -> String {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
-        .unwrap_or_else(|| "app.passman.vault".to_string())
+        .unwrap_or_else(|| "dev.habibullah.hexis".to_string())
 }
 
 fn shim_launcher(
@@ -445,7 +445,7 @@ fn build_backend(
         .with_launcher(Arc::new(shim_launcher(launcher.clone(), xdg_data_home)?));
     if fast_backup {
         core = core.with_backup_runtime(BackupRuntime::new(
-            Arc::new(passman_lib::storage::backup::remote::S3Factory),
+            Arc::new(hexis_lib::storage::backup::remote::S3Factory),
             fast_backup_timing(),
         ));
     }
@@ -600,18 +600,18 @@ fn respond(stream: &mut TcpStream, status: &str, cors_origin: Option<&str>, body
     let _ = stream.flush();
 }
 
-/// A raw binary answer: the bytes, `application/octet-stream` and `x-passman-binary: 1` (which a
+/// A raw binary answer: the bytes, `application/octet-stream` and `x-hexis-binary: 1` (which a
 /// page may read across origins).
 fn respond_raw(stream: &mut TcpStream, cors_origin: Option<&str>, bytes: &[u8]) {
     // a large file takes longer than the 5 s of the small JSON answers
     let _ = stream.set_write_timeout(Some(Duration::from_secs(120)));
     let mut head = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nx-passman-binary: 1\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nx-hexis-binary: 1\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n",
         bytes.len()
     );
     if let Some(origin) = cors_origin {
         head.push_str(&format!(
-            "Access-Control-Allow-Origin: {origin}\r\nVary: Origin\r\nAccess-Control-Expose-Headers: x-passman-binary\r\n"
+            "Access-Control-Allow-Origin: {origin}\r\nVary: Origin\r\nAccess-Control-Expose-Headers: x-hexis-binary\r\n"
         ));
     }
     head.push_str("\r\n");
@@ -851,7 +851,7 @@ fn main() {
         }
     };
     println!(
-        "passman e2e shim on http://127.0.0.1:{} (data: {}, kdf: {})\nDEV ONLY. Ctrl+C to stop.",
+        "hexis e2e shim on http://127.0.0.1:{} (data: {}, kdf: {})\nDEV ONLY. Ctrl+C to stop.",
         opts.port,
         opts.data_dir.display(),
         if opts.fast_kdf {

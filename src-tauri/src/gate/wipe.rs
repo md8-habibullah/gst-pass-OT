@@ -5,7 +5,7 @@
 //! 0. **Pre-flight**, with nothing touched: the folder must be absolute, must not be `/`, a drive
 //!    root, a user's home or a parent of it, none of the known names may be a link or anything but
 //!    a plain file or folder, and when the app believes it holds data the folder must look like
-//!    a Passman data folder.
+//!    a Hexis data folder.
 //! 1. **Cryptographic erase first.** For every vault file the key bundle row is overwritten with
 //!    zero bytes, the WAL is checkpointed with `TRUNCATE` and the file is fsynced. From that moment
 //!    nothing in the vault can be opened again (there is no key material to unlock), even if
@@ -13,7 +13,7 @@
 //! 2. Every known file is **overwritten with zeros** in chunks, fsynced, truncated and unlinked.
 //! 3. The emptied known folders are removed (a folder that still holds unknown files stays).
 //!
-//! It deletes **only known Passman paths** under the folder it is given; it never calls
+//! It deletes **only known Hexis paths** under the folder it is given; it never calls
 //! `remove_dir_all`; files it does not know are left alone and listed in the report. It is
 //! idempotent and keeps going after an error on one file. Remote S3 copies are never touched.
 //!
@@ -31,7 +31,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Files of the data folder itself that belong to Passman (exact names; each may also exist with
+/// Files of the data folder itself that belong to Hexis (exact names; each may also exist with
 /// the temp suffix the atomic writer uses).
 const TOP_FILES: [&str; 4] = [
     REGISTRY_FILE,
@@ -51,7 +51,7 @@ pub struct WipePlan {
     /// The registry lists the adopted single-vault-era `vault.db` in the data folder itself.
     pub legacy_registered: bool,
     /// The app believes it holds data (accounts, or the gate is on). Then a folder with no
-    /// Passman marker at all is refused instead of treated as already clean.
+    /// Hexis marker at all is refused instead of treated as already clean.
     pub expect_data: bool,
 }
 
@@ -83,10 +83,10 @@ impl WipeObserver for NoObserver {
 pub enum Refused {
     NotAbsolute,
     TooBroad,
-    /// A known Passman name is a link, or not a plain file or folder.
+    /// A known Hexis name is a link, or not a plain file or folder.
     UnsafeName(PathBuf),
-    /// The app holds data but the folder shows no sign of Passman.
-    NotPassmanData,
+    /// The app holds data but the folder shows no sign of Hexis.
+    NotHexisData,
     Unreadable,
 }
 
@@ -106,7 +106,7 @@ pub struct WipeReport {
     pub errors: Vec<WipeError>,
     /// An observer stopped the wipe early.
     pub aborted: bool,
-    /// There was nothing of Passman's in the folder.
+    /// There was nothing of Hexis's in the folder.
     pub nothing_to_do: bool,
 }
 
@@ -368,7 +368,7 @@ pub fn shred_file(path: &Path) -> Result<(), &'static str> {
     }
 }
 
-/// Wipe the known Passman files and folders under `dir`. See the module documentation.
+/// Wipe the known Hexis files and folders under `dir`. See the module documentation.
 pub fn secure_wipe_all_local_data(
     dir: &Path,
     plan: &WipePlan,
@@ -395,7 +395,7 @@ pub fn secure_wipe_all_local_data(
     let nothing = layout.files.is_empty() && layout.dirs.is_empty();
     if !layout.marker {
         if plan.expect_data {
-            return Err(Refused::NotPassmanData);
+            return Err(Refused::NotHexisData);
         }
         if nothing {
             return Ok(WipeReport {
@@ -608,7 +608,10 @@ mod tests {
             Some(p("/home/ana"))
         ));
         assert!(!too_broad(p("/tmp/.tmp123"), Some(p("/home/ana"))));
-        assert!(!too_broad(p("/data/user/0/app.passman.vault/files"), None));
+        assert!(!too_broad(
+            p("/data/user/0/dev.habibullah.hexis/files"),
+            None
+        ));
     }
 
     #[test]
@@ -624,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_that_does_not_look_like_passman_data_is_refused_untouched() {
+    fn a_folder_that_does_not_look_like_hexis_data_is_refused_untouched() {
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("holiday.jpg"), b"photo");
         write(&dir.path().join("notes/todo.txt"), b"todo");
@@ -633,7 +636,7 @@ mod tests {
             expect_data: true,
             ..WipePlan::default()
         };
-        assert_eq!(run(dir.path(), &plan).unwrap_err(), Refused::NotPassmanData);
+        assert_eq!(run(dir.path(), &plan).unwrap_err(), Refused::NotHexisData);
         assert_eq!(names(dir.path()), before, "nothing was touched");
         // Without the belief that data exists there is nothing of ours to delete: still nothing
         // is removed.
@@ -924,7 +927,7 @@ mod tests {
     }
 
     #[test]
-    fn the_legacy_vault_in_the_data_folder_is_only_ours_when_registered_or_a_passman_file() {
+    fn the_legacy_vault_in_the_data_folder_is_only_ours_when_registered_or_a_hexis_file() {
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("vault.db"), b"someone else's database");
         write(&dir.path().join("vault.db-wal"), b"someone else's wal");

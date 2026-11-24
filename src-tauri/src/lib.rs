@@ -1,4 +1,4 @@
-//! Passman core library: post-quantum, zero-knowledge vault.
+//! Hexis core library: post-quantum, zero-knowledge vault.
 //!
 //! * [`crypto`]: Phase 1, the cryptographic core (verified in isolation, see `ai-docs/CRYPTO_SPEC.md`)
 //! * [`storage`]: Phase 2, local SQLite storage, version history, trash, accounts (`ai-docs/STORAGE_AND_SYNC.md`)
@@ -55,6 +55,8 @@ pub fn run() {
             // Linux: ~/.local/share/<identifier>/ holds profiles.json and vaults/<id>/vault.db
             // (plus a single-vault-era vault.db, adopted in place); Android: the app-private dir.
             let dir = app.path().app_data_dir()?;
+            // A build made before the final name kept its data under the previous bundle identifier: adopt it.
+            storage::legacy::adopt_previous_folder(&dir, &app.config().identifier);
             let picker = std::sync::Arc::new(commands::DialogPicker::new(app.handle().clone()));
             let opener = std::sync::Arc::new(commands::PluginOpener::new(app.handle().clone()));
             let state = commands::prepare_state(&dir, picker, opener)?;
@@ -70,7 +72,7 @@ pub fn run() {
         .on_window_event(on_window_event)
         .invoke_handler(commands::invoke_handler())
         .build(tauri::generate_context!())
-        .expect("error while building Passman")
+        .expect("error while building Hexis")
         .run(|app, event| {
             // However the app ends, the open vault is locked first: the keys are zeroized and the
             // sync worker is stopped (the event loop may exit the process without running the

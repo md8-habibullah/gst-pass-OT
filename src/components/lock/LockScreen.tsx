@@ -18,9 +18,10 @@ type Flow = LockFlow | null;
 
 /** The three ways to get a vault onto this device. Shown on first run and from "Add account". */
 function AddChoices({ onChoose, first }: { onChoose: (f: LockFlow) => void; first: boolean }) {
+  const brandName = useStore(brand, (b) => b.name);
   const rows: { flow: LockFlow; icon: ReactNode; title: string; text: string }[] = [
     { flow: "create", icon: <ShieldPlus className="size-5" />, title: "Create a new vault", text: "Pick a name and a master password. You can set up backups right after." },
-    { flow: "import", icon: <FileLock2 className="size-5" />, title: "Open a vault file", text: "Add a vault you exported from Passman on another device." },
+    { flow: "import", icon: <FileLock2 className="size-5" />, title: "Open a vault file", text: `Add a vault you exported from ${brandName} on another device.` },
     { flow: "restore", icon: <CloudDownload className="size-5" />, title: "Restore from a backup", text: "Download your vault from an S3 bucket you backed up to." },
   ];
   return (

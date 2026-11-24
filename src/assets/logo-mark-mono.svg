@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="hx-t">
+  <title id="hx-t">Hexis</title>
+  <!-- One colour (currentColor), no gradients: for a single-ink context. The upper layer is solid, the lower layer is outlined. -->
+  <g transform="translate(-6 4)" fill="currentColor">
+    <rect x="40" y="48" width="44" height="160"/>
+    <polygon points="40,48 84,48 96,40 52,40"/>
+    <polygon points="84,48 96,40 96,200 84,208" fill-opacity="0.55"/>
+    <rect x="172" y="48" width="44" height="160"/>
+    <polygon points="172,48 216,48 228,40 184,40"/>
+    <polygon points="216,48 228,40 228,200 216,208" fill-opacity="0.55"/>
+    <polygon points="84,84 172,68 172,108 84,124"/>
+    <polygon points="84,140 172,124 172,160 84,176" fill-opacity="0.55"/>
+  </g>
+</svg>

@@ -20,7 +20,7 @@ export function getBackend(): Promise<Backend> {
       if (Number.isInteger(port) && port > 0) return (await import("./http")).httpBackend(port);
       return (await import("./mock")).previewBackend;
     }
-    throw new Error("Passman must run inside its desktop or Android shell.");
+    throw new Error("The app must run inside its desktop or Android shell.");
   })();
   return cached;
 }

@@ -1,6 +1,6 @@
 # Code of conduct
 
-Passman is a small security project. People here are trusted with other people's secrets, so we keep the space
+Hexis is a small security project. People here are trusted with other people's secrets, so we keep the space
 calm, honest and respectful.
 
 ## What we expect

@@ -35,7 +35,7 @@ const blank = (provider: Provider): BackupTargetInput => ({
   endpoint: provider.endpoint,
   region: provider.region,
   bucket: "",
-  prefix: "passman/",
+  prefix: "hexis/",
   accessKeyId: "",
   secretAccessKey: "",
   pathStyle: provider.pathStyle,
@@ -158,7 +158,7 @@ export function TargetForm({ mode, initial, submitLabel, onSubmit, onCancel, can
 
       <div className="grid gap-4 min-[480px]:grid-cols-2">
         <Field label="Bucket" error={show("bucket")}>
-          {({ id, describedBy, invalid }) => <TextInput id={id} value={v.bucket} invalid={invalid} aria-describedby={describedBy} onChange={(e) => set("bucket", e.target.value)} placeholder="my-passman-backups" />}
+          {({ id, describedBy, invalid }) => <TextInput id={id} value={v.bucket} invalid={invalid} aria-describedby={describedBy} onChange={(e) => set("bucket", e.target.value)} placeholder="my-hexis-backups" />}
         </Field>
         <Field label="Region" error={show("region")}>
           {({ id, describedBy, invalid }) => <TextInput id={id} value={v.region} invalid={invalid} aria-describedby={describedBy} onChange={(e) => set("region", e.target.value)} />}

@@ -519,7 +519,7 @@ impl ItemPayload {
     pub fn check(&self, expected_id: &str) -> Result<()> {
         if self.schema != SCHEMA {
             return Err(StorageError::Storage(
-                "This item was saved by a newer version of Passman.".into(),
+                "This item was saved by a newer version of this app.".into(),
             ));
         }
         if self.id != expected_id {

@@ -58,11 +58,18 @@ an operation performed on that object. A future suite change bumps `v` and adds 
 
 ```
 derive_subkey(root, label, context) =
-  HKDF-SHA512( salt = "passman/v1/hkdf",  ikm = root (32 B),
+  HKDF-SHA512( salt = "passman/v1/hkdf",  ikm = root (32 B),   (frozen label, see the note below)
                info = "passman/v1" 0x00 label 0x00 context )  →  32 bytes
 ```
 
 `label` is a fixed enum, `context` is a validated id (`[A-Za-z0-9_.:-]{1,64}`, no NUL) or empty.
+
+**Frozen identifiers.** The product was first built under a working name, and that name is part of three stored-format
+constants: the HKDF salt and info prefix above (`passman/v1/...`, also in §6 and §9), the gate's counter MAC salt
+(`passman/gate/v1`) and the SQLite `application_id` `PMV1`. They are domain-separation and file-type constants, not
+branding. Renaming them would change every derived key and make every existing vault unreadable, so they stay as they are
+under the product name Hexis; the known-answer vectors and the independent Python check pin them. Changing one is a format
+change (version bump and migration), never a rename.
 
 | Label        | Root         | Context        | Used for |
 |--------------|--------------|----------------|----------|
@@ -214,7 +221,7 @@ file_key = derive_subkey(VaultRootKey, Attachment, <file uuid>)            (sect
 meta_key = derive_subkey(VaultRootKey, Meta, "file-<uuid>")                 (the envelope object id is "file-<uuid>")
 ```
 
-*Deviation from the brief:* the brief asked for HKDF-SHA256 with `info = "passman/file/v1" || uuid`. The `attachment` label already exists in section 5 (and in the KAT harness), so the file key uses the one existing derivation instead of adding a second KDF construction. Same properties: per-file key, domain separated from items, versions and metadata.
+*Deviation from the brief:* the brief asked for HKDF-SHA256 with `info = "hexis/file/v1" || uuid`. The `attachment` label already exists in section 5 (and in the KAT harness), so the file key uses the one existing derivation instead of adding a second KDF construction. Same properties: per-file key, domain separated from items, versions and metadata.
 
 **Blob format (PMDF v1).**
 

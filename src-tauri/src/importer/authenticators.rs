@@ -2,7 +2,7 @@
 //! links, and Google Authenticator's `otpauth-migration://` export links.
 //!
 //! Every account becomes a `totp` item. Counter-based (HOTP), Steam and Yandex codes cannot be
-//! computed by Passman and are counted as skipped with a reason. Encrypted Aegis and 2FAS
+//! computed by Hexis and are counted as skipped with a reason. Encrypted Aegis and 2FAS
 //! exports are refused with the standard sentence.
 
 use super::entry::{EntryKind, ImportedEntry};
@@ -18,7 +18,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-const SKIP_KIND: &str = "it is a counter-based, Steam or Yandex code, which Passman cannot compute";
+const SKIP_KIND: &str =
+    "it is a counter-based, Steam or Yandex code, which this app cannot compute";
 const SKIP_SECRET: &str = "its secret key could not be read";
 
 fn title_of(issuer: &str, account: &str) -> String {

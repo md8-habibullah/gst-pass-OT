@@ -8,7 +8,7 @@
 //! Rules this file keeps:
 //!
 //! * The entry is only ever written or deleted **if it is ours**: an existing file without the
-//!   `X-Passman-Managed=true` line is somebody else's and is left alone (the write is refused, the
+//!   `X-Hexis-Managed=true` line is somebody else's and is left alone (the write is refused, the
 //!   delete is skipped).
 //! * Only two paths are ever written or removed: the entry, and files of ours named `<preset id>.png`
 //!   or `original.png` inside the `disguise` icon folder (that folder itself goes when it is empty).
@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod tests;
 
-/// The line that marks an entry as written by Passman.
-pub const MARKER_LINE: &str = "X-Passman-Managed=true";
+/// The line that marks an entry as written by Hexis.
+pub const MARKER_LINE: &str = "X-Hexis-Managed=true";
 /// Icon file used when only the name was changed (the original look keeps its own icon).
 pub const ORIGINAL_ICON_FILE: &str = "original.png";
 const ICON_DIR_NAME: &str = "disguise";
@@ -59,7 +59,7 @@ fn io_failed() -> StorageError {
 
 fn foreign_in_the_way() -> StorageError {
     StorageError::Storage(
-        "A launcher entry that Passman did not create is already in the way, so it was left as it is."
+        "A launcher entry that this app did not create is already in the way, so it was left as it is."
             .into(),
     )
 }
@@ -296,7 +296,7 @@ pub fn spawn_refresh(program: &str, dir: &Path) -> bool {
 // ------------------------------------------------------------------ removal
 
 /// Remove the launcher entry and the disguise icons, ignoring absence. An entry that is not ours
-/// (no `X-Passman-Managed=true` line) is left alone, and so is every file in the icon folder
+/// (no `X-Hexis-Managed=true` line) is left alone, and so is every file in the icon folder
 /// that this module did not write. Returns [`Effect::Removed`] when something was deleted.
 pub fn remove_launcher_entry(data_home: &Path, identifier: &str) -> Result<Effect> {
     if !valid_identifier(identifier) {
@@ -437,7 +437,7 @@ impl LauncherFiles {
     }
 
     /// Make the launcher match `view`: the original look (no icon, no name of their own, no
-    /// lower-casing) removes the entry, so no second "Passman" appears next to the one a package
+    /// lower-casing) removes the entry, so no second "Hexis" appears next to the one a package
     /// installed; every other look writes it. The desktop database is refreshed afterwards when
     /// something changed.
     pub fn sync(&self, view: &DisguiseView, preset: Option<&PresetAssets>) -> Result<Effect> {

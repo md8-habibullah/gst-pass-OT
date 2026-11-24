@@ -92,8 +92,10 @@ pub mod secure_screen {
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
         Builder::new("secure-screen")
             .setup(|app, api| {
-                let handle =
-                    api.register_android_plugin("app.passman.securescreen", "SecureScreenPlugin")?;
+                let handle = api.register_android_plugin(
+                    "dev.habibullah.hexis.securescreen",
+                    "SecureScreenPlugin",
+                )?;
                 app.manage(SecureScreen(handle));
                 Ok(())
             })

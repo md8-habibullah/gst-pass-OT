@@ -33,7 +33,7 @@ What it does, from assets/disguise/presets.json (the single source of truth for 
 
 It never GRANTS the app a permission (no notifications, no foreground service). It does add two removal markers to the
 manifest: `<uses-permission android:name="android.permission.VIBRATE" tools:node="remove"/>` (the QR-scanner plugin declares
-it for a command Passman never uses) and `<uses-feature android:name="android.hardware.camera.any" android:required="false"
+it for a command Hexis never uses) and `<uses-feature android:name="android.hardware.camera.any" android:required="false"
 tools:node="replace"/>` (the scan has a typed-key alternative, so the app must stay installable without a camera).
 
 Limits that no script can lift: a launcher label is a static resource, so a free-text custom name
@@ -62,7 +62,7 @@ ANDROID_NS = "http://schemas.android.com/apk/res/android"
 A = "{%s}" % ANDROID_NS
 TOOLS_NS = "http://schemas.android.com/tools"
 T = "{%s}" % TOOLS_NS
-# Permissions that a library adds to the merged manifest and that Passman never uses: removed with tools:node="remove".
+# Permissions that a library adds to the merged manifest and that Hexis never uses: removed with tools:node="remove".
 # (The barcode-scanner plugin declares VIBRATE for a vibrate command that is not granted to the app.)
 UNUSED_PERMISSIONS = ("android.permission.VIBRATE",)
 # The camera is optional: the QR scan has a typed-key alternative, so the app must stay installable on devices without one.
@@ -272,7 +272,7 @@ def app_label(layout: Layout) -> str:
                 return (s.text or "").strip().replace("\\'", "'").replace('\\"', '"')
     except (OSError, ET.ParseError):
         pass
-    return "Passman"
+    return "Hexis"
 
 
 # ------------------------------------------------------------------ manifest
@@ -439,7 +439,7 @@ def patch_manifest(root: ET.Element, presets: list[Preset]) -> tuple[list[str], 
             anchor = elem
             changes.append(f"add <activity-alias> {name}")
 
-    # 4. permissions and features that libraries add but that Passman does not need (removal markers, never a grant)
+    # 4. permissions and features that libraries add but that Hexis does not need (removal markers, never a grant)
     ET.register_namespace("tools", TOOLS_NS)
     root_nl = child_nl[: -len(unit)] if child_nl.endswith(unit) else "\n    "  # newline + the indentation of <application> itself
     anchor_el = application
@@ -453,7 +453,7 @@ def patch_manifest(root: ET.Element, presets: list[Preset]) -> tuple[list[str], 
         else:
             elem = ET.Element("uses-permission", {A + "name": perm, T + "node": "remove"})
             _insert_before(root, anchor_el, elem, root_nl)
-        changes.append(f"remove the {perm.rsplit('.', 1)[-1]} permission that a library adds (Passman never uses it)")
+        changes.append(f"remove the {perm.rsplit('.', 1)[-1]} permission that a library adds (Hexis never uses it)")
     for feat in OPTIONAL_FEATURES:
         have = [e for e in root.findall("uses-feature") if e.get(A + "name") == feat]
         if any(e.get(A + "required") == "false" and e.get(T + "node") == "replace" for e in have):

@@ -57,8 +57,8 @@ pub fn probe_config(runtime: &BackupRuntime, cfg: &TargetConfig) -> ProbeReport 
 }
 
 const MSG_STRONG: &str = "Connected. The storage service enforces safe (conditional) writes.";
-const MSG_WEAK: &str = "Connected, but this storage service ignores conditional writes. Passman checks before it overwrites, so use one device at a time.";
-const MSG_UNKNOWN: &str = "Connected. Whether this storage service enforces conditional writes could not be determined, so Passman checks before it overwrites. Use one device at a time.";
+const MSG_WEAK: &str = "Connected, but this storage service ignores conditional writes. This app checks before it overwrites, so use one device at a time.";
+const MSG_UNKNOWN: &str = "Connected. Whether this storage service enforces conditional writes could not be determined, so this app checks before it overwrites. Use one device at a time.";
 const NOTE_DELETE: &str = " The test object could not be deleted, so erasing an item from this backup may not work. Check the key's delete permission.";
 
 fn probe_key() -> Result<String, RemoteError> {
@@ -130,7 +130,7 @@ fn after_write(
         let wrong_etag = classify(store.put(
             key,
             body,
-            &Condition::IfMatch("\"passman-probe-no-such-etag\"".into()),
+            &Condition::IfMatch("\"hexis-probe-no-such-etag\"".into()),
         ));
         match (none_match, wrong_etag) {
             (Verdict::Enforced, Verdict::Enforced) => ConditionalWrites::Strong,

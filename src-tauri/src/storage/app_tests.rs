@@ -845,7 +845,7 @@ fn files_and_folders_are_private_to_the_owner() {
     }
     // the same holds for an imported copy and for a vault created the single-vault way
     let out = fx.outside();
-    let file = out.path().join("copy.passman");
+    let file = out.path().join("copy.hexis");
     fx.picker.set_save(Some(file.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
     assert_eq!(mode(&file), 0o600);
@@ -1439,7 +1439,7 @@ fn an_exported_vault_imports_as_a_working_account_with_the_same_content() {
     let (source_id, items) = seeded(&fx);
     let source_device = fx.device_id();
     let out = fx.outside();
-    let file = out.path().join("backup.passman");
+    let file = out.path().join("backup.hexis");
     fx.picker.set_save(Some(file.clone()));
 
     let done = fx.app.vault_export_file(PW.into()).unwrap().unwrap();
@@ -1450,10 +1450,10 @@ fn an_exported_vault_imports_as_a_working_account_with_the_same_content() {
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
-    assert_eq!(left, ["backup.passman"]);
+    assert_eq!(left, ["backup.hexis"]);
     let suggested = fx.picker.suggested_names();
     assert!(
-        suggested[0].starts_with("Source-") && suggested[0].ends_with(".passman"),
+        suggested[0].starts_with("Source-") && suggested[0].ends_with(".hexis"),
         "{suggested:?}"
     );
     #[cfg(unix)]
@@ -1521,7 +1521,7 @@ fn export_is_password_gated_before_any_dialog_and_can_be_cancelled() {
     let fx = Fx::new();
     seeded(&fx);
     let out = fx.outside();
-    let file = out.path().join("x.passman");
+    let file = out.path().join("x.hexis");
     fx.picker.set_save(Some(file.clone()));
     assert_eq!(
         code(fx.app.vault_export_file(WRONG.into())),
@@ -1551,8 +1551,8 @@ fn export_refuses_the_apps_own_data_folder_and_never_overwrites_the_live_vault()
     let before = fx.app.item_list().unwrap().len();
     for target in [
         live.clone(),
-        fx.root().join("vaults").join(&id).join("copy.passman"),
-        fx.root().join("elsewhere.passman"),
+        fx.root().join("vaults").join(&id).join("copy.hexis"),
+        fx.root().join("elsewhere.hexis"),
     ] {
         fx.picker.set_save(Some(target.clone()));
         assert_eq!(
@@ -1561,7 +1561,7 @@ fn export_refuses_the_apps_own_data_folder_and_never_overwrites_the_live_vault()
             "{target:?}"
         );
     }
-    assert!(!fx.root().join("elsewhere.passman").exists());
+    assert!(!fx.root().join("elsewhere.hexis").exists());
     // the live vault still opens and is unchanged in content
     assert_eq!(fx.app.item_list().unwrap().len(), before);
     fx.app.lock();
@@ -1574,10 +1574,10 @@ fn export_replaces_an_existing_file_atomically_and_cleans_up_after_a_failure() {
     let fx = Fx::new();
     seeded(&fx);
     let out = fx.outside();
-    let file = out.path().join("backup.passman");
+    let file = out.path().join("backup.hexis");
     std::fs::write(&file, b"old contents").unwrap();
     // a stale temp file from an earlier crash does not get in the way
-    std::fs::write(out.path().join("backup.passman.part"), b"stale").unwrap();
+    std::fs::write(out.path().join("backup.hexis.part"), b"stale").unwrap();
     fx.picker.set_save(Some(file.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
     super::files::check_vault_header(&file).unwrap();
@@ -1585,7 +1585,7 @@ fn export_replaces_an_existing_file_atomically_and_cleans_up_after_a_failure() {
 
     // an unwritable destination reports an error and leaves nothing behind
     fx.picker
-        .set_save(Some(out.path().join("no-such-folder").join("x.passman")));
+        .set_save(Some(out.path().join("no-such-folder").join("x.hexis")));
     assert!(fx.app.vault_export_file(PW.into()).is_err());
     assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 1);
 }
@@ -1595,7 +1595,7 @@ fn bad_import_files_are_refused_with_a_specific_message_and_leave_nothing() {
     let fx = Fx::new();
     seeded(&fx);
     let good = fx.outside();
-    let vault_file = good.path().join("good.passman");
+    let vault_file = good.path().join("good.hexis");
     fx.picker.set_save(Some(vault_file.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
 
@@ -1609,14 +1609,14 @@ fn bad_import_files_are_refused_with_a_specific_message_and_leave_nothing() {
     let say = |e: &StorageError| format!("{}: {}", e.code(), e);
 
     // not a database at all
-    let garbage = tmp.path().join("garbage.passman");
+    let garbage = tmp.path().join("garbage.hexis");
     std::fs::write(&garbage, b"hello, this is just text").unwrap();
     let e = try_import(garbage);
     assert_eq!(e.code(), "unsupported_file", "{}", say(&e));
     assert!(e.to_string().contains("not a database"));
 
     // empty file, and a file shorter than a database header
-    let empty = tmp.path().join("empty.passman");
+    let empty = tmp.path().join("empty.hexis");
     std::fs::write(&empty, b"").unwrap();
     assert_eq!(try_import(empty).code(), "unsupported_file");
 
@@ -1627,7 +1627,7 @@ fn bad_import_files_are_refused_with_a_specific_message_and_leave_nothing() {
 
     // missing file
     assert_eq!(
-        try_import(tmp.path().join("missing.passman")).code(),
+        try_import(tmp.path().join("missing.hexis")).code(),
         "unsupported_file"
     );
 
@@ -1640,10 +1640,13 @@ fn bad_import_files_are_refused_with_a_specific_message_and_leave_nothing() {
     }
     let e = try_import(foreign);
     assert_eq!(e.code(), "unsupported_file");
-    assert!(e.to_string().contains("not a Passman vault"), "{e}");
+    assert!(
+        e.to_string().contains("not a vault this app can open"),
+        "{e}"
+    );
 
-    // written by a newer version of Passman
-    let newer = tmp.path().join("newer.passman");
+    // written by a newer version of Hexis
+    let newer = tmp.path().join("newer.hexis");
     let mut data = bytes(&vault_file);
     data[60..64].copy_from_slice(&((super::db::SCHEMA_VERSION + 1) as i32).to_be_bytes());
     std::fs::write(&newer, data).unwrap();
@@ -1655,20 +1658,20 @@ fn bad_import_files_are_refused_with_a_specific_message_and_leave_nothing() {
     );
 
     // truncated in the middle of the database
-    let cut = tmp.path().join("cut.passman");
+    let cut = tmp.path().join("cut.hexis");
     let data = bytes(&vault_file);
     std::fs::write(&cut, &data[..data.len() / 3]).unwrap();
     assert_eq!(try_import(cut).code(), "unsupported_file");
 
-    // a Passman database that never got a vault (no key bundle)
-    let hollow = tmp.path().join("hollow.passman");
+    // a Hexis database that never got a vault (no key bundle)
+    let hollow = tmp.path().join("hollow.hexis");
     drop(Store::open(&hollow).unwrap());
     let e = try_import(hollow);
     assert_eq!(e.code(), "unsupported_file");
     assert!(e.to_string().contains("does not contain a vault"), "{e}");
 
-    // a Passman database whose key bundle is not a key bundle
-    let broken = tmp.path().join("broken.passman");
+    // a Hexis database whose key bundle is not a key bundle
+    let broken = tmp.path().join("broken.hexis");
     {
         let mut s = Store::open(&broken).unwrap();
         s.create_vault("{\"not\":\"a bundle\"}", &uuid::new_v4().unwrap(), 1)
@@ -1713,7 +1716,7 @@ fn import_never_modifies_the_chosen_file() {
     let fx = Fx::new();
     seeded(&fx);
     let out = fx.outside();
-    let file = out.path().join("backup.passman");
+    let file = out.path().join("backup.hexis");
     fx.picker.set_save(Some(file.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
     let before = bytes(&file);

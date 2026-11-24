@@ -1,4 +1,6 @@
-# Passman
+<p align="center"><img src="src/assets/logo.svg" width="128" height="128" alt="Hexis logo: two pillars joined by a crossbar of two layers"></p>
+
+# Hexis
 
 **A local-first, zero-knowledge, post-quantum password manager** for passwords, one-time codes, secure notes and an
 encrypted file drive. No account, no server of ours, no telemetry of ours. Your vault is a file on your device; every
@@ -13,7 +15,7 @@ QR scanner; see [PRIVACY.md](PRIVACY.md).)
 Built with Tauri v2: a Rust core (all cryptography, storage and sync) behind a React 19 + TypeScript + Tailwind UI.
 The webview never sees a key, a seed or a master-password hash.
 
-## Why Passman
+## Why Hexis
 
 * **Zero knowledge.** The master password and every key exist only in Rust memory while the vault is unlocked.
   Storage providers see ciphertext, object names, sizes and timestamps. Nothing else.
@@ -23,7 +25,7 @@ The webview never sees a key, a seed or a master-password hash.
 * **Local-first.** Everything works offline. Optional sync goes straight from your device to S3-compatible storage
   (one primary target plus mirrors, a master backup, restore). No middleman server exists.
 * **Quiet by design.** Sync runs on three triggers only: unlock, a saved change, and leaving the app. No timers, no
-  background services, no notifications, no telemetry in Passman's own code.
+  background services, no notifications, no telemetry in Hexis's own code.
 * **Honest about limits.** The threat model says what is and is not protected. The optional Stage 1 gate is a privacy
   screen, never a shortcut to the keys: the master password is always required to open a vault.
 
@@ -43,17 +45,43 @@ The webview never sees a key, a seed or a master-password hash.
 
 ## Download
 
-Every push to `main` builds all variants; a tag `vX.Y.Z` builds a draft release. Find them on the
+**Linux, one command.** It works on any 64-bit Linux with glibc, finds out which system it is on, and installs the right
+thing (Debian, Ubuntu and relatives through a signed apt repository; Fedora, RHEL and openSUSE through a signed rpm
+repository; Arch, CachyOS and Manjaro through a signed pacman repository; everything else through a checksum-verified
+tarball or AppImage under your home folder):
+
+```
+curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh
+```
+
+No `curl`? `wget -qO- https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh`. Options go after `sh -s --`
+(`--nightly`, `--version X.Y.Z`, `--user`, `--apk`, `--check`, `--update`, `--uninstall`, `--dry-run`, `--detect`, `--help`). Read the script
+first: it is [`scripts/install.sh`](scripts/install.sh), also shown at `/download/install-script/` on the site, and
+`--dry-run` prints every command without running one. What it does on each kind of system, and how to add the
+repositories by hand, is on the [Download page](https://md8-habibullah.github.io/gst-pass-OT/download/).
+
+**Update and remove.** The same script looks after an install later; your vaults are never touched:
+
+```
+curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --check       # is there a newer version?
+curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --update      # update, the way it was installed
+curl -fsS https://md8-habibullah.github.io/gst-pass-OT/install.sh | sh -s -- --uninstall   # remove it
+```
+
+An install from the package repository also updates with `apt upgrade`, `dnf upgrade`, `zypper update` or `pacman -Syu`;
+a tarball or AppImage install has a short `hexis-update` command next to the program.
+
+Every push to `main` builds all variants; a tag `vX.Y.Z` builds a draft release. Find the files on the
 [**Releases page**](../../releases) (the rolling `nightly` pre-release is the newest `main`).
 
 | Variant | File | Notes |
 |---|---|---|
-| Linux, Debian / Ubuntu | `Passman_<version>_amd64.deb` | needs `libwebkit2gtk-4.1` (installed automatically by `apt`) |
-| Linux, Fedora / openSUSE | `Passman-<version>-1.x86_64.rpm` | needs `webkit2gtk4.1` |
-| Linux, any distribution | `Passman_<version>_amd64.AppImage` | `chmod +x` and run |
-| Linux, plain archive | `passman-<version>-linux-x86_64.tar.gz` | the binary, desktop entry and icons |
-| Linux, Arch | [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD) | builds from the release source; Tauri has no pacman bundler |
-| Android 9+ (arm64) | `passman-<version>-android-arm64.apk` | sideload. A `-testkey` suffix means a throw-away signing key (every build without the project's release key); it cannot update an app installed from another build |
+| Linux, Debian / Ubuntu | `Hexis_<version>_amd64.deb` | needs `libwebkit2gtk-4.1` (installed automatically by `apt`) |
+| Linux, Fedora / openSUSE | `Hexis-<version>-1.x86_64.rpm` | needs `webkit2gtk4.1` |
+| Linux, any distribution | `Hexis_<version>_amd64.AppImage` | `chmod +x` and run |
+| Linux, plain archive | `hexis-<version>-linux-x86_64.tar.gz` | the binary, desktop entry and icons |
+| Linux, Arch | [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD) | builds from the release source; the installer uses the signed pacman repository instead |
+| Android 9+ (arm64) | `hexis-<version>-android-arm64.apk` | sideload, or `... | sh -s -- --apk`. A `-testkey` suffix means a throw-away signing key (every build without the project's release key); it cannot update an app installed from another build |
 
 Windows, macOS and iOS are not targets: the code has never been built or tested there.
 
@@ -136,8 +164,11 @@ src-tauri/src/
   commands/           the thin IPC layer, the Stage 1 gate wrapper, disguise, drive, dialogs
 src-tauri/examples/   dev-only HTTP shim (e2e_server) used by the end-to-end tests; never part of a release
 e2e/                  real-core end-to-end scripts driven from headless Chromium (see e2e/README.md)
-scripts/              verify_all.sh, ci_e2e.sh, Android patch and setup scripts, mock S3, site builder
+scripts/              verify_all.sh, ci_e2e.sh, install.sh (the one-line installer), make-repos.sh and make-arch-repo.sh (apt, rpm
+                      and pacman repositories),
+                      Android patch and setup scripts, mock S3, site builder
 assets/disguise/      the disguise presets and icons (single source of truth)
+src/assets/           the Hexis logo: logo.svg (app icon), logo-mark.svg (the H), logo-mark-mono.svg; `python3 scripts/gen_icons.py` renders every platform icon from them
 packaging/arch/       PKGBUILD for Arch Linux
 ai-docs/              the design documents above
 .github/              CI, release and Pages workflows, issue and pull-request templates
@@ -148,12 +179,13 @@ ai-docs/              the design documents above
 | Workflow | Runs on | What it does |
 |---|---|---|
 | [`ci.yml`](.github/workflows/ci.yml) | every push, every pull request | type-check, unit tests, `rustfmt`, `clippy -D warnings`, `cargo test`, the Android patch tests, the site build with a link check, then the real-core end-to-end suites; builds the Linux bundles and the Android APK and keeps them as artifacts |
+| [`ci.yml`](.github/workflows/ci.yml) (`installer` job) | every push, every pull request | runs the one-line installer in Ubuntu, Debian, Fedora, openSUSE and Arch containers against that build's packages, and checks it refuses Alpine and a too-old glibc |
 | [`ci.yml`](.github/workflows/ci.yml) (publish jobs) | push to `main` | replaces the rolling `nightly` pre-release with that build, plus `SHA256SUMS` |
 | [`ci.yml`](.github/workflows/ci.yml) (publish jobs) | tag `vX.Y.Z` | checks the tag matches the version in `package.json`, `tauri.conf.json` and `Cargo.toml`, then opens a **draft** release with every variant for you to review and publish |
-| [`pages.yml`](.github/workflows/pages.yml) | push to `main` | builds the website from this README and `ai-docs/` and deploys it to GitHub Pages |
+| [`pages.yml`](.github/workflows/pages.yml) | push to `main`, a published stable release | builds the website from this README and `ai-docs/`, adds the signed apt, rpm and pacman repositories of the newest stable release, and deploys it to GitHub Pages |
 
 Maintainers: [`scripts/github-setup.sh`](scripts/github-setup.sh) lists the one-time repository settings (Pages source,
-private vulnerability reporting, topics) and the signing secrets the Android job reads.
+private vulnerability reporting, topics) and the signing secrets: the Android key and the key that signs the package repositories.
 
 ## Contributing
 
@@ -162,4 +194,4 @@ Bug reports, fixes and docs are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-[MIT](LICENSE). The third-party crates and packages Passman builds on keep their own licences.
+[MIT](LICENSE). The third-party crates and packages Hexis builds on keep their own licences.

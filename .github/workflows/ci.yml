@@ -1,6 +1,7 @@
 # CI and release pipeline.
 #
 #   every push and pull request   checks -> e2e, site, linux bundles, android apk   (all kept as artifacts for 14 days)
+#                                  linux bundles -> installer: the one-line installer on real distributions
 #   push to main                  ... then replaces the rolling `nightly` pre-release with those artifacts
 #   push of a tag vX.Y.Z          ... then opens a DRAFT release for you to review and publish by hand
 #
@@ -136,14 +137,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          out=release-files; mkdir -p "$out" "pkg/passman-$VERSION"
+          out=release-files; mkdir -p "$out" "pkg/hexis-$VERSION"
           B=src-tauri/target/release/bundle
           cp "$B"/deb/*.deb "$B"/rpm/*.rpm "$B"/appimage/*.AppImage "$out"/
-          install -Dm755 src-tauri/target/release/passman "pkg/passman-$VERSION/passman"
-          install -Dm644 packaging/passman.desktop "pkg/passman-$VERSION/passman.desktop"
-          install -Dm644 src-tauri/icons/128x128.png "pkg/passman-$VERSION/passman.png"
-          install -Dm644 LICENSE "pkg/passman-$VERSION/LICENSE"
-          tar -C pkg -czf "$out/passman-$VERSION-linux-x86_64.tar.gz" "passman-$VERSION"
+          install -Dm755 src-tauri/target/release/hexis "pkg/hexis-$VERSION/hexis"
+          install -Dm644 packaging/hexis.desktop "pkg/hexis-$VERSION/hexis.desktop"
+          install -Dm644 src-tauri/icons/128x128.png "pkg/hexis-$VERSION/hexis.png"
+          install -Dm644 LICENSE "pkg/hexis-$VERSION/LICENSE"
+          tar -C pkg -czf "$out/hexis-$VERSION-linux-x86_64.tar.gz" "hexis-$VERSION"
           ls -l "$out"
       - uses: actions/upload-artifact@v7
         with:
@@ -151,6 +152,35 @@ jobs:
           path: release-files/*
           if-no-files-found: error
           retention-days: 14
+
+  # ------------------------------------------------------------------------------------------------------------------
+  installer:
+    name: One-line installer on ${{ matrix.spec }}
+    needs: linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # image[=expectation]: the installer must work on these, and must turn the last two away with a clear reason.
+        spec:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
+          - fedora:latest
+          - opensuse/tumbleweed
+          - archlinux:latest
+          - alpine:3.20=refuse:musl
+          - ubuntu:20.04=refuse:too old
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@v8
+        with: { name: linux-bundles, path: files }
+      - name: Build signed repositories with a throw-away key, then install, start, reinstall and uninstall
+        env:
+          SPEC: ${{ matrix.spec }}
+        run: scripts/test_installer_containers.sh files "$SPEC"
 
   # ------------------------------------------------------------------------------------------------------------------
   android:
@@ -188,8 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           npm run tauri android init -- --ci --skip-targets-install
+          # the launcher icons (adaptive foreground, background colour, themed monochrome) are kept in src-tauri/icons/android
+          cp -R src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
           python3 scripts/android_patch_manifest.py src-tauri/gen/android
-          d=src-tauri/gen/android/app/src/main/java/app/passman/securescreen
+          d=src-tauri/gen/android/app/src/main/java/dev/habibullah/hexis/securescreen
           mkdir -p "$d" && cp scripts/android/SecureScreenPlugin.kt "$d"/
           python3 scripts/check_no_notifications.py
       - name: Build the release APK (arm64)
@@ -210,13 +242,13 @@ jobs:
             echo "No release key configured: signing with a throw-away key. The file name says so."
             KS_PASS=$(openssl rand -hex 24); echo "::add-mask::$KS_PASS"; K_PASS="$KS_PASS"; ALIAS=ci
             keytool -genkeypair -keystore ephemeral.jks -storepass "$KS_PASS" -keypass "$K_PASS" -alias "$ALIAS" \
-              -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Passman CI test key" > /dev/null
+              -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Hexis CI test key" > /dev/null
             KS=ephemeral.jks; SUFFIX="-testkey"
           fi
           export KS_PASS K_PASS
           "$BT/apksigner" sign --ks "$KS" --ks-key-alias "$ALIAS" --ks-pass env:KS_PASS --key-pass env:K_PASS \
-            --v4-signing-enabled false --out "release-files/passman-$VERSION-android-arm64$SUFFIX.apk" aligned.apk
-          "$BT/apksigner" verify --print-certs "release-files/passman-$VERSION-android-arm64$SUFFIX.apk"
+            --v4-signing-enabled false --out "release-files/hexis-$VERSION-android-arm64$SUFFIX.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "release-files/hexis-$VERSION-android-arm64$SUFFIX.apk"
           rm -f release.jks ephemeral.jks
       - uses: actions/upload-artifact@v7
         with:
@@ -249,6 +281,8 @@ jobs:
           {
             echo "Automatic build of \`main\` at ${GITHUB_SHA::12} ($(date -u +%Y-%m-%d))."
             echo
+            echo "Install the newest build on Linux: \`curl -fsS https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/install.sh | sh -s -- --nightly\`"
+            echo
             echo "**Pre-release, not audited.** This replaces itself on every push to \`main\`. Check files with \`sha256sum -c SHA256SUMS --ignore-missing\`."
             echo "The Android APK in this release is signed with a key that is not the project's release key unless the file name lacks \`-testkey\`; it cannot update an app installed from a different build."
           } > notes.md
@@ -260,7 +294,7 @@ jobs:
   release:
     name: Draft release for a version tag
     if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-    needs: [checks, e2e, site, linux, android]
+    needs: [checks, e2e, site, linux, installer, android]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
@@ -285,6 +319,11 @@ jobs:
         run: |
           set -euo pipefail
           cd files && sha256sum * > SHA256SUMS && cat SHA256SUMS && cd ..
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes \
-            --title "Passman ${GITHUB_REF_NAME#v}" files/*
-          echo "Draft created. Review it, then publish it from the Releases page."
+          VERSION=${GITHUB_REF_NAME#v}
+          SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || echo "https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}")
+          # title, install commands, a downloads table with checksums and the changelog section: scripts/release_notes.py
+          python3 scripts/release_notes.py --version "$VERSION" --repo "$GITHUB_REPOSITORY" --site "$SITE" --sums files/SHA256SUMS > notes.md
+          cat notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --latest \
+            --title "Hexis $VERSION" --notes-file notes.md files/*
+          echo "Draft created. Review it, then publish it from the Releases page (or: gh release edit $GITHUB_REF_NAME --draft=false)."

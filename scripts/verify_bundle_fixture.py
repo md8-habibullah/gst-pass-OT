@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent end-to-end unlock of a Passman vault key bundle, written from CRYPTO_SPEC.md only.
+"""Independent end-to-end unlock of a Hexis vault key bundle, written from CRYPTO_SPEC.md only.
 
 Uses Python `cryptography` (Argon2id, HKDF-SHA512, ML-KEM-1024, X25519, ChaCha20-Poly1305) and
 the XChaCha20 helper from gen_crypto_kat.py. If this succeeds on a bundle produced by the Rust

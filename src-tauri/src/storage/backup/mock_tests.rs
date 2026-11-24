@@ -24,7 +24,7 @@ use std::time::Duration;
 const ACCESS: &str = "AKIAMOCKTESTKEY01";
 const MOCK_SECRET: &str = "mock-secret-for-signature-checks-0001";
 const REGION: &str = "eu-west-1";
-const BUCKET: &str = "passman-mock-bucket";
+const BUCKET: &str = "hexis-mock-bucket";
 
 struct Mock {
     child: Child,

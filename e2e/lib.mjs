@@ -35,7 +35,7 @@ export class Core {
   async stop() { if (this.proc) { this.proc.kill(); await sleep(400); this.proc = null; } }
   async ipc(cmd, args = {}) {
     const r = await fetch(`http://127.0.0.1:${this.port}/ipc`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd, args }) });
-    if (r.headers.get("x-passman-binary") === "1") return { ok: Buffer.from(await r.arrayBuffer()) };
+    if (r.headers.get("x-hexis-binary") === "1") return { ok: Buffer.from(await r.arrayBuffer()) };
     return await r.json();
   }
   async post(path, body) { return await (await fetch(`http://127.0.0.1:${this.port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).text(); }

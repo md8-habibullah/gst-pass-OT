@@ -1,5 +1,6 @@
 import { looksLikeBitwarden, parseBitwarden } from "./bitwarden";
 import { looksLikeCsv, parseCsv } from "./csv";
+import { brandName } from "../../state/brand";
 import { ImportError, type ImportResult } from "./types";
 
 export type { ImportResult, ImportSkip } from "./types";
@@ -10,5 +11,5 @@ export function parseImport(text: string): ImportResult {
   if (!text.trim()) throw new ImportError("That file is empty.");
   if (looksLikeBitwarden(text)) return parseBitwarden(text);
   if (looksLikeCsv(text)) return parseCsv(text);
-  throw new ImportError("Passman can import Bitwarden JSON exports and CSV files with a password column. This file is neither.");
+  throw new ImportError(`${brandName()} can import Bitwarden JSON exports and CSV files with a password column. This file is neither.`);
 }

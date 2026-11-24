@@ -851,7 +851,7 @@ fn files_added_on_another_device_appear_after_a_restore_but_not_by_a_later_unloc
 const ACCESS: &str = "AKIAMOCKTESTKEY01";
 const MOCK_SECRET: &str = "mock-secret-for-signature-checks-0001";
 const REGION: &str = "eu-west-1";
-const BUCKET: &str = "passman-mock-bucket";
+const BUCKET: &str = "hexis-mock-bucket";
 
 struct Mock {
     child: Child,

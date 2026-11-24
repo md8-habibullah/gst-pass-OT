@@ -92,7 +92,7 @@ fn get_and_set_speak_exactly_the_frontends_json() {
 
     assert_eq!(
         h.ok("disguise_get", json!({})),
-        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Passman", "note": null})
+        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Hexis", "note": null})
     );
     assert_eq!(rec.count(), 0, "reading drives nothing");
 
@@ -113,7 +113,7 @@ fn get_and_set_speak_exactly_the_frontends_json() {
     );
     assert_eq!(
         h.ok("disguise_set", set_args(json!(null), json!(null), false)),
-        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Passman", "note": null})
+        json!({"presetId": null, "customName": null, "lowercase": false, "appliedName": "Hexis", "note": null})
     );
     assert_eq!(rec.count(), 3);
     assert_eq!(rec.last().unwrap().preset_id, None);
@@ -174,7 +174,7 @@ fn bad_choices_come_back_as_invalid_input_with_fixed_sentences() {
     }
     // nothing was saved
     assert!(!h.dir.path().join(crate::disguise::FILE_NAME).exists());
-    assert_eq!(h.ok("disguise_get", json!({}))["appliedName"], "Passman");
+    assert_eq!(h.ok("disguise_get", json!({}))["appliedName"], "Hexis");
     // 30 characters are fine
     let thirty = "x".repeat(30);
     assert_eq!(
@@ -256,7 +256,7 @@ fn the_window_follows_the_applied_name_and_the_preset_icon() {
     assert_eq!(
         plan,
         WindowPlan {
-            title: "Passman".into(),
+            title: "Hexis".into(),
             icon_preset: None
         }
     );
@@ -286,7 +286,7 @@ mod linux {
     use crate::disguise::desktop::{exec_value, MARKER_LINE};
 
     /// The mock runtime's configuration has an empty identifier, so the launcher is given one.
-    const ID: &str = "app.passman.test";
+    const ID: &str = "app.hexis.test";
 
     fn entry_of(home: &std::path::Path) -> std::path::PathBuf {
         home.join("applications").join(format!("{ID}.desktop"))
@@ -432,11 +432,7 @@ mod linux {
         let entry = entry_of(home.path());
         // the entry went stale (the executable moved, somebody edited it): startup rewrites it
         let good = std::fs::read_to_string(&entry).unwrap();
-        std::fs::write(
-            &entry,
-            format!("{good}Exec=stale\nX-Passman-Managed=true\n"),
-        )
-        .unwrap();
+        std::fs::write(&entry, format!("{good}Exec=stale\nX-Hexis-Managed=true\n")).unwrap();
         let v = h.core().disguise_apply_saved();
         assert_eq!(v.applied_name, "Weather");
         assert_eq!(std::fs::read_to_string(&entry).unwrap(), good);

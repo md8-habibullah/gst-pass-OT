@@ -167,7 +167,7 @@ def main():
                 total = max(total, n - 1)
             state = "RUNNING" if jobs else "IDLE (no build/install process found)"
             out = []
-            out.append(f"passman job monitor   {time.strftime('%H:%M:%S')}   up {int(now - started)}s   (q = quit)")
+            out.append(f"hexis job monitor   {time.strftime('%H:%M:%S')}   up {int(now - started)}s   (q = quit)")
             out.append("-" * min(cols, 100))
             out.append(f"state : {state}")
             if total:

@@ -136,7 +136,7 @@ step("export a readable Bitwarden JSON copy, then read it back", async (p) => {
   await p.shot(`${SP}/shots2/real-import-export.png`);
 });
 
-step("the export imports back into Passman without loss", async (p) => {
+step("the export imports back into Hexis without loss", async (p) => {
   const dest = `${OUT}/vault-plain.json`;
   const before = await items();
   await nav(p, "Import"); await waitText(p, "Choose a file");

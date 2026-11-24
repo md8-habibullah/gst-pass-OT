@@ -4,6 +4,7 @@ import { canScanWithCamera, decodeQrFromImage, openCameraSettings, ScanError, sc
 import { describeOtp, parseOtpInput, type OtpAccount, type OtpParse } from "../../lib/otp";
 import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
+import { brandName } from "../../state/brand";
 
 export interface TotpInputProps {
   label: string;
@@ -42,7 +43,7 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
     setNeedsSettings(false);
     const parsed = parseOtpInput(text);
     if (parsed.kind === "export" && !canSplit) {
-      setNote({ tone: "error", text: "That is a multi-account export. Add it from New, Code only, and Passman will split it into one item per account." });
+      setNote({ tone: "error", text: `That is a multi-account export. Add it from New, Code only, and ${brandName()} will split it into one item per account.` });
       return;
     }
     onChange(parsed.kind === "ok" ? parsed.account.value : text.trim());

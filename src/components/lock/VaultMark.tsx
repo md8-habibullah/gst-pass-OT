@@ -1,15 +1,18 @@
+import { useId } from "react";
 import { motion } from "motion/react";
 import { disguiseTile } from "../../lib/disguise";
 import { brand } from "../../state/brand";
 import { useStore } from "../../state/store";
 
 /**
- * The Passman mark: a brass ring with a keyhole. The ring has a gap while locked; `open` completes it
- * (the unlock moment, UI_DESIGN_SYSTEM.md §6) and turns it a quarter.
- * With a disguise icon chosen, the mark is that icon instead, so the keyhole never shows on a renamed app.
+ * The Hexis mark: two solid pillars and a crossbar of two slanted layers, a silver one over a glass cyan one. The same
+ * drawing as `src/assets/logo-mark.svg` (a test keeps the two in step). The unlock moment (UI_DESIGN_SYSTEM.md §6) closes
+ * the gap between the layers; `busy` pulses the mark.
+ * With a disguise icon chosen, the mark is that icon instead, so the Hexis H never shows on a renamed app.
  */
 export function VaultMark({ size = 64, open = false, busy = false }: { size?: number; open?: boolean; busy?: boolean }) {
   const { name, presetId } = useStore(brand, (b) => b);
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const tile = presetId ? disguiseTile(presetId) : undefined;
   if (tile) {
     return (
@@ -20,35 +23,36 @@ export function VaultMark({ size = 64, open = false, busy = false }: { size?: nu
       />
     );
   }
+  const face = `${uid}face`, side = `${uid}side`, accent = `${uid}accent`;
   return (
     <motion.svg
       width={size}
       height={size}
-      viewBox="0 0 64 64"
+      viewBox="0 0 256 256"
       role="img"
       aria-label={name}
-      animate={{ rotate: open ? 90 : 0 }}
+      animate={{ scale: open ? 1.05 : 1 }}
       transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
+      className={busy ? "animate-pulse" : ""}
     >
-      <circle cx="32" cy="32" r="28" fill="none" stroke="rgb(155 178 185 / 0.16)" strokeWidth="3" />
-      <g transform="rotate(-62 32 32)">
-        <motion.circle
-          cx="32"
-          cy="32"
-          r="28"
-          fill="none"
-          stroke="var(--color-brass)"
-          strokeWidth="3"
-          strokeLinecap="round"
-          initial={false}
-          animate={{ pathLength: open ? 1 : 0.8 }}
-          transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
-          className={busy ? "animate-spin-slow" : ""}
-          style={busy ? { transformOrigin: "32px 32px" } : undefined}
-        />
+      <defs>
+        <linearGradient id={face} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#FFFFFF" /><stop offset="1" stopColor="#CBD5E1" /></linearGradient>
+        <linearGradient id={side} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#94A3B8" /><stop offset="1" stopColor="#475569" /></linearGradient>
+        <linearGradient id={accent} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#38BDF8" /><stop offset="1" stopColor="#818CF8" /></linearGradient>
+      </defs>
+      <g transform="translate(-6 4)">
+        <rect x="40" y="48" width="44" height="160" fill={`url(#${face})`} />
+        <polygon points="40,48 84,48 96,40 52,40" fill="#FFFFFF" />
+        <polygon points="84,48 96,40 96,200 84,208" fill={`url(#${side})`} />
+        <rect x="172" y="48" width="44" height="160" fill={`url(#${face})`} />
+        <polygon points="172,48 216,48 228,40 184,40" fill="#FFFFFF" />
+        <polygon points="216,48 228,40 228,200 216,208" fill={`url(#${side})`} />
+        <motion.g animate={{ y: open ? -14 : 0 }} transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}>
+          <polygon points="84,140 172,124 172,160 84,176" fill={`url(#${accent})`} fillOpacity="0.92" />
+          <polygon points="84,140 172,124 172,127 84,143" fill="#FFFFFF" fillOpacity="0.45" />
+        </motion.g>
+        <polygon points="84,84 172,68 172,108 84,124" fill={`url(#${face})`} />
       </g>
-      <circle cx="32" cy="28" r="5.2" fill="var(--color-brass)" />
-      <path d="M29.6 31.5h4.8l1.9 12.2h-8.6z" fill="var(--color-brass)" />
     </motion.svg>
   );
 }

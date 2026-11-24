@@ -4,7 +4,7 @@
 use super::*;
 use crate::disguise::{preset, DisguiseInput, ORIGINAL_ICON_PNG};
 
-const ID: &str = "app.passman.vault";
+const ID: &str = "dev.habibullah.hexis";
 
 fn view(preset_id: Option<&str>, name: Option<&str>, lowercase: bool) -> DisguiseView {
     DisguiseInput {
@@ -16,7 +16,7 @@ fn view(preset_id: Option<&str>, name: Option<&str>, lowercase: bool) -> Disguis
 }
 
 fn files(base: &Path) -> LauncherFiles {
-    LauncherFiles::new(base, ID, Path::new("/opt/passman/passman"), "passman")
+    LauncherFiles::new(base, ID, Path::new("/opt/hexis/hexis"), "hexis")
         .unwrap()
         .with_refresh(false)
 }
@@ -52,7 +52,7 @@ fn parse(text: &str) -> Vec<(String, String)> {
             "Terminal",
             "Categories",
             "StartupWMClass",
-            "X-Passman-Managed"
+            "X-Hexis-Managed"
         ]
     );
     out
@@ -95,12 +95,12 @@ fn the_entry_text_is_exact() {
          Type=Application\n\
          Name=kerf\n\
          Comment=Cursor and dot\n\
-         Exec=/opt/passman/passman\n\
+         Exec=/opt/hexis/hexis\n\
          Icon={}/{ID}/disguise/kerf.png\n\
          Terminal=false\n\
          Categories=Utility;\n\
-         StartupWMClass=passman\n\
-         X-Passman-Managed=true\n",
+         StartupWMClass=hexis\n\
+         X-Hexis-Managed=true\n",
         base.path().display()
     );
     assert_eq!(text, expected);
@@ -164,9 +164,9 @@ fn escape_value_keeps_one_line() {
 #[test]
 fn exec_value_follows_the_quoting_rules() {
     let cases = [
-        ("/usr/bin/passman", "/usr/bin/passman"),
-        ("/opt/My App/passman", "\"/opt/My App/passman\""),
-        ("/opt/100%/passman", "/opt/100%%/passman"),
+        ("/usr/bin/hexis", "/usr/bin/hexis"),
+        ("/opt/My App/hexis", "\"/opt/My App/hexis\""),
+        ("/opt/100%/hexis", "/opt/100%%/hexis"),
         ("/opt/a b%u/p", "\"/opt/a b%%u/p\""),
         ("/opt/q\"x/p", "\"/opt/q\\\\\"x/p\""),
         ("/opt/$HOME/p", "\"/opt/\\\\$HOME/p\""),
@@ -194,7 +194,7 @@ fn hostile_names_cannot_add_lines_or_keys() {
         "a%u\nExec=evil",
         "a%u\r\nExec=evil",
         "x\n[Desktop Action Evil]\nExec=evil",
-        "x\nX-Passman-Managed=false",
+        "x\nX-Hexis-Managed=false",
         "\nName=second",
         "tab\there",
         "a\\nExec=evil",
@@ -217,8 +217,8 @@ fn hostile_names_cannot_add_lines_or_keys() {
             "same number of lines for {name:?}"
         );
         assert_eq!(unescape(value(&e, "Name")), name, "reads back unchanged");
-        assert_eq!(value(&e, "Exec"), "/opt/passman/passman");
-        assert_eq!(value(&e, "X-Passman-Managed"), "true");
+        assert_eq!(value(&e, "Exec"), "/opt/hexis/hexis");
+        assert_eq!(value(&e, "X-Hexis-Managed"), "true");
     }
     // the literal two characters backslash and n (what a person can type) stay two characters
     let mut v = view(None, Some("x"), false);
@@ -249,7 +249,7 @@ fn a_hostile_program_path_or_class_cannot_add_lines_either() {
 #[test]
 fn identifiers_and_paths_are_checked() {
     let base = tempfile::tempdir().unwrap();
-    let exe = Path::new("/opt/p/passman");
+    let exe = Path::new("/opt/p/hexis");
     for bad in [
         "",
         "../x",
@@ -264,7 +264,7 @@ fn identifiers_and_paths_are_checked() {
         "é",
     ] {
         assert!(
-            LauncherFiles::new(base.path(), bad, exe, "passman").is_err(),
+            LauncherFiles::new(base.path(), bad, exe, "hexis").is_err(),
             "identifier {bad:?}"
         );
         assert!(
@@ -272,21 +272,21 @@ fn identifiers_and_paths_are_checked() {
             "remove {bad:?}"
         );
     }
-    assert!(LauncherFiles::new(Path::new("relative/dir"), ID, exe, "passman").is_err());
-    assert!(LauncherFiles::new(base.path(), ID, Path::new("relative/passman"), "passman").is_err());
+    assert!(LauncherFiles::new(Path::new("relative/dir"), ID, exe, "hexis").is_err());
+    assert!(LauncherFiles::new(base.path(), ID, Path::new("relative/hexis"), "hexis").is_err());
     assert!(LauncherFiles::new(base.path(), ID, exe, "").is_err());
     assert!(LauncherFiles::new(base.path(), ID, exe, "  ").is_err());
-    for ok in ["app.passman.vault", "passman", "a-b_c.d", "A1"] {
+    for ok in ["dev.habibullah.hexis", "hexis", "a-b_c.d", "A1"] {
         assert!(
-            LauncherFiles::new(base.path(), ok, exe, "passman").is_ok(),
+            LauncherFiles::new(base.path(), ok, exe, "hexis").is_ok(),
             "{ok}"
         );
     }
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        let not_text = Path::new(std::ffi::OsStr::from_bytes(b"/opt/\xff/passman"));
-        assert!(LauncherFiles::new(base.path(), ID, not_text, "passman").is_err());
+        let not_text = Path::new(std::ffi::OsStr::from_bytes(b"/opt/\xff/hexis"));
+        assert!(LauncherFiles::new(base.path(), ID, not_text, "hexis").is_err());
     }
     // nothing was created by the failed attempts
     assert_eq!(std::fs::read_dir(base.path()).unwrap().count(), 0);
@@ -479,7 +479,7 @@ fn sync_removes_the_entry_for_the_original_look_and_writes_it_otherwise() {
         Effect::Written
     );
     let e = parse(&std::fs::read_to_string(f.entry_path()).unwrap());
-    assert_eq!(value(&e, "Name"), "passman");
+    assert_eq!(value(&e, "Name"), "hexis");
     assert!(f.icon_dir().join(ORIGINAL_ICON_FILE).exists());
 }
 
@@ -591,14 +591,14 @@ fn a_folder_or_unreadable_thing_in_the_entry_place_counts_as_foreign() {
 #[test]
 fn exec_target_prefers_an_existing_appimage() {
     let dir = tempfile::tempdir().unwrap();
-    let image = dir.path().join("Passman.AppImage");
+    let image = dir.path().join("Hexis.AppImage");
     std::fs::write(&image, b"x").unwrap();
-    let exe = Path::new("/tmp/.mount_PassmaXYZ/usr/bin/passman");
+    let exe = Path::new("/tmp/.mount_HexisXYZ/usr/bin/hexis");
     assert_eq!(exec_target(exe, Some(image.as_os_str())), image);
     // missing, relative, empty or unset: the running executable
     for bad in [
         dir.path().join("gone.AppImage").into_os_string(),
-        std::ffi::OsString::from("Passman.AppImage"),
+        std::ffi::OsString::from("Hexis.AppImage"),
         std::ffi::OsString::new(),
         dir.path().as_os_str().to_os_string(), // a folder, not a file
     ] {
@@ -607,19 +607,16 @@ fn exec_target_prefers_an_existing_appimage() {
     assert_eq!(exec_target(exe, None), exe);
     // a binary replaced while running
     assert_eq!(
-        exec_target(Path::new("/usr/bin/passman (deleted)"), None),
-        Path::new("/usr/bin/passman")
+        exec_target(Path::new("/usr/bin/hexis (deleted)"), None),
+        Path::new("/usr/bin/hexis")
     );
 }
 
 #[test]
 fn the_window_class_is_the_executable_name() {
-    assert_eq!(wm_class_of(Path::new("/usr/bin/passman")), "passman");
-    assert_eq!(wm_class_of(Path::new("/opt/p/Passman-Dev")), "Passman-Dev");
-    assert_eq!(
-        wm_class_of(Path::new("/usr/bin/passman (deleted)")),
-        "passman"
-    );
+    assert_eq!(wm_class_of(Path::new("/usr/bin/hexis")), "hexis");
+    assert_eq!(wm_class_of(Path::new("/opt/p/Hexis-Dev")), "Hexis-Dev");
+    assert_eq!(wm_class_of(Path::new("/usr/bin/hexis (deleted)")), "hexis");
     assert_eq!(wm_class_of(Path::new("/")), "");
 }
 
@@ -629,7 +626,7 @@ fn the_window_class_is_the_executable_name() {
 fn refreshing_the_desktop_database_never_fails_the_caller() {
     let dir = tempfile::tempdir().unwrap();
     assert!(!spawn_refresh(
-        "definitely-not-installed-passman-xyz",
+        "definitely-not-installed-hexis-xyz",
         dir.path()
     ));
     // a program that exits with an error is not our problem either
@@ -637,7 +634,7 @@ fn refreshing_the_desktop_database_never_fails_the_caller() {
         assert!(spawn_refresh("false", dir.path()));
     }
     // the writer with refresh switched on does not mind a missing or failing tool
-    let f = LauncherFiles::new(dir.path(), ID, Path::new("/opt/p/passman"), "passman").unwrap();
+    let f = LauncherFiles::new(dir.path(), ID, Path::new("/opt/p/hexis"), "hexis").unwrap();
     f.sync(&view(Some("kerf"), None, false), preset("kerf"))
         .unwrap();
     f.sync(&view(None, None, false), None).unwrap();

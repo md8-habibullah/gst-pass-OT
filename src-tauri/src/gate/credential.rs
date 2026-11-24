@@ -280,7 +280,7 @@ pub fn hash_new(text: &Normalised, params: &KdfParams) -> Result<Phc, StorageErr
 // ------------------------------------------------------------------ equal-cost verification
 
 /// A fixed salt for the dummy verification of a hash that does not exist.
-const DUMMY_SALT: [u8; SALT_LEN] = *b"passman-gate-dmy";
+const DUMMY_SALT: [u8; SALT_LEN] = *b"hexis-gate-dummy";
 
 /// The outcome of one security attempt's three verifications, still unresolved.
 pub struct Verdict {

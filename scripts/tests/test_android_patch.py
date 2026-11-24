@@ -48,7 +48,7 @@ MANIFEST = """<?xml version="1.0" encoding="utf-8" ?>
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.passman"
+        android:theme="@style/Theme.hexis"
         android:usesCleartextTraffic="false">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
@@ -108,12 +108,12 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def make_project(root: Path, manifest: str = MANIFEST, namespace: str = "app.passman.vault") -> Path:
+def make_project(root: Path, manifest: str = MANIFEST, namespace: str = "dev.habibullah.hexis") -> Path:
     project = root / "android"
     main = project / "app" / "src" / "main"
     write(main / "AndroidManifest.xml", manifest)
     write(main / "res" / "values" / "strings.xml",
-          '<resources>\n    <string name="app_name">Passman</string>\n    <string name="main_activity_title">Passman</string>\n</resources>\n')
+          '<resources>\n    <string name="app_name">Hexis</string>\n    <string name="main_activity_title">Hexis</string>\n</resources>\n')
     write(project / "app" / "build.gradle.kts", f'plugins {{ id("com.android.application") }}\nandroid {{\n    namespace = "{namespace}"\n    compileSdk = 36\n}}\n')
     write(main / "java" / Path(*namespace.split(".")) / "MainActivity.kt",
           f"package {namespace}\n\nclass MainActivity : TauriActivity()\n")
@@ -264,7 +264,7 @@ class ManifestTests(Base):
         extra = """            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="passman" />
+                <data android:scheme="hexis" />
             </intent-filter>
 """
         text = MANIFEST.replace("            </intent-filter>\n        </activity>", "            </intent-filter>\n" + extra + "        </activity>")
@@ -274,7 +274,7 @@ class ManifestTests(Base):
         main = parse(self.manifest).find("application").find("activity")
         filters = main.findall("intent-filter")
         self.assertEqual(len(filters), 1)
-        self.assertEqual(filters[0].find("data").get(A + "scheme"), "passman")
+        self.assertEqual(filters[0].find("data").get(A + "scheme"), "hexis")
 
     def test_the_vibrate_permission_and_the_required_camera_are_dealt_with(self):
         self.apply()
@@ -341,7 +341,7 @@ class ResourceTests(Base):
     def test_strings_are_escaped_for_xml_and_for_aapt(self):
         self.apply()
         text = (self.res / "values" / "disguise_strings.xml").read_text(encoding="utf-8")
-        self.assertIn('<string name="app_label_original">Passman</string>', text)
+        self.assertIn('<string name="app_label_original">Hexis</string>', text)
         self.assertIn('<string name="app_label_kerf">Kerf</string>', text)
         self.assertIn('<string name="app_label_hostile">Tom\\\'s \\"Tab\\" &amp; &lt;Co&gt; @home</string>', text)
         self.assertIn('<string name="app_label_at">\\@work</string>', text, "a leading @ would be a resource reference")
@@ -390,18 +390,18 @@ class ResourceTests(Base):
 
 class KotlinTests(Base):
     def kt(self):
-        return (self.project / "app" / "src" / "main" / "java" / "app" / "passman" / "vault" / "DisguisePlugin.kt")
+        return (self.project / "app" / "src" / "main" / "java" / "dev" / "habibullah" / "hexis" / "DisguisePlugin.kt")
 
     def test_the_plugin_is_written_next_to_main_activity_with_the_real_api(self):
         self.apply()
         src = self.kt().read_text(encoding="utf-8")
-        self.assertIn("package app.passman.vault\n", src)
+        self.assertIn("package dev.habibullah.hexis\n", src)
         for needle in (
             "import app.tauri.annotation.Command", "import app.tauri.annotation.TauriPlugin",
             "import app.tauri.annotation.InvokeArg", "import app.tauri.plugin.Invoke", "import app.tauri.plugin.Plugin",
             "@TauriPlugin", "@Command", "fun setAlias(invoke: Invoke)", "class DisguisePlugin(private val activity: Activity) : Plugin(activity)",
             "setComponentEnabledSetting", "COMPONENT_ENABLED_STATE_ENABLED", "COMPONENT_ENABLED_STATE_DISABLED",
-            "PackageManager.DONT_KILL_APP", 'ComponentName(activity.packageName, "app.passman.vault." + alias)',
+            "PackageManager.DONT_KILL_APP", 'ComponentName(activity.packageName, "dev.habibullah.hexis." + alias)',
             "invoke.parseArgs(SetAliasArgs::class.java)", "args.alias !in aliases",
         ):
             self.assertIn(needle, src)

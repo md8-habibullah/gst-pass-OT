@@ -5,7 +5,7 @@
   python3 scripts/monitor_android_setup.py --once                   one frame and exit
   python3 scripts/monitor_android_setup.py --log build.log --dir src-tauri/gen/android   watch a build instead
 
-It reads: a log file (--log, or $PASSMAN_ANDROID_LOG, default ~/.cache/passman-android/install.log), the size of
+It reads: a log file (--log, or $HEXIS_ANDROID_LOG, default ~/.cache/hexis-android/install.log), the size of
 a folder (--dir, default ~/Android/Sdk: what the job is writing), the memory in use, and whether the installer or
 build processes (android-cli, sdkmanager, gradle, cargo, rustc, tauri) are running. It never writes anything.
 """
@@ -16,7 +16,7 @@ def arg(name, default):
 
 
 SDK = os.path.expanduser(arg("--dir", os.environ.get("ANDROID_HOME", "~/Android/Sdk")))
-LOG = os.path.expanduser(arg("--log", os.environ.get("PASSMAN_ANDROID_LOG", "~/.cache/passman-android/install.log")))
+LOG = os.path.expanduser(arg("--log", os.environ.get("HEXIS_ANDROID_LOG", "~/.cache/hexis-android/install.log")))
 WANT = ["platform-tools", "platforms/android-36", "build-tools/36.0.0", "ndk/28.2.13676358"]
 
 
@@ -62,7 +62,7 @@ def tail(path, n=8):
 def frame(prev):
     now = time.time(); size = du(SDK)
     rate = (size - prev[1]) / (now - prev[0]) if prev else 0.0
-    lines = ["Passman Android toolchain install   (reads only; q to quit)", ""]
+    lines = ["Hexis Android toolchain install   (reads only; q to quit)", ""]
     lines.append(f"job        : {'RUNNING' if running() else 'idle / finished'}      memory available: {mem_available()}")
     lines.append(f"writing to : {SDK}  ({size / 1e6:,.0f} MB, {rate / 1e6:,.1f} MB/s)")
     lines.append(f"log        : {LOG}")

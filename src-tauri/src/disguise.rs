@@ -39,7 +39,7 @@ const MAX_FILE_BYTES: u64 = 4096;
 /// Longest custom name, in characters, after trimming.
 pub const MAX_NAME_CHARS: usize = 30;
 /// The name shown for the original look.
-pub const ORIGINAL_NAME: &str = "Passman";
+pub const ORIGINAL_NAME: &str = "Hexis";
 /// The original (bundled) icon, 512 px, for the launcher entry when only the name was changed.
 pub const ORIGINAL_ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
 /// `assets/disguise/presets.json`, embedded.
@@ -222,7 +222,7 @@ impl DisguiseInput {
         })
     }
 
-    /// The custom name when set, else the preset's name, else `Passman`; lower-cased on request.
+    /// The custom name when set, else the preset's name, else `Hexis`; lower-cased on request.
     pub fn applied_name(&self) -> String {
         let base = match (&self.custom_name, &self.preset_id) {
             (Some(name), _) => name.clone(),

@@ -1,3 +1,3 @@
 fn main() {
-    passman_lib::run()
+    hexis_lib::run()
 }

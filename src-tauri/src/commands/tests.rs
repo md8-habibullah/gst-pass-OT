@@ -659,7 +659,7 @@ fn export_and_import_work_over_real_ipc() {
     h.ok("item_create", json!({"draft": draft("Keep me")}));
     h.ok("item_create", json!({"draft": card_draft("Card")}));
     let out = tempfile::tempdir().unwrap();
-    let file = out.path().join("backup.passman");
+    let file = out.path().join("backup.hexis");
 
     // cancelled dialog: nothing is written
     h.picker.set_save(None);
@@ -680,7 +680,7 @@ fn export_and_import_work_over_real_ipc() {
     assert!(file.exists());
     let names = h.picker.suggested_names();
     assert!(names.last().unwrap().starts_with("Personal-"), "{names:?}");
-    assert!(names.last().unwrap().ends_with(".passman"));
+    assert!(names.last().unwrap().ends_with(".hexis"));
 
     // import it as a second account: it opens with its original master password
     h.picker.set_open(None);
@@ -703,7 +703,7 @@ fn export_and_import_work_over_real_ipc() {
     assert_eq!(h.ok("item_list", json!({})).as_array().unwrap().len(), 2);
 
     // a file that is not a vault is refused with a specific code
-    let junk = out.path().join("junk.passman");
+    let junk = out.path().join("junk.hexis");
     std::fs::write(&junk, b"this is not a database").unwrap();
     h.picker.set_open(Some(junk));
     assert_eq!(

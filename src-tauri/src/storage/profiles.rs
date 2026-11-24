@@ -130,7 +130,7 @@ struct RegistryFile {
 
 enum Parsed {
     Ok(Vec<Entry>),
-    /// Written by a newer Passman: never touched, the app refuses to start instead.
+    /// Written by a newer Hexis: never touched, the app refuses to start instead.
     Newer,
     Corrupt,
 }
@@ -232,31 +232,30 @@ impl Registry {
     /// moved aside as `profiles.json.corrupt-<ms>` (never deleted) and rebuilt from the folders.
     pub fn load(root: &Path) -> Result<Self> {
         let path = root.join(REGISTRY_FILE);
-        let (entries, must_save) =
-            match std::fs::read(&path) {
-                Ok(bytes) => match parse_registry(&bytes) {
-                    Parsed::Ok(entries) => (entries, false),
-                    Parsed::Newer => return Err(StorageError::Storage(
-                        "The account list was saved by a newer version of Passman. Update the app."
-                            .into(),
-                    )),
-                    Parsed::Corrupt => {
-                        let aside = root.join(format!("{REGISTRY_FILE}.corrupt-{}", now_millis()));
-                        std::fs::rename(&path, aside)?;
-                        (rebuild(root)?, true)
-                    }
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    let entries = rebuild(root)?;
-                    let save = !entries.is_empty();
-                    (entries, save)
+        let (entries, must_save) = match std::fs::read(&path) {
+            Ok(bytes) => match parse_registry(&bytes) {
+                Parsed::Ok(entries) => (entries, false),
+                Parsed::Newer => return Err(StorageError::Storage(
+                    "The account list was saved by a newer version of this app. Update the app."
+                        .into(),
+                )),
+                Parsed::Corrupt => {
+                    let aside = root.join(format!("{REGISTRY_FILE}.corrupt-{}", now_millis()));
+                    std::fs::rename(&path, aside)?;
+                    (rebuild(root)?, true)
                 }
-                Err(_) => {
-                    return Err(StorageError::Storage(
-                        "The account list could not be read.".into(),
-                    ))
-                }
-            };
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let entries = rebuild(root)?;
+                let save = !entries.is_empty();
+                (entries, save)
+            }
+            Err(_) => {
+                return Err(StorageError::Storage(
+                    "The account list could not be read.".into(),
+                ))
+            }
+        };
         let registry = Self {
             root: root.to_path_buf(),
             entries,

@@ -402,7 +402,7 @@ fn nothing_that_could_unlock_a_vault_is_ever_written_to_disk() {
 // ------------------------------------------------------------------ the wipe
 
 /// Lay out a realistic folder: two accounts (real vault files, WAL when SQLite leaves one),
-/// attachment-like files, plaintext files that carry a marker, and one file that is not Passman's.
+/// attachment-like files, plaintext files that carry a marker, and one file that is not Hexis's.
 fn realistic(fx: &Fx) -> (String, String) {
     let ana = fx.account("Ana", PW);
     let bob = fx.account("Bob", PW2);
@@ -417,7 +417,7 @@ fn realistic(fx: &Fx) -> (String, String) {
         }
     }
     std::fs::write(fx.root().join("disguise.json"), MARKER).unwrap();
-    std::fs::write(fx.root().join("notes.txt"), b"not Passman's, keep me").unwrap();
+    std::fs::write(fx.root().join("notes.txt"), b"not Hexis's, keep me").unwrap();
     (ana, bob)
 }
 
@@ -451,7 +451,7 @@ fn the_manual_reset_wipes_a_realistic_tree_and_leaves_the_app_at_first_run() {
     );
     assert_eq!(
         std::fs::read(fx.root().join("notes.txt")).unwrap(),
-        b"not Passman's, keep me"
+        b"not Hexis's, keep me"
     );
     assert_eq!(
         std::fs::read(outside.path().join("precious.txt")).unwrap(),
@@ -700,7 +700,7 @@ fn a_refused_wipe_touches_nothing_locks_the_vault_and_leaves_the_gate_closed() {
         .gate_configure(pin_with_panic_code("2468", PW, "5151"))
         .unwrap();
     fx.app.gate_close();
-    // a known Passman name is a link out of the folder: the pre-flight refuses the whole wipe
+    // a known Hexis name is a link out of the folder: the pre-flight refuses the whole wipe
     let outside = tempfile::tempdir().unwrap();
     let target = outside.path().join("precious.txt");
     std::fs::write(&target, b"keep").unwrap();

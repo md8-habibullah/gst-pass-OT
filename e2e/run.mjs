@@ -114,7 +114,7 @@ let page;
 const S = (n) => results.filter((r) => r.name.startsWith(n));
 
 step("first run: welcome offers create / open file / restore", async (p) => {
-  await p.goto(UI); await waitText(p, "Welcome to Passman");
+  await p.goto(UI); await waitText(p, "Welcome to Hexis");
   check("welcome screen lists the three ways in", ["Create a new vault", "Open a vault file", "Restore from a backup"].every((s) => has(p, s) && true));
   const t = await p.text();
   check("welcome screen lists the three ways in (text)", ["Create a new vault", "Open a vault file", "Restore from a backup"].every((s) => t.includes(s)));
@@ -378,14 +378,14 @@ step("rename account (unique check) in Settings", async (p) => {
 });
 
 step("export vault file, add it as an account, open it", async (p) => {
-  rmSync(`${FILES}/export.passman`, { force: true });
-  await picker(null, `${FILES}/export.passman`);
+  rmSync(`${FILES}/export.hexis`, { force: true });
+  await picker(null, `${FILES}/export.hexis`);
   await nav(p, "Export");
   await btn(p, "Export vault file");
   await reprompt(p, MAR_PW);
   await waitText(p, "Saved to");
-  check("export file written", existsSync(`${FILES}/export.passman`) && statSync(`${FILES}/export.passman`).size > 4096);
-  await picker(`${FILES}/export.passman`, null);
+  check("export file written", existsSync(`${FILES}/export.hexis`) && statSync(`${FILES}/export.hexis`).size > 4096);
+  await picker(`${FILES}/export.hexis`, null);
   await p.click("button", "Switch account");
   await p.click("[role=dialog] button", "Add account");
   await waitText(p, "Add an account");
@@ -431,7 +431,7 @@ step("export file is encrypted: no plaintext in the vault files", async () => {
   const markers = ["Tr0ub4dor", "marlowe-dev", "JBSWY3DPEHPK3PXP", "4242 4242", "4242424242424242", "P1234567", "lakeside-sunrise", "PRIVATEKEYBODY", "ssh-pass-phrase", "Cabin", "Northline", "GEZDGNBVGY3TQOJQ", "bw-pass-zz9", "csv-pass-qq1", "Deploy key", "GitHub"];
   const files = [];
   const walk = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const f = join(d, e.name); e.isDirectory() ? walk(f) : files.push(f); } };
-  walk(DATA); files.push(`${FILES}/export.passman`);
+  walk(DATA); files.push(`${FILES}/export.hexis`);
   const hits = [];
   for (const f of files.filter((x) => !x.endsWith("profiles.json"))) {
     const buf = readFileSync(f);

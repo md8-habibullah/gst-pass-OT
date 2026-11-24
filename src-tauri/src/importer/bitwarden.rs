@@ -179,22 +179,28 @@ fn set_folder(e: &mut ImportedEntry, name: &str) {
     e.set_folder_path(&parts);
 }
 
-/// Turn the custom fields Passman's own exporter adds back into what they stand for: tags, the
+/// Turn the custom fields Hexis's own exporter adds back into what they stand for: tags, the
 /// code item type, a card PIN and an SSH key passphrase. Everything else is left alone.
-pub(super) fn apply_passman_extras(e: &mut ImportedEntry) {
+pub(super) fn apply_hexis_extras(e: &mut ImportedEntry) {
     let mut keep = Vec::new();
     let mut code_item = false;
     for f in std::mem::take(&mut e.custom_fields) {
         match (f.name.as_str(), e.kind) {
-            (super::export::TAGS_FIELD, _) => match serde_json::from_str::<Vec<String>>(&f.value) {
-                Ok(tags) => {
-                    for t in tags {
-                        e.add_tag(&t);
+            (super::export::TAGS_FIELD | super::export::PREVIOUS_TAGS_FIELD, _) => {
+                match serde_json::from_str::<Vec<String>>(&f.value) {
+                    Ok(tags) => {
+                        for t in tags {
+                            e.add_tag(&t);
+                        }
                     }
+                    Err(_) => keep.push(f),
                 }
-                Err(_) => keep.push(f),
-            },
-            (super::export::TYPE_FIELD, EntryKind::Login) if f.value == "totp" => code_item = true,
+            }
+            (super::export::TYPE_FIELD | super::export::PREVIOUS_TYPE_FIELD, EntryKind::Login)
+                if f.value == "totp" =>
+            {
+                code_item = true
+            }
             ("PIN", EntryKind::Card) if f.hidden => e.put("pin", &f.value),
             ("Passphrase", EntryKind::SshKey) if f.hidden => e.put("passphrase", &f.value),
             _ => keep.push(f),
@@ -236,7 +242,7 @@ fn convert(
         None if item.ssh_key.is_some() => EntryKind::SshKey,
         None => EntryKind::Note,
         Some(_) => {
-            out.skip("it has an item type Passman does not know");
+            out.skip("it has an item type this app does not know");
             return Ok(());
         }
     };
@@ -266,7 +272,7 @@ fn convert(
                 e.add_totp(s(&l.totp));
                 if !l.passkeys.is_empty() {
                     out.warn(format!(
-                        "\u{201c}{}\u{201d} has a passkey, which Passman cannot keep. Its other data was imported.",
+                        "\u{201c}{}\u{201d} has a passkey, which this app cannot keep. Its other data was imported.",
                         super::limits::warn_title(s(&item.name))
                     ));
                 }
@@ -324,7 +330,7 @@ fn convert(
             kind => e.add_custom(s(&f.name), s(&f.value), kind == Some(1)),
         }
     }
-    apply_passman_extras(&mut e);
+    apply_hexis_extras(&mut e);
     if e.is_blank() {
         out.skip("it is empty");
         return Ok(());

@@ -1,6 +1,12 @@
 # Builds the project website from the repository's Markdown (scripts/build-site.mjs) and deploys it to GitHub Pages.
 # One-time setup: scripts/github-setup.sh sets the Pages source to "GitHub Actions" (do that BEFORE the first push).
 # The same build also runs, without deploying, as the `site` job of ci.yml, which fails on a broken link or anchor.
+#
+# The site also carries what the one-line installer (install.sh) needs: the signed apt, rpm and pacman package repositories.
+# They are rebuilt on every deploy from the newest STABLE release (a published, non-pre-release GitHub release), so
+# publishing a release deploys them. Without a stable release, or without the REPO_SIGNING_KEY secret
+# (scripts/github-setup.sh repo-key), the site is deployed without repositories and install.sh falls back to the
+# release files. Pages replaces the whole site on each deploy, which is why the repositories are rebuilt every time.
 name: Pages
 
 on:
@@ -18,10 +24,15 @@ on:
       - "e2e/README.md"
       - "site/**"
       - "scripts/build-site.mjs"
+      - "scripts/install.sh"
+      - "scripts/make-repos.sh"
+      - "scripts/make-arch-repo.sh"
       - "src-tauri/icons/128x128.png"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/pages.yml"
+  release:
+    types: [released]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +45,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A release event runs on the TAG, and the github-pages environment only accepts the default branch, so the event
+  # just asks for a normal run on the default branch (workflow_dispatch is the one event GITHUB_TOKEN may start).
+  from-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}"
+
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -45,16 +70,51 @@ jobs:
       - run: npm ci
       - id: pages
         uses: actions/configure-pages@v6
+      - name: Newest stable release and signing key
+        id: repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+          REPO_SIGNING_PASSPHRASE: ${{ secrets.REPO_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')
+          if [ -z "$tag" ]; then echo "::notice::No stable release yet: the site is deployed without package repositories."; exit 0; fi
+          if [ -z "$REPO_SIGNING_KEY" ]; then echo "::notice::Release $tag exists but the REPO_SIGNING_KEY secret is not set (scripts/github-setup.sh repo-key): no package repositories."; exit 0; fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$REPO_SIGNING_KEY" | gpg --batch --quiet --import
+          fpr=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          mkdir -p "$RUNNER_TEMP/rel"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/rel" --pattern '*.deb' --pattern '*.rpm' --pattern '*.tar.gz'
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"; echo "fpr=$fpr" >> "$GITHUB_OUTPUT"
+          echo "gnupg=$GNUPGHOME" >> "$GITHUB_OUTPUT"
       - name: Build the site
         env:
           SITE_URL: ${{ steps.pages.outputs.base_url }}/
           SITE_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          HEXIS_KEY_FPR: ${{ steps.repo.outputs.fpr }}
+          HEXIS_STABLE_TAG: ${{ steps.repo.outputs.tag }}
         run: node scripts/build-site.mjs
+      - name: Build the signed apt, rpm and pacman repositories into the site
+        if: steps.repo.outputs.tag != ''
+        env:
+          REPO_SIGNING_PASSPHRASE: ${{ secrets.REPO_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils createrepo-c rpm gnupg > /dev/null
+          scripts/make-repos.sh --out site-dist --site "${{ steps.pages.outputs.base_url }}" \
+            --deb "$(ls "$RUNNER_TEMP"/rel/*.deb | head -n1)" --rpm "$(ls "$RUNNER_TEMP"/rel/*.rpm | head -n1)" \
+            --gnupghome "${{ steps.repo.outputs.gnupg }}" --key "${{ steps.repo.outputs.fpr }}"
+          # pacman's makepkg and repo-add only exist on Arch, so this one runs in an archlinux container
+          scripts/make-arch-repo.sh --out site-dist --site "${{ steps.pages.outputs.base_url }}" \
+            --tarball "$(ls "$RUNNER_TEMP"/rel/hexis-*-linux-x86_64.tar.gz | head -n1)" \
+            --gnupghome "${{ steps.repo.outputs.gnupg }}" --key "${{ steps.repo.outputs.fpr }}"
       - uses: actions/upload-pages-artifact@v5
         with: { path: site-dist }
 
   deploy:
     needs: build
+    if: github.event_name != 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:

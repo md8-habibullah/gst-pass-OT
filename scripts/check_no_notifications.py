@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail if anything that could notify the user, run in the background or sit in a tray is in the project.
 
-Passman's rule (ai-docs/FEATURE_QUEUE.md Q0, decision D18): no push notifications, no tray
+Hexis's rule (ai-docs/FEATURE_QUEUE.md Q0, decision D18): no push notifications, no tray
 icon, no background daemon, no foreground service. Sync runs on three triggers only (unlock, a
 committed change, app exit or backgrounding), so none of the following may ever appear:
 
@@ -187,7 +187,7 @@ def main() -> int:
     for n in notes:
         print(f"note: {n}")
     if problems:
-        print("\nFAIL: notifications, tray icons or background services are not allowed in Passman:")
+        print("\nFAIL: notifications, tray icons or background services are not allowed in Hexis:")
         for p in problems:
             print(f"  - {p}")
         return 1

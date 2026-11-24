@@ -1,5 +1,5 @@
 name: Feature or improvement
-description: Suggest something that would make Passman better.
+description: Suggest something that would make Hexis better.
 labels: ["improvement"]
 body:
   - type: textarea
@@ -19,4 +19,4 @@ body:
     id: limits
     attributes:
       label: Does it touch secrets, the network or the storage format
-      description: Passman has no server, no telemetry and no background activity by design (see ARCHITECTURE.md). Say how your idea fits that.
+      description: Hexis has no server, no telemetry and no background activity by design (see ARCHITECTURE.md). Say how your idea fits that.

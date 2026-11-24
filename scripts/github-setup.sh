@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# One-time GitHub repository setup for Passman. YOU run this; it changes settings on github.com, so neither CI nor an
+# One-time GitHub repository setup for Hexis. YOU run this; it changes settings on github.com, so neither CI nor an
 # assistant runs it. It contains no commit and no push, and it never changes who can see the repository.
 #
 #   scripts/github-setup.sh plan         print what it would do, change nothing
 #   scripts/github-setup.sh apply        make the settings below (asks once before it starts)
 #   scripts/github-setup.sh status       read-only: Pages, latest runs, releases, and the live site (run after you have pushed)
 #   scripts/github-setup.sh android-key  print the commands that create the Android release key and store it as secrets
+#   scripts/github-setup.sh repo-key     print the commands that create the package-repository signing key (apt/dnf) and store it
+#   scripts/github-setup.sh publish-release vX.Y.Z   show the draft release CI made for that tag and, after you confirm, publish it
 #
 # Needs the GitHub CLI (`gh`) signed in as the account that owns the repository:  gh auth status
 # Order matters (GitHub docs): the Pages source must be "GitHub Actions" BEFORE the first push that contains
@@ -18,8 +20,8 @@ need gh; need curl
 R="${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 say() { printf '%s\n' "$*"; }
 
-DESCRIPTION="Local-first, zero-knowledge, post-quantum password manager (Rust + Tauri, Linux and Android)"
-TOPICS=(password-manager post-quantum zero-knowledge local-first tauri rust react typescript android linux totp s3 encryption security)
+DESCRIPTION="Hexis: a local-first, zero-knowledge, post-quantum password manager and authenticator. Rust + Tauri, Linux and Android, one-command installer."
+TOPICS=(hexis password-manager post-quantum zero-knowledge local-first tauri rust react typescript android linux totp authenticator s3 encryption security ml-kem argon2 offline-first privacy)
 
 case "$mode" in
   plan)
@@ -61,6 +63,18 @@ EOF
     say
     say "Next (you): commit and push the working tree. The first push starts CI; a push to main also deploys the site and replaces the nightly pre-release."
     say "Optional: scripts/github-setup.sh android-key   (a stable Android signing key for tagged releases)"
+    say "Optional: scripts/github-setup.sh repo-key      (the key that signs the apt and dnf repositories behind the one-line installer)"
+    say "By hand (GitHub has no API for it): Settings, General, Social preview, upload assets/social-preview.png"
+    ;;
+  publish-release)
+    tag="${2:-}"; case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) say "usage: scripts/github-setup.sh publish-release vX.Y.Z"; exit 2 ;; esac
+    say "Repository: $R   (account: $(gh api user --jq .login))"
+    gh release view "$tag" -R "$R" --json name,tagName,isDraft,isPrerelease,url,assets \
+      --jq '"title: \(.name)\ntag: \(.tagName)  draft: \(.isDraft)  pre-release: \(.isPrerelease)\nurl: \(.url)\nfiles:\n" + ([.assets[] | "  \(.name)  \(.size) bytes"] | join("\n"))' \
+      || { say "No release $tag yet. Create the tag first; CI then opens a draft."; exit 1; }
+    read -r -p "Publish $tag (visible to everyone who can see the repository; it also starts the package-repository build)? [y/N] " ans
+    [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { say "Nothing changed."; exit 0; }
+    gh release edit "$tag" -R "$R" --draft=false --latest && say "Published. Watch the site build: scripts/github-setup.sh status"
     ;;
   status)
     say "== Repository"; gh api "repos/$R" --jq '"visibility: \(.visibility)  default branch: \(.default_branch)  homepage: \(.homepage)"'
@@ -82,16 +96,35 @@ EOF
     cat <<'EOF'
 # Create ONE release key, keep a backup of the file and both passwords somewhere safe (a lost key means no updates
 # for installed copies), and never commit it (*.jks and *.keystore are git-ignored).
-keytool -genkeypair -v -keystore passman-release.jks -alias passman -keyalg RSA -keysize 4096 -validity 10000
+keytool -genkeypair -v -keystore hexis-release.jks -alias hexis -keyalg RSA -keysize 4096 -validity 10000
 
 # Store it as repository secrets (read by the `android` job in .github/workflows/ci.yml):
-base64 -w0 passman-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+base64 -w0 hexis-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
 gh secret set ANDROID_KEYSTORE_PASSWORD
-gh secret set ANDROID_KEY_ALIAS --body passman
+gh secret set ANDROID_KEY_ALIAS --body hexis
 gh secret set ANDROID_KEY_PASSWORD
 
 # Afterwards, APKs from CI are signed with this key and lose the -testkey suffix.
 EOF
     ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  repo-key)
+    cat <<'EOF'
+# Create ONE signing key for the apt and rpm repositories that the one-line installer (site/install.sh) registers on
+# people's machines. Every machine that installed Hexis from the repository trusts THIS key: keep the backup file
+# somewhere safe and never commit it (the file is written outside the repository). If it is lost or leaked, every
+# user must be told to import a new key, so treat it like the Android release key.
+export GNUPGHOME="$(mktemp -d)"; chmod 700 "$GNUPGHOME"
+gpg --batch --passphrase '' --quick-generate-key 'Hexis Releases <releases@hexis.invalid>' rsa4096 sign never
+gpg --batch --armor --export-secret-keys > ~/hexis-repo-signing-key.asc && chmod 600 ~/hexis-repo-signing-key.asc
+gpg --list-keys --with-fingerprint 'Hexis Releases'      # note the fingerprint; the site prints it on the Download page
+
+# Store it as a repository secret (read by .github/workflows/pages.yml):
+gh secret set REPO_SIGNING_KEY < ~/hexis-repo-signing-key.asc
+rm -rf "$GNUPGHOME"; unset GNUPGHOME
+
+# The repositories are published when a STABLE release exists: tag vX.Y.Z, let CI open the draft release, review it,
+# press "Publish release". That event rebuilds the site with the apt and rpm repositories inside it.
+EOF
+    ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
 esac

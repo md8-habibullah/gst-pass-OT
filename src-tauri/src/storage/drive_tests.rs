@@ -971,7 +971,7 @@ fn an_exported_vault_file_carries_no_file_rows() {
     let fx = Fx::new();
     fx.add_one(None, "a.txt", b"abc");
     let out = tempfile::tempdir().unwrap();
-    let dest = out.path().join("copy.passman");
+    let dest = out.path().join("copy.hexis");
     fx.picker.set_save(Some(dest.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
     let copy = super::db::Store::open(&dest).unwrap();

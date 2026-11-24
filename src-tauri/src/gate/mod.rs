@@ -332,7 +332,7 @@ impl GateCore {
         let watcher = {
             let inner = Arc::clone(&inner);
             std::thread::Builder::new()
-                .name("passman-idle".into())
+                .name("hexis-idle".into())
                 .spawn(move || {
                     let idle = Arc::clone(&inner.idle);
                     idle.watch(|| inner.on_idle_expired());
@@ -389,7 +389,7 @@ impl GateCore {
     }
 
     /// Is the gate in a state that needs the panic wipe to believe data exists? (Used by the
-    /// wipe's pre-flight: a folder with no sign of Passman is refused only when this is true.)
+    /// wipe's pre-flight: a folder with no sign of Hexis is refused only when this is true.)
     pub fn holds_state(&self) -> bool {
         self.is_enabled()
     }

@@ -16,10 +16,10 @@ pub const ZIP_RATIO_FLOOR: u64 = 1024 * 1024;
 pub const MAX_ZIP_RATIO: u64 = 200;
 /// Most records (rows, items, accounts, archive members) any import may hold.
 pub const MAX_ENTRIES: usize = 200_000;
-/// One text value is cut to this many bytes while parsing (Passman itself accepts 64 KiB, so a
+/// One text value is cut to this many bytes while parsing (Hexis itself accepts 64 KiB, so a
 /// longer value is later reported as "not importable" instead of silently losing its tail).
 pub const MAX_VALUE_BYTES: usize = 1024 * 1024;
-/// Most custom fields kept per parsed record (Passman stores 50).
+/// Most custom fields kept per parsed record (Hexis stores 50).
 pub const MAX_PARSED_FIELDS: usize = 200;
 /// Attachments larger than the encrypted drive accepts (52,428,800 bytes) are not kept.
 pub const MAX_ATTACHMENT_BYTES: usize = 52_428_800;
@@ -47,7 +47,7 @@ pub const MSG_UNREADABLE: &str = "That file could not be read. Check that it sti
 pub const MSG_DAMAGED: &str = "That file is damaged or incomplete, so it cannot be imported.";
 pub const MSG_WRONG_FORMAT: &str =
     "That file is not in the format you chose. Check the format and try again.";
-pub const MSG_UNKNOWN: &str = "That file is not in a format Passman can import.";
+pub const MSG_UNKNOWN: &str = "That file is not in a format this app can import.";
 pub const MSG_TOO_MANY: &str = "That file has too many entries to import (200,000 at most).";
 pub const MSG_ENCRYPTED_EXPORT: &str = "This export is encrypted. Export it unencrypted from the app, import it, then delete the file.";
 pub const MSG_TOO_DEEP: &str =

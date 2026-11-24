@@ -7,6 +7,7 @@ import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { NameField, useNameCheck } from "./NameField";
 import { StrengthMeter } from "./StrengthMeter";
+import { useBrandName } from "../../state/brand";
 
 const MIN_LENGTH = 8;
 
@@ -24,6 +25,7 @@ export function CreateFlow({ onBack, onCreated, onFinish }: { onBack: () => void
 }
 
 function Details({ onBack, onCreated }: { onBack: () => void; onCreated: () => void }) {
+  const brandName = useBrandName();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -73,7 +75,7 @@ function Details({ onBack, onCreated }: { onBack: () => void; onCreated: () => v
       </Field>
       <label className="flex cursor-pointer items-start gap-3 rounded-sm py-1 text-[0.93em] text-mist pointer-coarse:py-2">
         <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-0.5 size-4.5 shrink-0 accent-[var(--color-brass)] pointer-coarse:size-5.5" />
-        I understand that Passman cannot recover a forgotten master password.
+        I understand that {brandName} cannot recover a forgotten master password.
       </label>
       <Button type="submit" variant="key" block busy={busy} disabled={!ready} className="mt-1 min-h-11">
         {busy ? "Creating your vault" : "Create vault"}

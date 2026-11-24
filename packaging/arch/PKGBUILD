@@ -1,8 +1,8 @@
-# Arch Linux package for Passman: builds the committed source of this repository (it is meant to be run from
+# Arch Linux package for Hexis: builds the committed source of this repository (it is meant to be run from
 # packaging/arch/ inside a clone: `makepkg -si`). Tauri has no pacman bundler, so this compiles the binary itself.
 # Replace the maintainer line and, for an AUR upload, switch `source` to the release tarball and fill in its checksum.
 # Maintainer: you <you@example.com>
-pkgname=passman
+pkgname=hexis
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='Post-quantum zero-knowledge password vault (local-first, optional S3 sync)'
@@ -33,8 +33,8 @@ build() {
 
 package() {
   cd "$srcdir/$pkgname"
-  install -Dm755 src-tauri/target/release/passman "$pkgdir/usr/bin/passman"
-  install -Dm644 packaging/passman.desktop "$pkgdir/usr/share/applications/passman.desktop"
-  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/passman.png"
+  install -Dm755 src-tauri/target/release/hexis "$pkgdir/usr/bin/hexis"
+  install -Dm644 packaging/hexis.desktop "$pkgdir/usr/share/applications/hexis.desktop"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/hexis.png"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

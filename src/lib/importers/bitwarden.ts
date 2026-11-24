@@ -22,7 +22,7 @@ export function looksLikeBitwarden(text: string): boolean {
   return t.startsWith("{") && /"items"\s*:/.test(t.slice(0, 200_000));
 }
 
-/** Maps a Bitwarden unencrypted JSON export to Passman drafts. Nothing is dropped silently. */
+/** Maps a Bitwarden unencrypted JSON export to item drafts. Nothing is dropped silently. */
 export function parseBitwarden(text: string): ImportResult {
   let data: BwExport;
   try {

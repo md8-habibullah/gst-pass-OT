@@ -333,7 +333,7 @@ fn a_fingerprint_is_invalid_input_on_a_desktop_and_counts_nothing() {
 fn the_reversed_pin_wipes_over_ipc_with_exactly_the_wiped_outcome() {
     let h = harness();
     gated(&h);
-    std::fs::write(h.dir.path().join("notes.txt"), b"not Passman's").unwrap();
+    std::fs::write(h.dir.path().join("notes.txt"), b"not Hexis's").unwrap();
     let out = h.ok("gate_submit", json!({"input": "8642"}));
     assert_eq!(out, json!({"kind": "wiped"}));
     assert_eq!(files(&h), ["notes.txt"], "only the unknown file is left");

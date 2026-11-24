@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build and test src-tauri/src/crypto WITHOUT Tauri or any GUI system library.
 
-The crypto module has no GUI dependency, but the `passman` crate as a whole needs
+The crypto module has no GUI dependency, but the `hexis` crate as a whole needs
 webkit2gtk-4.1 to compile. This script generates a bare crate that `#[path]`-includes the very
 same source files, with a Cargo.toml derived from src-tauri/Cargo.toml (tauri entries dropped),
 so dependency versions cannot drift.
@@ -11,7 +11,7 @@ so dependency versions cannot drift.
     python3 scripts/crypto-harness.py check
     python3 scripts/crypto-harness.py test -- --nocapture kem::   # extra args go to cargo/test
 
-Environment: PASSMAN_HARNESS_DIR (default ~/.cache/passman-crypto-harness), CARGO_BUILD_JOBS (default 2).
+Environment: HEXIS_HARNESS_DIR (default ~/.cache/hexis-crypto-harness), CARGO_BUILD_JOBS (default 2).
 Note: the harness has its own Cargo.lock; src-tauri/Cargo.lock (once it exists) may pin other patch versions.
 """
 import os
@@ -23,7 +23,7 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parent.parent
 MANIFEST = REPO / "src-tauri" / "Cargo.toml"
 CRYPTO_MOD = REPO / "src-tauri" / "src" / "crypto" / "mod.rs"
-HARNESS = pathlib.Path(os.environ.get("PASSMAN_HARNESS_DIR", pathlib.Path.home() / ".cache" / "passman-crypto-harness"))
+HARNESS = pathlib.Path(os.environ.get("HEXIS_HARNESS_DIR", pathlib.Path.home() / ".cache" / "hexis-crypto-harness"))
 
 
 def derive_manifest() -> str:
@@ -40,7 +40,7 @@ def derive_manifest() -> str:
                 continue
             keep.append(line)
     head = (
-        '[package]\nname = "passman-crypto-harness"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n'
+        '[package]\nname = "hexis-crypto-harness"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n'
         '[lib]\npath = "src/lib.rs"\n\n'
     )
     return head + "\n".join(keep).rstrip() + "\n"

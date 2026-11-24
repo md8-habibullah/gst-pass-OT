@@ -456,7 +456,7 @@ fn row_entry(format: ImportFormat, c: &Cols, row: &StringRecord) -> Row {
         }
     }
     if format == ImportFormat::BitwardenCsv {
-        super::bitwarden::apply_passman_extras(&mut e);
+        super::bitwarden::apply_hexis_extras(&mut e);
     }
     Row::Entry(Box::new(e))
 }

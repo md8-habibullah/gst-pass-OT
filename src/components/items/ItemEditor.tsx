@@ -11,6 +11,7 @@ import { Field, Switch, TextArea, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 import { PasswordGenerator } from "./PasswordGenerator";
 import { TotpInput } from "./TotpInput";
+import { brandName } from "../../state/brand";
 import { TYPE_META, TYPE_ORDER } from "./typeMeta";
 
 const blank = (type: ItemType): ItemDraft => ({ type, title: "", favorite: false, tags: [], folder: null, fields: {}, customFields: [] });
@@ -148,7 +149,7 @@ export function ItemEditor() {
       const parsed = parseOtpInput(raw);
       if (parsed.kind === "error") return setError(parsed.message);
       if (parsed.kind === "export") {
-        if (draft.type !== "totp" || editing) return setError("That is a multi-account export. Add it from New, Code only, and Passman will split it into one item per account.");
+        if (draft.type !== "totp" || editing) return setError(`That is a multi-account export. Add it from New, Code only, and ${brandName()} will split it into one item per account.`);
         split = parsed.accounts;
       } else if (parsed.kind === "ok") {
         fields.totp = parsed.account.value;

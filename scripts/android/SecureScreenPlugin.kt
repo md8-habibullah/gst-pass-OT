@@ -1,4 +1,4 @@
-// Passman: screen protection for the encrypted drive on Android.
+// Hexis: screen protection for the encrypted drive on Android.
 //
 // UNVERIFIED: written without an Android SDK or device, modelled on the Kotlin sources of
 // tauri 2.12.7 (mobile/android .../plugin/Plugin.kt) and tauri-plugin-barcode-scanner 2.5.3
@@ -13,17 +13,17 @@
 // How it is wired:
 //   * Rust: `commands::drive::secure_screen::init()` registers a Tauri plugin named
 //     "secure-screen" whose setup calls
-//     `api.register_android_plugin("app.passman.securescreen", "SecureScreenPlugin")`;
+//     `api.register_android_plugin("dev.habibullah.hexis.securescreen", "SecureScreenPlugin")`;
 //     lib.rs adds it with `builder.plugin(...)` under `#[cfg(target_os = "android")]`.
 //   * Kotlin: this file must be compiled into the Android app module under the package below,
 //     for example by copying it to
-//     `src-tauri/gen/android/app/src/main/java/app/passman/securescreen/SecureScreenPlugin.kt`
+//     `src-tauri/gen/android/app/src/main/java/dev/habibullah/hexis/securescreen/SecureScreenPlugin.kt`
 //     after `tauri android init` (the `gen/android` folder is generated and not kept in the
 //     repository, which is why the source lives here).
 //   * Nothing else changes: no manifest entry, no permission, no Gradle dependency beyond the
 //     Tauri Android library every Tauri app already has.
 
-package app.passman.securescreen
+package dev.habibullah.hexis.securescreen
 
 import android.app.Activity
 import android.view.WindowManager

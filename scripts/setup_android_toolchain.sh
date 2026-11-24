@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up the Android build toolchain for Passman at USER level (no sudo, nothing outside your home directory):
+# Sets up the Android build toolchain for Hexis at USER level (no sudo, nothing outside your home directory):
 #   ~/Android/Sdk          Android SDK (command-line tools, platform 36, build-tools 36.0.0, NDK r28c)
 #   ~/.local/jdks/temurin-21   JDK 21 (Gradle and the Android Gradle plugin do not run on newer JDKs)
 #   rustup target aarch64-linux-android (and the other three Android targets with --all-targets)
@@ -16,7 +16,7 @@ set -euo pipefail
 SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
 JDKS="$HOME/.local/jdks"
 JDK_HOME_DIR="$JDKS/temurin-21"
-CACHE="$HOME/.cache/passman-android"
+CACHE="$HOME/.cache/hexis-android"
 REPO="https://dl.google.com/android/repository"
 
 # Pinned from https://dl.google.com/android/repository/repository2-3.xml and the Adoptium API on 2026-11-24.
@@ -27,7 +27,7 @@ PACKAGES=("platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2
 
 log() { printf '[android-setup] %s\n' "$*"; }
 fetch() { # fetch <url> <file>   (resumable, no progress noise)
-  mkdir -p "$CACHE"; curl -fL --retry 3 --retry-delay 3 -C - --no-progress-meter -A "passman-build-check" -o "$2" "$1"
+  mkdir -p "$CACHE"; curl -fL --retry 3 --retry-delay 3 -C - --no-progress-meter -A "hexis-build-check" -o "$2" "$1"
 }
 
 phase1() {

@@ -1,6 +1,6 @@
 # Privacy
 
-Short version: **Passman's own code collects nothing.** There is no account, no server of ours, no analytics, no
+Short version: **Hexis's own code collects nothing.** There is no account, no server of ours, no analytics, no
 telemetry, no crash reporting and no update check. What you store stays on your device, encrypted, unless you choose
 to back it up to storage you control. **One exception on Android:** the optional QR scanner uses Google's ML Kit
 library, which Google documents as able to send technical usage metrics (see "Android permissions" below).
@@ -16,7 +16,7 @@ library, which Google documents as able to send technical usage metrics (see "An
 * **Links** in your items open in your default browser only when you click them, and only `http` and `https` links.
 * **Clipboard.** Copied passwords and codes are cleared after 15, 30 or 60 seconds (your choice). The timer runs inside
   the app, so it only works while the app is open; if the app is closed first, the copied value stays on the clipboard
-  until something else replaces it. A system-level clipboard manager can keep its own history that Passman cannot clear.
+  until something else replaces it. A system-level clipboard manager can keep its own history that Hexis cannot clear.
 * **Files you import or export** are read or written only where you point the app. A readable (unencrypted) export is
   written with owner-only permissions after you re-enter the master password; delete it when you are done.
 * **No tracking identifiers.** The app generates none and sends none.
@@ -33,12 +33,21 @@ service and no vibration permission (a build check and the manifest patch enforc
 
 **Google ML Kit.** The QR scanner is the Tauri barcode-scanner plugin, which relies on Google's ML Kit barcode library
 through Google Play services. Google documents that ML Kit may send technical usage and performance metrics to Google,
-and the APK contains Google's data-transport components for that. Passman's own code never receives or sends that
+and the APK contains Google's data-transport components for that. Hexis's own code never receives or sends that
 traffic, and it has **not been measured** what the library sends or when. If that matters to you, do not use the
 scanner (type the setup key instead), or use the Linux builds, which do not include it. Replacing the scanner with
 one that never leaves the device is an open task (see `ai-docs/CHANGELOG_AND_STATE.md`).
 
 The exact list in a given build is the merged manifest of that build; the release notes of each version state it.
+
+## The one-line installer
+
+`install.sh` (the command on the Download page) is a script you run once, not part of the app. It sends ordinary HTTPS
+requests, with nothing from your machine in them beyond what any download reveals (your address, the file asked for):
+to the project site for the script, the signing key and the package-repository files, and to `github.com` for release
+files and their `SHA256SUMS` when it downloads directly. It reads `/etc/os-release` and checks which tools exist on your
+machine to choose a package, and it does not send that anywhere. It sets nothing up that phones home. Read it before
+you run it: it is one plain shell file, shown on the site at `/download/install-script/`.
 
 ## The project website and repository
 

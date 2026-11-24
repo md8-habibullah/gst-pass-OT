@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""mock_s3.py - a tiny S3-compatible server for testing Passman's backup targets.
+"""mock_s3.py - a tiny S3-compatible server for testing Hexis's backup targets.
 
 DEVELOPMENT ONLY. Python standard library only. Listens on 127.0.0.1 and nowhere else.
 
 It is a *verifying* stand-in, not a permissive one: every request must carry a valid AWS
-Signature Version 4 **query-string** signature (what Passman's S3 client sends), computed
+Signature Version 4 **query-string** signature (what Hexis's S3 client sends), computed
 independently here from the canonical request. It rejects a wrong access key, a wrong secret
 key, a wrong region and a clock that is too far off, exactly as the answers an S3 service gives
 (InvalidAccessKeyId, SignatureDoesNotMatch, AuthorizationQueryParametersError,
@@ -32,7 +32,7 @@ them) and need Content-Type: application/json for POST.
 
 Example:
   python3 scripts/mock_s3.py --port 9333 --access-key AKIAMOCK --secret-key mocksecret \\
-      --region us-east-1 --bucket passman-test
+      --region us-east-1 --bucket hexis-test
   python3 scripts/mock_s3.py --selftest        # SigV4 known-answer test, then exit
 
 With --port 0 the OS picks a free port; the first stdout line is then  MOCK_S3_PORT=<n>.
@@ -681,7 +681,7 @@ def main():
     p.add_argument("--access-key", default="AKIAMOCKMOCKMOCK")
     p.add_argument("--secret-key", default="mock-secret-access-key-not-real")
     p.add_argument("--region", default="us-east-1")
-    p.add_argument("--bucket", default="passman-test")
+    p.add_argument("--bucket", default="hexis-test")
     p.add_argument("--data-dir", default=None, help="keep objects here (default: in memory)")
     p.add_argument("--fail-after", type=int, default=None, metavar="N",
                    help="answer every request after the first N with --fail-status")

@@ -10,7 +10,7 @@
 //!   A mismatch is an error, not a skip: a damaged backup must not silently restore less;
 //! * objects with any other key are ignored (other software may share the folder);
 //! * tombstoned items are not restored (their data is stale by definition);
-//! * a bucket with more than [`MAX_OBJECTS`] objects is refused (it is not a Passman backup).
+//! * a bucket with more than [`MAX_OBJECTS`] objects is refused (it is not a Hexis backup).
 //!
 //! Downloads are sequential and the inserts run in one transaction on the new, private file, so
 //! a failure leaves nothing usable behind (the caller deletes the folder).
@@ -31,12 +31,12 @@ use std::collections::HashSet;
 pub const MAX_OBJECTS: usize = 100_000;
 
 const MSG_NO_VAULT: &str =
-    "No Passman vault was found at this location (the key bundle is missing). Check the bucket, the folder (prefix) and the keys.";
-const MSG_BAD_BUNDLE: &str = "The key bundle at this location is damaged or is not a Passman key bundle, so it cannot be restored.";
+    "No vault of this app was found at this location (the key bundle is missing). Check the bucket, the folder (prefix) and the keys.";
+const MSG_BAD_BUNDLE: &str = "The key bundle at this location is damaged or is not a key bundle of this app, so it cannot be restored.";
 const MSG_BAD_OBJECT: &str =
     "An object in this backup is damaged or does not belong where it was found, so the restore was stopped. Nothing was changed on this device.";
 const MSG_TOO_MANY: &str =
-    "This location holds far more objects than a Passman vault, so it was not restored.";
+    "This location holds far more objects than a vault, so it was not restored.";
 const MSG_LISTING: &str = "The storage service's object listing did not make progress.";
 
 /// What a restore brought in.

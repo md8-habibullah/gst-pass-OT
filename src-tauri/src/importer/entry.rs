@@ -2,7 +2,7 @@
 //!
 //! [`ImportedEntry`] is what every parser produces. It wipes all of its text when dropped and
 //! never prints a value (`Debug` shows only the kind and counts). The conversion to a draft lives
-//! in [`ImportedEntry::to_draft`] and is the single place that decides which Passman field a
+//! in [`ImportedEntry::to_draft`] and is the single place that decides which Hexis field a
 //! source value lands in.
 
 use super::limits::{cap_chars, warn_title};
@@ -14,7 +14,7 @@ use crate::storage::model::{
 use std::collections::BTreeMap;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// The Passman item type a record becomes.
+/// The Hexis item type a record becomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EntryKind {
     #[default]
@@ -60,7 +60,7 @@ pub struct ImportedEntry {
     /// One-time code values as found in the source (otpauth link or Base32 key).
     pub totp: Vec<String>,
     pub custom_fields: Vec<ImportedField>,
-    /// Values for cards, identities, SSH keys and codes, keyed by the Passman field key
+    /// Values for cards, identities, SSH keys and codes, keyed by the Hexis field key
     /// (`number`, `firstName`, `privateKey`, `issuer`, ...). A card may also carry a pseudo key
     /// `expiry` ("09/2029") that is split into month and year.
     pub typed: Vec<(String, String)>,

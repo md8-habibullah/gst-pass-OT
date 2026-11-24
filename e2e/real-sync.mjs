@@ -17,7 +17,7 @@ const keyOf = (f) => { const n = f.slice(S3_DATA.length + 1); return /^[0-9a-f]+
 
 let s3;
 async function startS3() {
-  s3 = spawn("python3", ["-I", `${ROOT}/scripts/mock_s3.py`, "--port", String(S3_PORT), "--bucket", "passman-test", "--access-key", "AKIAMOCK", "--secret-key", "mocksecret", "--region", "us-east-1", "--data-dir", S3_DATA], { stdio: ["ignore", "pipe", "pipe"] });
+  s3 = spawn("python3", ["-I", `${ROOT}/scripts/mock_s3.py`, "--port", String(S3_PORT), "--bucket", "hexis-test", "--access-key", "AKIAMOCK", "--secret-key", "mocksecret", "--region", "us-east-1", "--data-dir", S3_DATA], { stdio: ["ignore", "pipe", "pipe"] });
   for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${S3_PORT}/__mock/state`); return; } catch { await sleep(100); } }
   throw new Error("mock S3 did not start");
 }
@@ -25,7 +25,7 @@ async function fillTarget(p, { name }) {
   if (name) await p.typeLabel("Name", name);
   await p.click("button[aria-pressed]", "Other S3-compatible");
   await p.typeLabel("Endpoint", `http://127.0.0.1:${S3_PORT}`);
-  await p.typeLabel("Bucket", "passman-test"); await p.typeLabel("Region", "us-east-1");
+  await p.typeLabel("Bucket", "hexis-test"); await p.typeLabel("Region", "us-east-1");
   await p.typeLabel("Access key ID", "AKIAMOCK"); await p.typeLabel("Secret access key", "mocksecret");
   const pathStyle = await p.eval(`(()=>{const b=[...document.querySelectorAll('[role=switch]')].find(x=>x.getAttribute('aria-label')==='Path-style addressing'); return b? b.getAttribute('aria-checked')==='true': null})()`);
   if (pathStyle === false) await p.click('[role=switch][aria-label="Path-style addressing"]');

@@ -124,7 +124,7 @@ impl AppCore {
         self.wipe_with(&mut NoObserver).map(|_| ())
     }
 
-    /// Erase everything Passman keeps in the data folder. See `gate::wipe` for the order of the
+    /// Erase everything Hexis keeps in the data folder. See `gate::wipe` for the order of the
     /// file steps. In memory, **first** the open session goes (the keys are zeroized and the
     /// backup worker is joined, whatever happens next); **after** the files are gone the gate and
     /// the account list are reset, so a refused wipe never leaves the gate open.

@@ -52,7 +52,7 @@ use crate::storage::vault::Vault;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// A bucket with more objects than this is not a Passman vault (the same bound as a restore).
+/// A bucket with more objects than this is not a Hexis vault (the same bound as a restore).
 pub const MAX_OBJECTS: usize = 100_000;
 /// How many steps back a lineage is followed before it counts as "not provable".
 const MAX_WALK: usize = 5_000;

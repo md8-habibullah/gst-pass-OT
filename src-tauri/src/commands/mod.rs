@@ -95,7 +95,7 @@ pub fn flush_then(
     let then = Arc::new(then);
     let (then_in_thread, gate_in_thread) = (Arc::clone(&then), Arc::clone(&gate));
     let spawned = std::thread::Builder::new()
-        .name("passman-exit-flush".into())
+        .name("hexis-exit-flush".into())
         .spawn(move || {
             core.flush_for_exit(EXIT_FLUSH);
             core.lock();
@@ -113,7 +113,7 @@ pub fn flush_then(
 /// durable and is retried at the next trigger.
 pub fn flush_in_background(core: Arc<AppCore>) {
     let _ = std::thread::Builder::new()
-        .name("passman-background-flush".into())
+        .name("hexis-background-flush".into())
         .spawn(move || {
             core.flush_for_exit(EXIT_FLUSH);
         });
@@ -183,8 +183,11 @@ impl<R: tauri::Runtime> FilePicker for DialogPicker<R> {
             self.app
                 .dialog()
                 .file()
-                .set_title("Choose a Passman vault file")
-                .add_filter("Passman vault", &["passman", "db"])
+                .set_title("Choose a vault file")
+                .add_filter(
+                    "Vault file",
+                    &["hexis", crate::storage::legacy::PREVIOUS_EXTENSION, "db"],
+                )
                 .blocking_pick_file(),
         )
     }
@@ -197,7 +200,7 @@ impl<R: tauri::Runtime> FilePicker for DialogPicker<R> {
                 .file()
                 .set_title("Save a copy of your vault")
                 .set_file_name(suggested_name)
-                .add_filter("Passman vault", &["passman"])
+                .add_filter("Vault file", &["hexis"])
                 .blocking_save_file(),
         )
     }

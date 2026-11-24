@@ -3,6 +3,7 @@
 //   Everywhere:    decode a QR code from an image (chosen file, dropped file or pasted screenshot) with jsQR.
 import { isTauri } from "@tauri-apps/api/core";
 import jsQR from "jsqr";
+import { brandName } from "../state/brand";
 import { createStore } from "../state/store";
 import { withNativeUi } from "./nativeUi";
 
@@ -28,7 +29,7 @@ export async function scanWithCamera(): Promise<string | null> {
   const scanner = await import("@tauri-apps/plugin-barcode-scanner");
   let state = await scanner.checkPermissions();
   if (state !== "granted") state = await scanner.requestPermissions();
-  if (state !== "granted") throw new ScanError("Camera access is turned off for Passman. Allow it in the app settings to scan QR codes.", "denied");
+  if (state !== "granted") throw new ScanError(`Camera access is turned off for ${brandName()}. Allow it in the app settings to scan QR codes.`, "denied");
   setScanning(true);
   try {
     const result = await withNativeUi(() => scanner.scan({ windowed: true, formats: [scanner.Format.QRCode] }));

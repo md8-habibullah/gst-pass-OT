@@ -5,19 +5,32 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function launch({ width = 1440, height = 900, port = 9333, profile, mobile = false } = {}) {
+// The first Chrome start on a busy CI runner can take longer than any fixed wait, so a failed start is retried.
+export async function launch(opts = {}) {
+  let last;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { return await launchOnce(opts); } catch (e) { last = e; if (e.fatal) break; await sleep(1500); }
+  }
+  throw last;
+}
+
+async function launchOnce({ width = 1440, height = 900, port = 9333, profile, mobile = false } = {}) {
   mkdirSync(profile, { recursive: true });
   // CHROME_BIN lets CI use the runner's google-chrome; on the dev machine the default is the `chromium` on the PATH.
   const proc = spawn(process.env.CHROME_BIN || "chromium", [
     "--headless=new", "--disable-gpu", "--no-first-run", "--disable-extensions", "--hide-scrollbars",
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
     "--force-device-scale-factor=1", "--disable-background-networking", "--no-sandbox", "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  let errTail = "", spawnError;
+  proc.on("error", (e) => { spawnError = e; }); // for example ENOENT: the browser binary does not exist
+  proc.stderr?.on("data", (d) => { if (errTail.length < 2000) errTail += d; });
   let version;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200 && !spawnError; i++) { // up to 20 s
     try { version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); break; } catch { await sleep(100); }
   }
-  if (!version) { proc.kill(); throw new Error("chromium did not start"); }
+  if (spawnError) { const e = new Error(`could not start ${process.env.CHROME_BIN || "chromium"}: ${spawnError.message}`); e.fatal = true; throw e; }
+  if (!version) { proc.kill(); throw new Error(`chromium did not start: ${errTail.trim().slice(0, 500)}`); }
   const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const target = list.find((t) => t.type === "page");
   const page = new Page(target.webSocketDebuggerUrl, proc, profile);

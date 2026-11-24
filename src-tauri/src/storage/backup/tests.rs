@@ -1543,7 +1543,7 @@ fn a_failed_restore_leaves_nothing_behind_and_keeps_the_open_account_open() {
         .profile_restore_from_backup("New", inp("x", "empty-bucket"))
         .unwrap_err();
     assert_eq!(e.code(), "remote");
-    assert!(e.to_string().contains("No Passman vault"), "{e}");
+    assert!(e.to_string().contains("No vault of this app"), "{e}");
     check("empty bucket");
 
     // the service refuses the keys / is down
@@ -1565,7 +1565,7 @@ fn a_failed_restore_leaves_nothing_behind_and_keeps_the_open_account_open() {
     );
     check("unreachable");
 
-    // a bundle that is not a Passman key bundle
+    // a bundle that is not a key bundle of this app
     fx.bucket("junk").plant(keys::BUNDLE, b"{\"hello\": 1}");
     assert_eq!(
         code(fx.app.profile_restore_from_backup("New", inp("x", "junk"))),
@@ -1628,7 +1628,7 @@ fn a_damaged_or_misplaced_object_stops_the_restore_and_cleans_up() {
 }
 
 #[test]
-fn objects_that_are_not_passman_objects_are_ignored_by_a_restore() {
+fn objects_that_are_not_hexis_objects_are_ignored_by_a_restore() {
     let fx = Fx::new(manual());
     let src = populate(&fx);
     let b = fx.bucket("bkt");
@@ -1680,7 +1680,7 @@ fn only_targets_marked_shared_travel_in_an_exported_file() {
     let fx = Fx::new(manual());
     let src = populate(&fx);
     let out = tempfile::tempdir().unwrap();
-    let dest = out.path().join("copy.passman");
+    let dest = out.path().join("copy.hexis");
     fx.picker.set_save(Some(dest.clone()));
     fx.app.vault_export_file(PW.into()).unwrap().unwrap();
 

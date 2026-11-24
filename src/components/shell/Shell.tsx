@@ -69,7 +69,7 @@ export function Shell() {
   const pushed = useRef(false);
   useEffect(() => {
     if (layout !== "compact") return;
-    if (hasDetailPage && !pushed.current) { history.pushState({ passman: "detail" }, ""); pushed.current = true; }
+    if (hasDetailPage && !pushed.current) { history.pushState({ hexis: "detail" }, ""); pushed.current = true; }
     if (!hasDetailPage) pushed.current = false;
   }, [layout, hasDetailPage]);
   useEffect(() => {

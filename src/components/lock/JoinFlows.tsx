@@ -5,6 +5,7 @@ import { importProfileFile, pushToast, restoreFromBackup } from "../../state/app
 import { TargetForm } from "../backup/TargetForm";
 import { Button } from "../ui/Button";
 import { NameField, useNameCheck } from "./NameField";
+import { useBrandName } from "../../state/brand";
 
 function Back({ onBack, disabled }: { onBack: () => void; disabled?: boolean }) {
   return (
@@ -14,8 +15,9 @@ function Back({ onBack, disabled }: { onBack: () => void; disabled?: boolean }) 
   );
 }
 
-/** Adds an existing Passman vault file as a new account. The core opens the file dialog. */
+/** Adds an existing vault file as a new account. The core opens the file dialog. */
 export function ImportFlow({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const brandName = useBrandName();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +46,7 @@ export function ImportFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
       <Back onBack={onBack} disabled={busy} />
       <div>
         <h2 className="font-display text-[1.45rem] leading-tight font-semibold">Open a vault file</h2>
-        <p className="mt-2 text-mist">Choose a vault file you exported from Passman. It keeps the master password it was created with, and nothing in it is decrypted until you unlock it.</p>
+        <p className="mt-2 text-mist">Choose a vault file you exported from {brandName}. It keeps the master password it was created with, and nothing in it is decrypted until you unlock it.</p>
       </div>
       {error && <p role="alert" className="rounded-lg border border-ember/40 bg-danger/10 px-4 py-3 text-[0.95em]">{error}</p>}
       <NameField value={name} onChange={setName} disabled={busy} autoFocus />
@@ -55,6 +57,7 @@ export function ImportFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
 
 /** Restores a vault from the master backup into a new account on this device. */
 export function RestoreFlow({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const brandName = useBrandName();
   const [name, setName] = useState("");
   const check = useNameCheck(name);
 
@@ -70,7 +73,7 @@ export function RestoreFlow({ onBack, onDone }: { onBack: () => void; onDone: ()
       <Back onBack={onBack} />
       <div>
         <h2 className="font-display text-[1.45rem] leading-tight font-semibold">Restore from a backup</h2>
-        <p className="mt-2 text-[0.93em] text-mist">Enter the details of your master backup. Passman downloads the encrypted vault; you then unlock it with its master password. Backups you ticked to keep in the master backup come back with it, already set up.</p>
+        <p className="mt-2 text-[0.93em] text-mist">Enter the details of your master backup. {brandName} downloads the encrypted vault; you then unlock it with its master password. Backups you ticked to keep in the master backup come back with it, already set up.</p>
       </div>
       <NameField value={name} onChange={setName} />
       <TargetForm mode="restore" submitLabel="Restore vault" onSubmit={restore} />

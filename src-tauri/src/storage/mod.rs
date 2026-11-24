@@ -19,6 +19,7 @@ pub mod db;
 pub mod drive;
 pub mod error;
 pub mod files;
+pub mod legacy;
 pub mod links;
 pub mod model;
 pub mod profiles;

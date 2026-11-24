@@ -47,7 +47,7 @@ pub const MSG_DIVERGED: &str =
     "This backup holds a different copy of an item at the same version, so it was not overwritten. Press Back up now to merge it.";
 pub const MSG_UNSEEN_REMOTE: &str = "This backup holds a change from another device that this device has not merged yet, so it was not overwritten. Press Back up now to merge it.";
 pub const MSG_FOREIGN_OBJECT: &str =
-    "An object in this backup is not a Passman object, so it was not overwritten.";
+    "An object in this backup is not an object of this app, so it was not overwritten.";
 pub const MSG_OTHER_VAULT: &str = "This location already holds a different vault. Choose an empty folder (prefix) or another bucket.";
 const MSG_LOCAL: &str = "The vault database could not be read for the backup.";
 
@@ -822,7 +822,7 @@ impl Replicator {
         let shared = Arc::clone(&self.shared);
         shared.alive.store(true, Ordering::SeqCst);
         let spawned = std::thread::Builder::new()
-            .name("passman-backup".into())
+            .name("hexis-backup".into())
             .spawn(move || {
                 worker_loop(&shared);
                 // Settings (and with them the keys) are wiped as the worker ends.
@@ -946,7 +946,7 @@ impl Replicator {
         let shared = Arc::clone(&self.shared);
         let (tx, rx) = mpsc::channel();
         let spawned = std::thread::Builder::new()
-            .name("passman-flush".into())
+            .name("hexis-flush".into())
             .spawn(move || {
                 shared.drain_all(false, Some(end));
                 let left = shared
