@@ -51,6 +51,27 @@ with stub tools and a local server. To try it for real in containers (needs dock
 The installer must stay plain POSIX `sh` (it runs under dash and busybox). CI repeats it on Linux for every push and pull request, and also builds the
 Linux bundles and the Android APK, so a change that only breaks packaging is caught too.
 
+### Before you push: what CI checks that your machine may not
+
+A green `scripts/verify_all.sh` on a developer machine has twice not been a green CI run (2026-11-25, two red pushes in a row). The causes were
+all avoidable, so each is now a rule:
+
+1. **Use CI's tool versions, not the newest local ones.** CI runs on `ubuntu-22.04`. Its `shellcheck` is 0.8.0 and flags `A && B || C` (SC2015);
+   a local 0.11 does not. `scripts/verify_all.sh` now runs `shellcheck` a second time inside an `ubuntu:22.04` container (needs Docker). In shell
+   code never write `A && B || C`; write `if A; then B; else C; fi`, or `A || C` when B is not needed.
+2. **A shell test must be run under the shells it will meet.** Debian and Ubuntu run `sh` as **dash**; Fedora, Arch and openSUSE as bash. Dash
+   remembers where `command -v prog` found a program and keeps answering after the program was removed; call `hash -r` first, or look inside a
+   subshell. When you change `scripts/install.sh` or `scripts/tests/container_case.sh`, run
+   `scripts/check_installer_in_containers.sh` (Debian 12, Ubuntu 22.04 and Fedora against the packages of the newest green CI run) **before you
+   push**. If Docker is up and the run is a few minutes, "not run" is not an acceptable answer.
+3. **Never assert that a short string is absent from generated text.** A test that does `!text.contains("737")` on a result that holds a random
+   id, a UUID, a millisecond timestamp, a hash or base64 fails by chance, about once in fifty runs (`clone_is_password_gated_and_never_returns_secrets`
+   did, on CI). Assert the structure instead (exact keys, exact values), and use `contains` only for strings long enough that a chance match is
+   impossible (a full card number, a marker such as `SECRET-BANK-REF`).
+4. **Say exactly what was run.** "Verified" means it ran with CI's versions and shells. A tool that was newer than CI's, or a container that was not
+   started, is reported as "not run", and a cheap check is run instead of being listed as a gap. After a push, read the CI result (`gh run view`)
+   and fix a red job before moving on.
+
 ### Rules every change follows
 
 1. **Tests with the change.** A bug fix gets a test that fails without it; a feature gets tests for its failure

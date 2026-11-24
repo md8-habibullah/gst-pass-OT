@@ -2,6 +2,20 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-25, after the push): two red CI runs, and the rules that follow
+
+**What happened.** The push `2c35375` (next code, clean uninstall, themes) and the fix `e492fca` each came back red, although the local checks had passed. Nothing was wrong with the app. Three separate causes, two of them mine:
+
+1. **`shellcheck` SC2015** in `scripts/tests/container_case.sh` (`[ ! -e a ] && [ ! -e b ] || fail`). CI runs `shellcheck` 0.8.0 on `ubuntu-22.04`; the local 0.11 does not flag it. Reproduced with 0.8.0 and 0.9.0 in containers.
+2. **Dash.** The same file ran `command -v hexis` in the main shell, and `dash` (the `sh` of Debian and Ubuntu) keeps that answer after the program is removed, so the uninstall check said "hexis is still there" on Debian 12, Ubuntu 22.04 and Ubuntu 24.04 (Fedora and Arch use bash and passed). It was visible only in a container run, which was left as "not verified" although Docker was up and the packages of an earlier CI run could be downloaded.
+3. **A flaky old test.** `clone_is_password_gated_and_never_returns_secrets` searched the serialized clone result for the card code `737`, which sits inside a random id or a timestamp about once in fifty runs. Not caused by this round's code, and not catchable by one local run; the test now checks the result's exact keys and values.
+
+(A fourth red job, the openSUSE Tumbleweed installer, was the openSUSE mirror being out of sync for a while; it passed on a re-run.)
+
+**Rules now written down** (`CONTRIBUTING.md`, "Before you push: what CI checks that your machine may not"): use CI's tool versions, not the newest local ones; run shell tests under dash and bash; never assert the absence of a short string in generated text; say exactly what was run, and run a cheap check instead of listing it as a gap.
+
+**Changed to enforce them.** `scripts/verify_all.sh` runs `shellcheck` a second time in an `ubuntu:22.04` container (CI's version). New `scripts/check_installer_in_containers.sh` runs the installer and its container test in Debian 12, Ubuntu 22.04 and Fedora against the packages of the newest green CI run (tried: Debian 12 passes end to end). Verified after the fixes: Debian 12 and openSUSE Tumbleweed container runs pass with the real CI packages.
+
 ## Update (2026-11-25): next code, a clean uninstall, light and dark
 
 **The request:** show the next (and previous) TOTP code; when someone uninstalls, nothing may stay behind (no cache, no cookies, no stored data), or the uninstall step must say plainly what is and is not removed; and the app, which was dark only, must have a proper light and a proper dark theme.
