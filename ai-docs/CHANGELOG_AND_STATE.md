@@ -2,6 +2,14 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, after the 0.2.0 push): the first CI run of the multi-S3 e2e, and a faster pipeline
+
+* **What failed:** the commit `3487630` went green everywhere except the end-to-end job, where only `e2e/real-multi-s3.mjs` failed ("did not become ready", every other e2e script passed, `real-sync` 26/26). The cause was the test, not the app: it signed its S3 requests with `curl --aws-sigv4`, and curl 7.81 (what Ubuntu 22.04 CI runners ship) leaves `x-amz-content-sha256` out of the signed headers, so the S3 server answered 403 to every probe; curl 8.x signs it, which is why it passed on the dev machine. Reproduced in an `ubuntu:22.04` container against the same server image.
+* **Fix:** `sigv4Headers()` in that script now computes the Signature V4 headers in Node (empty body) and hands curl finished headers. Checked with curl 7.81 (PUT, list with a query string, GET, and a forged signature that must give 403) and with the whole script against the real core: 25/25. The "not ready" error now also prints the last HTTP answer and the container's stdout and stderr.
+* **Pipeline:** `e2e`, `linux` and `android` no longer wait for `checks` (they never used its output), so the four heavy jobs run side by side. `release` still needs every job, so nothing is published unless all of them pass. Not changed on purpose: tag builds start without a cache (clean release builds), and only GitHub's own actions are used.
+* **Known gap:** `nightly` does not wait for `e2e`, so the rolling nightly was replaced by a build whose e2e job was red. Left as it was; add `e2e` to its `needs` if the nightly should be gated too.
+* **The tag:** `v0.2.0` was pushed at `3487630` while the e2e job was red (the tag command list was not chained with `&&`). No release was opened, because the release job needs `e2e`. It has to be re-created at the commit that contains the fix.
+
 ## Update (2026-11-24, Q5): trusted time, time zones, a demo vault, shortcuts, layered settings, a calmer look
 
 **Versioned 0.2.0** (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml` and `Cargo.lock`, `tauri.conf.json`, `packaging/arch/PKGBUILD`; the changelog's accumulated Unreleased section is now `[0.2.0] - 2026-11-24`, with an upgrade note because `gate.json` and the item re-prompt flag change shape). Nothing is tagged: the owner tags `v0.2.0`, which opens the draft release. The website's home page lists the new features and the time check, and its stylesheet lost the lattice background and the gradient button to match the app; the site builds with all 40 links resolving. The social preview image was not regenerated (it needs `rsvg-convert`).

@@ -1,7 +1,8 @@
 # CI and release pipeline.
 #
-#   every push and pull request   checks -> e2e, site, linux bundles, android apk   (all kept as artifacts for 14 days)
-#                                  linux bundles -> installer: the one-line installer on real distributions
+#   every push and pull request   checks, e2e, site, linux bundles and android apk start together (the slowest one sets the
+#                                  time; artifacts are kept for 14 days). linux bundles -> installer: the one-line installer
+#                                  on real distributions. Nothing is published until every one of them has passed.
 #   push to main                  ... then replaces the rolling `nightly` pre-release with those artifacts
 #   push of a tag vX.Y.Z          ... then opens a DRAFT release for you to review and publish by hand
 #
@@ -65,7 +66,6 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   e2e:
     name: End-to-end (real Rust core, headless Chrome)
-    needs: checks
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
@@ -108,7 +108,6 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   linux:
     name: Linux bundles (deb, rpm, AppImage, tar.gz)
-    needs: checks
     runs-on: ubuntu-22.04 # the oldest glibc we support: bundles built here run on newer distributions
     timeout-minutes: 60
     env:
@@ -185,7 +184,6 @@ jobs:
   # ------------------------------------------------------------------------------------------------------------------
   android:
     name: Android APK (arm64)
-    needs: checks
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:

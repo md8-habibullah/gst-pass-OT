@@ -11,7 +11,7 @@
 // What it does NOT prove: any real provider (Amazon S3, Cloudflare R2, Backblaze B2). Versity GW is one S3-compatible server.
 // (MinIO would be the usual choice, but it no longer publishes its container images.)
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Core, SP, check, finish, freshDir, sleep } from "./lib.mjs";
 
 const BIN = process.env.E2E_BIN;
@@ -28,9 +28,31 @@ const B = new Core({ bin: BIN, data: freshDir("m-data-b"), port: 1448, args: [] 
 
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: opts.binary ? "buffer" : "utf8", maxBuffer: 64 << 20 });
 const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const hmac = (key, data) => createHmac("sha256", key).update(data).digest();
+/**
+ * The three headers of an AWS Signature V4 request with an empty body, computed here instead of by `curl --aws-sigv4`:
+ * curl 7.81 (Ubuntu 22.04, which is what the CI runners ship) leaves x-amz-content-sha256 out of the signed headers and the
+ * server answers 403 to every request, while curl 8.x signs it. Signing it ourselves makes the test independent of the curl version.
+ */
+function sigv4Headers(server, method, path) {
+  const [uri, query = ""] = path.split("?");
+  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, ""); // 20261124T143000Z
+  const day = amzDate.slice(0, 8);
+  const scope = `${day}/us-east-1/s3/aws4_request`;
+  const signed = "host;x-amz-content-sha256;x-amz-date";
+  const canonicalQuery = query.split("&").filter(Boolean).map((p) => (p.includes("=") ? p : `${p}=`)).sort().join("&");
+  const canonical = [method, uri, canonicalQuery, `host:127.0.0.1:${server.port}\nx-amz-content-sha256:${EMPTY_SHA}\nx-amz-date:${amzDate}\n`, signed, EMPTY_SHA].join("\n");
+  const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, createHash("sha256").update(canonical).digest("hex")].join("\n");
+  const key = hmac(hmac(hmac(hmac(`AWS4${server.secret}`, day), "us-east-1"), "s3"), "aws4_request");
+  return [
+    `Authorization: AWS4-HMAC-SHA256 Credential=${server.user}/${scope}, SignedHeaders=${signed}, Signature=${hmac(key, toSign).toString("hex")}`,
+    `x-amz-date: ${amzDate}`,
+    `x-amz-content-sha256: ${EMPTY_SHA}`,
+  ];
+}
 function s3(server, method, path, binary = false) {
-  const r = sh("curl", ["-sS", "--max-time", "20", "-X", method, "--user", `${server.user}:${server.secret}`, "--aws-sigv4", "aws:amz:us-east-1:s3",
-    "-H", `x-amz-content-sha256: ${EMPTY_SHA}`, "-w", "\n%{http_code}", `http://127.0.0.1:${server.port}${path}`], { binary });
+  const r = sh("curl", ["-sS", "--max-time", "20", "-X", method, ...sigv4Headers(server, method, path).flatMap((h) => ["-H", h]),
+    "-w", "\n%{http_code}", `http://127.0.0.1:${server.port}${path}`], { binary });
   const out = r.stdout ?? (binary ? Buffer.alloc(0) : "");
   const cut = out.lastIndexOf(binary ? 10 : "\n");
   return { code: Number((binary ? out.subarray(cut + 1) : out.slice(cut + 1)).toString()), body: binary ? out.subarray(0, cut) : out.slice(0, cut) };
@@ -45,8 +67,12 @@ async function startServer(s) {
     "-e", `ROOT_ACCESS_KEY_ID=${s.user}`, "-e", `ROOT_SECRET_ACCESS_KEY=${s.secret}`, IMAGE, "--port", ":7070", "posix", "/data"]);
   if (r.status !== 0) throw new Error(`could not start ${IMAGE}: ${r.stderr}`);
   for (let i = 0; ; i++) {
-    if (s3(s, "GET", "/").code === 200) break; // listing the buckets answers once the gateway is up
-    if (i === 100) throw new Error(`${s.name} did not become ready: ${sh("docker", ["logs", "--tail", "5", s.name]).stderr}`);
+    const probe = s3(s, "GET", "/"); // listing the buckets answers once the gateway is up
+    if (probe.code === 200) break;
+    if (i === 100) {
+      const logs = sh("docker", ["logs", "--tail", "5", s.name]);
+      throw new Error(`${s.name} did not become ready: last answer ${probe.code} ${String(probe.body).slice(0, 200)} | ${logs.stdout}${logs.stderr}`);
+    }
     await sleep(300);
   }
   for (const b of s.buckets) if (s3(s, "PUT", `/${b}`).code !== 200) throw new Error(`could not create bucket ${b}`);
