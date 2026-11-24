@@ -1,0 +1,19 @@
+{
+      "version": "1.20.0", "userId": "u", "encrypted": false,
+      "vaults": {
+        "v1": {"name": "Personal", "description": "", "items": [
+          {"itemId":"1","shareId":"v1","state":1,"pinned":true,"createTime":1700000000,"modifyTime":1700000100,"aliasEmail":null,
+           "data":{"metadata":{"name":"Site","note":"hello","itemUuid":"x"},
+             "extraFields":[{"fieldName":"pin","type":"hidden","data":{"content":"1234"}},{"fieldName":"label","type":"text","data":{"content":"v"}},{"fieldName":"2fa","type":"totp","data":{"content":"JBSWY3DPEHPK3PXP"}}],
+             "type":"login","content":{"itemEmail":"me@example.com","itemUsername":"me","password":"pw","urls":["https://a.example","https://b.example"],"totpUri":"otpauth://totp/S:me?secret=JBSWY3DPEHPK3PXP&issuer=S","passkeys":[]}}},
+          {"itemId":"2","state":1,"data":{"metadata":{"name":"Card","note":""},"type":"creditCard","content":{"cardholderName":"A B","cardType":"0","number":"4111111111111111","verificationNumber":"123","expirationDate":"2029-09","pin":"1111"}}},
+          {"itemId":"3","state":1,"data":{"metadata":{"name":"Me","note":""},"type":"identity","content":{"fullName":"Ana Maria Lopez","email":"a@example.com","phoneNumber":"555","organization":"ACME","streetAddress":"1 Road","city":"Town","countryOrRegion":"ES","birthdate":"1990-01-01","floor":"3"}}},
+          {"itemId":"4","state":1,"data":{"metadata":{"name":"Memo","note":"remember"},"type":"note","content":{}}},
+          {"itemId":"5","state":1,"aliasEmail":"x@alias.example","data":{"metadata":{"name":"Alias","note":""},"type":"alias","content":{}}},
+          {"itemId":"6","state":2,"data":{"metadata":{"name":"Trashed","note":""},"type":"login","content":{"password":"x"}}}
+        ]},
+        "v2": {"name": "Work", "items": [
+          {"itemId":"7","state":1,"data":{"metadata":{"name":"Work site","note":""},"type":"login","content":{"itemUsername":"w","password":"p","urls":[]}}}
+        ]}
+      }
+    }

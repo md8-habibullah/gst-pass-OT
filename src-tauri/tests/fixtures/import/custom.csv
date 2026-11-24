@@ -1,0 +1,3 @@
+Site Label;Login ID;Secret;Address;Memo;Box
+My Site;me;pw;https://x.example;hi;Home
+Other;you;pw2;https://y.example;;Work

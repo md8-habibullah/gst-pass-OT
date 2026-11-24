@@ -1,12 +1,16 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { KeyRound, Lock } from "lucide-react";
+import { ChevronRight, CloudUpload, Download, Files, KeyRound, Lock, Upload } from "lucide-react";
 import { BackendError } from "../../backend";
-import { app, be, lockVault, pushToast, setClipboardClear, type ClipboardClear } from "../../state/app";
+import { app, be, lockVault, pushToast, setClipboardClear, setFilter, type ClipboardClear, type Filter } from "../../state/app";
+import { backups, summarize } from "../../state/backup";
 import { useStore } from "../../state/store";
 import { StrengthMeter } from "../lock/StrengthMeter";
 import { Button } from "../ui/Button";
 import { Field, Segmented, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
+import { AccountsGroup } from "./Accounts";
+import { AppLockGroup } from "./AppLock";
+import { DisguiseGroup } from "./Disguise";
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -26,6 +30,19 @@ function Row({ title, description, children }: { title: string; description?: st
       </div>
       {children}
     </div>
+  );
+}
+
+function LinkRow({ title, description, filter, icon }: { title: string; description: string; filter: Filter; icon: ReactNode }) {
+  return (
+    <button type="button" onClick={() => setFilter(filter)} className="pressable flex w-full items-center gap-4 border-b border-hairline px-4 py-3.5 text-left last:border-b-0 hover:bg-raised/60">
+      <span className="grid size-9 shrink-0 place-items-center rounded-sm bg-raised text-brass shadow-e1">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">{title}</span>
+        <span className="block text-[0.93em] text-mist">{description}</span>
+      </span>
+      <ChevronRight className="size-4 shrink-0 text-fog" aria-hidden />
+    </button>
   );
 }
 
@@ -79,6 +96,7 @@ export function SettingsView() {
   const clipboardClear = useStore(app, (s) => s.clipboardClear);
   const suite = useStore(app, (s) => s.suite);
   const [changing, setChanging] = useState(false);
+  const backupSummary = summarize(useStore(backups, (s) => s.targets));
   const preview = import.meta.env.DEV && be().kind === "preview";
 
   return (
@@ -98,10 +116,17 @@ export function SettingsView() {
           </Row>
         </Group>
 
-        <Group title="Storage">
-          <Row title="Local only" description="Your vault is stored encrypted on this device. Sync to your own S3 buckets arrives in a later update.">
-            <span className="inline-flex items-center gap-2 text-[0.93em] text-verdigris"><span className="size-2 rounded-full bg-verdigris" aria-hidden />Healthy</span>
-          </Row>
+        <AccountsGroup />
+
+        <AppLockGroup />
+
+        <DisguiseGroup />
+
+        <Group title="Backup and files">
+          <LinkRow title="Backup" description={`${backupSummary.title}. ${backupSummary.detail}`} filter="backup" icon={<CloudUpload className="size-[18px]" />} />
+          <LinkRow title="Files" description="Encrypted storage for images, PDFs and documents, up to 50 MB each." filter="files" icon={<Files className="size-[18px]" />} />
+          <LinkRow title="Import" description="Bring in passwords from Bitwarden or a CSV file." filter="import" icon={<Download className="size-[18px]" />} />
+          <LinkRow title="Export" description="Save an encrypted copy of this vault as a file." filter="export" icon={<Upload className="size-[18px]" />} />
         </Group>
 
         <Group title="About this vault">

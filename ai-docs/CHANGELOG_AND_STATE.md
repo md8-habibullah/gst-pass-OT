@@ -2,7 +2,34 @@
 
 Update this file after every major milestone. Newest entries first.
 
-## Current phase: **Phase 2 — local storage, history, trash and the full UI are built; Phase 3 (lock states, quick unlock, Android shell) is next** (2026-11-23)
+## Current state (2026-11-24): the five queued slices (Q0 to Q4) are built, merged into one tree and verified
+
+Phase 2 (storage, history, trash, UI), Phase 4a (multi-S3 backup, master backup, restore) and the five slices of `FEATURE_QUEUE.md` are in one tree: **Q0** event-driven sync (three triggers, no timers, pull and reconcile), **Q1** Stage 1 gate with decoy maths, panic and wipe and the idle lock in Rust, **Q2** the 11-name disguise, **Q3** the encrypted 50 MB drive (schema v4), **Q4** the Rust importer and plaintext exporter (its attachments go into the drive). Each section below this one has its own log entry, contract and honest limits.
+
+### Verified (fresh run 2026-11-24, `scripts/verify_all.sh --e2e`, ALL CHECKS PASSED)
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit`, `vitest run`, `vite build` | clean; 66 / 66 tests; no dev-only strings in `dist/` |
+| `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` | clean |
+| `cargo test --locked` | **764 passed, 0 failed, 1 ignored** (the fixture rewriter) |
+| `scripts/check_no_notifications.py`, Android patch script tests | pass |
+| Real Rust core behind the dev shim, driven from headless Chromium (`e2e/`) | `run` 60/60, `real-gate` 35/35, `real-drive` 18/18, `real-import` 13/13 (25/25 when pointed at real exports), `real-disguise` 16/16, `real-backup` 12/12, `real-sync` 25/25 |
+| Two real vendor exports (Bitwarden web-vault JSON, Ente Auth plain text) | import correctly end to end; they found and fixed three defects (Ente `codeDisplay`, a wrong one-time-code count in the preview, a test that looked in the wrong place for attachments). See the Q4 section |
+
+### NOT verified (the honest list for the merged tree)
+
+1. **Android has not been built or run.** The toolchain is only partly installed (cmdline-tools, JDK 21 and the rust target are in; the SDK licences, platform-tools, platform 36, build-tools and the NDK are not, because the licences need the owner to accept them: `scripts/setup_android_toolchain.sh`). Everything Android-specific is untested: the activity aliases of the disguise, `FLAG_SECURE`, the biometric prompt, the lifecycle hooks, the camera QR scanner, and on Android the dialogs return `content://` addresses, so importing, adding drive files and saving copies do not work there yet.
+2. **No real desktop window run of the merged app** (rule: no synthetic input into the desktop). The native dialogs and the launcher refresh of the disguise are covered by the shim, the test picker and a recording launcher, not by a real window.
+3. **Real S3 providers** (AWS, R2, B2, MinIO, Wasabi, Storj), real TLS and clock skew: only `scripts/mock_s3.py` was used.
+4. **Vendor formats other than the two real files above** were read from public descriptions and synthetic fixtures. KeePass `.kdbx` files are real KDBX but were written by the crate that reads them.
+5. **The Stage 1 gate is a privacy gate, not encryption** (nothing wraps the vault key; a copied data folder resets the attempt counter; the overwrite on wipe cannot be proven on SSD or copy-on-write file systems). The vault itself needs the master password every time.
+6. No third-party review of the crypto, storage, gate or importer code; no external fuzzer; power-loss durability is not measured.
+7. Placeholder bundle identifier `app.passman.vault` (decision D9) must be replaced before any release.
+
+The sections from "Earlier state" down are the 2026-11-23 record; where they say "not built", the slices above supersede them.
+
+## Earlier state (2026-11-23): **Phase 2 — local storage, history, trash and the full UI are built; Phase 3 (lock states, quick unlock, Android shell) is next**
 
 After the user ran the system-package command and said "You can continue", Phase 2 started. Mid-turn the user issued a **UI course correction** (bespoke dark GUI, 1Password / Proton Pass / Apple Keychain feel, platform-adaptive): the working Rust crypto was left untouched and the frontend was rebuilt to that brief (`UI_DESIGN_SYSTEM.md`).
 
@@ -78,6 +105,14 @@ Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), k
 
 ## Log
 
+### 2026-11-24 — Q0 (slice R3a): sync without timers, exit flush, pull and reconcile
+* **Event-driven sync (D18).** The replicator thread sleeps on a condition variable and runs only at unlock, after a committed local change, and at the exit or background flush (plus "Back up now"). A failed job stays queued with its error and is tried again at the next trigger: no timer, polling, backoff or retry schedule remains (`Timing` is now `lagging_after`, `failing_after`, `background`). A settled worker makes no store calls (tested). One trigger counts as one failed attempt. `backup_run` = reconcile, then drain.
+* **Exit and background flush.** `AppCore::flush_for_exit(8 s)`; Linux `CloseRequested` hook in `lib.rs` (the close is held back, the flush runs on its own thread, then the window is destroyed; a second close request closes at once; an empty queue closes at once); `#[cfg(mobile)] WindowEvent::Suspended` (Android `onPause`) flush; IPC `sync_flush -> { complete }` for the page's `visibilitychange`. `scripts/check_no_notifications.py` guards the "no notification, no tray" rule. Details and limits: `BUILD_TARGETS.md` §8.
+* **Pull and reconcile** (`storage/backup/pull.rs`, `pull_apply.rs`), on the worker at unlock (never blocking `vault_unlock`) and at "Back up now": source = master, else the first enabled target; list items and tombstones, compare ETags, GET only what changed, authenticate every object, tombstones win, rollback guard, per-item lineage through sealed `parent` pointers, fast-forward, local-ahead, and diverged states kept as "from another device" snapshots (nothing overwritten, nothing merged silently). The apply is one transaction under the session lock that re-checks the head, so a local edit during a pull wins. Algorithm: `STORAGE_AND_SYNC.md` §6 and §10.
+* **Schema v3** (`versions.origin`, `remote_version`, `reviewed`; v1 and v2 files migrate in one transaction). **Contract (additive):** `VaultStatus.syncRevision`, `reconciling`, `remoteDamaged`; `ItemView.changedElsewhere`; `VersionEntry.otherDevice`; commands `item_review_other_device`, `sync_flush` (`IPC_CONTRACT.md` §2, §3, §6.2). Item version numbers can now have gaps.
+* **Verified (2026-11-24):** `cargo fmt --check` clean; `cargo clippy --locked --all-targets -- -D warnings` clean; `cargo test --locked` **329 passed, 0 failed, 1 ignored** (baseline 302; three backoff tests removed, about 30 added: no-timer tests, two simulated devices on `MemStore`, a pull through the real `S3Store` against `scripts/mock_s3.py`, IPC tests for `sync_flush` and the other-device flow); `python3 scripts/check_no_notifications.py` exits 0. The dev shim (`examples/e2e_server.rs`, flags unchanged) was rebuilt and answers `sync_flush` and `vault_status` with the new fields.
+* **NOT verified:** the Android lifecycle code (`cfg(mobile)`, no SDK on this machine; `onStop` is not forwarded by tauri-runtime-wry 2.12.5); the real window's `CloseRequested` path (only the Tauri-free gate logic is tested); any real S3 provider. Pre-R3a item payloads have no `parent`, so a state written by an older build counts as "diverged" instead of fast-forwarding (conservative, pre-release only).
+
 ### 2026-11-23 — Phase 2 and the UI rebuild
 * **Audit, then course correction.** After the user's "STOP and audit" message the repo and `ai-docs/` were checked: Rust crypto done and tested, frontend still a placeholder status page, no storage layer. The crypto was kept as is; the frontend was designed from scratch to the new brief.
 * **Design system "Strongroom"** (`UI_DESIGN_SYSTEM.md`): deep-marine ground with a faint triangular lattice, frosted panes, brass accent for the single primary action, verdigris for "secure / fresh code", ember for danger. Fraunces for titles and empty states, Instrument Sans for the interface, IBM Plex Mono only for secrets and codes, all bundled locally. One orchestrated moment: the unlock. Deliberately avoided: aurora gradients, uppercase tracked labels, identical cards for every field, mono for decoration.
@@ -102,16 +137,126 @@ Test split by module: aead 3, envelope 12, error 1, ids 2, kat 8 (+1 ignored), k
 * Wrote the five `ai-docs/` files before any application code.
 * Standing rule recorded in the global and project memory: at the start of any project, web-check the very latest stable versions before pinning anything.
 
-## Next steps
+## Next steps (2026-11-24)
 
-1. **User, manual smoke test of the real app** (about 3 minutes; this is the one thing not yet verified): `cd /home/dev/cccoding/hhhobby/passman && npm run tauri dev`, then
-   1. create a vault (any dev password), add a Login with a password and a TOTP setup key;
-   2. reveal the password (it must ask for the master password every time), copy it, wait for the clipboard clear;
-   3. edit it, open Version history, view the old version, restore it (a new latest version appears);
-   4. move it to the trash, confirm the trash row shows only title and time, restore it, trash it again and delete it permanently (warning, then password plus the item name);
-   5. lock, try a wrong password (must be refused, dialog shakes), then the right one;
-   6. quit and reopen: the item must be there after unlocking.
-   Report anything that looks wrong; screenshots help.
-2. **User:** choose the real bundle identifier (decision D9) and do the commit yourself when ready (the assistant never commits or pushes).
-3. **Phase 3** (after the user's go-ahead): Bitwarden-style lock states, idle and background auto-lock, quick-unlock PIN with attempt limits, Android BiometricPrompt with fallback and `FLAG_SECURE`, Rust-side clipboard clear, Android project init (`BUILD_TARGETS.md` §4).
-4. Later phases: S3 sync with per-bucket health (Phase 4), encrypted media attachments (Phase 5), bundles and release checklist (Phase 6).
+1. **Owner: accept the Android SDK licences** so the Android build can be set up (the assistant cannot accept licences for you): `JAVA_HOME=$HOME/.local/jdks/temurin-21 yes | $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/Android/Sdk --licenses`. Then `scripts/setup_android_toolchain.sh phase2` installs platform-tools, platform 36, build-tools 36.0.0 and NDK 28.2.13676358; after `tauri android init`, run `python3 scripts/android_patch_manifest.py <src-tauri/gen/android>`, copy `scripts/android/SecureScreenPlugin.kt` into the generated project, run `scripts/check_no_notifications.py` again, build a debug APK and check on a device: `FLAG_SECURE` (a screenshot must come back black), lock on leaving the app, no `POST_NOTIFICATIONS` or foreground service in the manifest, the disguise aliases, sync against the mock S3 through `adb reverse`, and the camera and fingerprint by hand.
+2. **Owner: a manual smoke test in the real window** (`npm run tauri dev`): create a vault, add a login with a code, import your own export (Import page), add a file to the drive, turn on the app lock and close and reopen the app, change the disguise and look at the launcher.
+3. **Owner: choose the real bundle identifier** (decision D9) and make the commit yourself when ready (the assistant never commits or pushes).
+4. **Open work:** Android `content://` pickers for import, drive and export (the dialog plugin returns addresses, not paths); real-vendor checks of the importer formats that are only synthetic so far; real S3 providers; bundles and the release checklist (Phase 6).
+
+## 2026-11-24: Q2 disguise (app icon and name)
+
+Built: `disguise_get` / `disguise_set`, the saved choice, the `Launcher` seam (`NoLauncher` for tests, `RecordingLauncher` for assertions, `TauriLauncher` in the app), the Linux launcher entry writer, the wipe hook, the e2e shim additions, and `scripts/android_patch_manifest.py` with its Python tests.
+
+Verified in this session (in `passman-q2`):
+* Rust: `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`: 372 passed, 0 failed, 1 ignored (the pre-existing `regenerate_bundle_fixture`); 70 of those are new (`disguise::tests` 18, `disguise::desktop` 22, `commands::disguise` 14, `storage::app_disguise` 16). The 302 pre-existing tests are unchanged and pass.
+* The exact text of the `.desktop` file and its escaping (a name such as `a%u<newline>Exec=evil` leaves exactly one `Exec=` line), idempotent writes (a second identical apply changes nothing on disk), refusal to touch a `.desktop` file that does not carry `X-Passman-Managed=true`, removal on return to the original look, an injected data home so tests never touch the real `~/.local/share`.
+* The generated file passes `desktop-file-validate` (a test runs it and prints a skip message when the tool is missing; it was installed here).
+* Window title and icon calls through Tauri's **mock runtime** (the IPC path with real argument conversion; the mock window keeps no title, so the calls are checked through the launcher seam and a `WindowPlan` unit, not by reading the title back).
+* The disguise commands never change vault state; hostile or damaged `disguise.json` files fall back to defaults; concurrent `disguise_set` calls are serialised.
+* The dev shim (`examples/e2e_server.rs`) was driven with curl: preset change, hostile name, over-long name, unknown preset, switch back, with `--xdg-data-home`.
+* `python3 -m unittest` (from the repo root; 35 tests): the Android patch script against synthetic projects with a stub `rsvg-convert`, plus one test with the real `rsvg-convert` (installed here): manifest edit, idempotence byte for byte, `--check` and `--dry-run`, drifted and stale aliases, comments and namespaces kept, escaping of labels, the Kotlin source, failure modes (missing renderer, failing renderer, missing icon source, not an Android project, invalid manifest).
+
+**Not verified:**
+* A real desktop launcher refresh: that `update-desktop-database` plus the desktop environment actually show the new name and icon in an app menu, and how long they take.
+* The GTK window class. `StartupWMClass` is set to the executable's file name because Tauri's `enableGtkAppId` is false by default and GTK then derives the class from the program name; whether a given compositor shows the class capitalised or not was not checked on a running desktop, so grouping a running window under the disguised entry may differ (the entry still launches the app).
+* **Everything on Android** (no SDK here): the Gradle build with the patched manifest, the manifest merge, `<activity-alias>` switching with `setComponentEnabledSetting`, the Kotlin plugin (written against the Tauri 2.12 plugin API, never compiled), icon rendering at real device densities, launcher caching, the recent-apps label. The Rust side of the Android bridge (`run_mobile_plugin("setAlias", ...)`) compiles only under `target_os = "android"` and was not built.
+* Real window title and icon on a live Linux window (only the mock runtime was used; no GUI session was driven, by rule).
+
+Decisions and limits worth remembering:
+* The original look **removes** the launcher entry instead of writing a "Passman" one (a package may already ship its own `passman.desktop`; the removal only touches files that carry our marker). Only a name change without an icon writes an entry that uses the original icon (`original.png`).
+* deb/rpm installs keep their packaged `passman.desktop` next to our `<identifier>.desktop`: both appear in menus while a disguise is active. AppImage and plain binaries have no packaged entry.
+* `Exec=` points at `$APPIMAGE` when set (and absolute), else the current executable; both must be absolute paths or the write is refused with a fixed sentence.
+* The launcher label on Android is a static resource, so a custom name changes only the in-app title and the recents label; the lower-case option changes the in-app name only. There are 12 aliases (the original plus 11 presets). Adaptive icons (108 dp foreground plus a background colour from `presets.json`) were added beyond the brief because minSdk is 28.
+* The startup re-apply is skipped on Android (the system keeps the enabled alias).
+* A control character in a custom name (a pasted line break) becomes a space; a literal backslash followed by `n` is kept and written as an escaped backslash in the `.desktop` file.
+* `disguise.json` is plaintext by design (STORAGE_AND_SYNC).
+* The `png` crate was added (see "Cargo.toml / Cargo.lock").
+
+### Q2: e2e shim additions
+
+* New flag `--xdg-data-home <dir>`. Without it the shim's launcher only **records** (nothing is written, as before). With it the shim's launcher really writes `<dir>/applications/app.passman.vault.desktop` and `<dir>/app.passman.vault/disguise/<id>.png` through the same injected-base-dir writer the app uses; the real `~/.local/share` and `$XDG_DATA_HOME` are never touched. The directory must be absolute, must not be the real `$XDG_DATA_HOME` or `~/.local/share`, and must be empty or created by a previous shim run (it drops a `.passman-e2e` marker file); anything else is refused at start. `Exec=` points at the shim binary; the refresh command is not run.
+* `GET /e2e/disguise-applied` answers the last look the launcher was asked to apply: `{"ok":{"presetId":"kerf","appliedName":"Kerf","customName":null,"lowercase":false,"note":null,"count":1},"presetId":"kerf","appliedName":"Kerf","customName":null,"lowercase":false,"note":null,"count":1}` (the same fields inside `ok` and at the top level, so either spelling works). Before anything was applied: `{"ok":null,"presetId":null,"appliedName":null,"count":0}`. `count` is the number of apply calls, so a test can see that a refused `disguise_set` applied nothing.
+* Expected file lines after setting `kerf` with `--xdg-data-home /abs/dir`: `Name=Kerf`, `Icon=/abs/dir/app.passman.vault/disguise/kerf.png`, `X-Passman-Managed=true`, exactly one `Exec=`. After setting the original look the file is removed.
+* The shim still supports `--data-dir`, `--port`, `--fast-kdf`, `--fast-backup`.
+
+### Q2: new dependency
+
+* New dependency: `png = "0.18.1"` (latest stable on crates.io when added; license MIT OR Apache-2.0; pure Rust, no system library, so Android builds stay possible; the crate has no default features, so there was nothing to switch off). Why: the window icon on desktop needs raw RGBA, and the presets ship as PNG; decoding them with the PNG crate (limit 8 MiB, RGBA8 only) avoids a second image stack. `Cargo.lock` gained one `"png"` line under passman's dependencies; the crate itself and its dependencies (`bitflags`, `crc32fast`, `fdeflate`, `flate2`, `miniz_oxide`) were already in the lock through Tauri, so the lock otherwise did not change (checked with a diff against the base copy). The orchestrator will regenerate the lock after merging anyway.
+* `scripts/crypto-harness.py` builds the whole crate and will therefore also build `png`; harmless.
+
+## 2026-11-24: Q1 Stage 1 gate, wipe, panic, idle lock
+
+**Q1 backend (slice R3b): Stage 1 gate, strict lock separation, wipe, panic, idle lock.**
+Built: the `gate/` module (credentials as Argon2id PHC hashes with equal-cost verification, decoy maths,
+write-ahead tamper-evident attempt counter, state machine with deny-by-default `locked` refusals, silent wipe),
+10 new commands, `AppCore` glue, the removal of `VaultStatus.capabilities`, the idle timer in Rust (1/5/15/30,
+default 15) with the shim flag `--idle-unit-ms`, the mobile-only `tauri-plugin-biometric` adapter.
+Verified (Linux): `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`
+(415 tests: 303 existing + 112 new; 1 pre-existing ignored); the shim binary was run against the real HTTP layer
+(configure, close, `locked` refusal, maths, failed, opened, idle lock, panic wipe, first-run state).
+Not verified: the Android fingerprint (written against the real `tauri-plugin-biometric` 2.5.0 source and
+type-checked once on Linux against the plugin's desktop stub of the same API, then reverted; never built for
+Android), the SSD overwrite, a real window. Removed tests: none; three assertions about `capabilities` were
+replaced by "no `capabilities` field" (`storage/tests.rs`, `storage/model.rs`, `commands/tests.rs`).
+Dependency: `tauri-plugin-biometric 2.5.0` (latest stable on crates.io; 3.0.0-alpha.3 is a pre-release and is
+not used), Apache-2.0 OR MIT, official Tauri plugin, mobile targets only (`[target.'cfg(any(android, ios))']`).
+
+## 2026-11-24: Q3 encrypted drive (50 MB)
+
+**Built and verified (tests, copy `passman-q3`):** streaming blob crypto (`crypto/stream.rs`, 22 tests: round trips at 0, 1, 1 MiB - 1, 1 MiB, 1 MiB + 1, 3 MiB + 7 and at the limit; a bit flipped in every region; swapped, dropped, duplicated, appended and moved chunks; wrong key; unique nonces; limit boundary 52,428,800 / 52,428,801 up front and while streaming; a source that grows or shrinks; cleanup after failures); storage (`storage/drive.rs`, `vault_drive.rs`, `session_drive.rs`, `app_drive.rs`; `files` table and outbox migration; 12 unit tests and 32 tests through `AppCore` incl. a 49.9 MB round trip, plaintext scan of `vault.db`/`-wal`/`-shm`/`attachments/*`, 0600 modes, re-prompts, trash rules, purge, lock/unlock/restart, lock during add, damaged blob and metadata, orphan sweep); commands `file_list/file_add/file_rename/file_delete/file_read/file_save_copy/screen_secure` (5 tests over the real IPC dispatch incl. raw bytes of 2.5 MiB and 0 bytes); S3 replication (`storage/backup/files_sync.rs`; 21 tests: in-memory buckets with fault injection, restore skip/count cases, and the real `S3Store` against `scripts/mock_s3.py`); schema migration tests (2 new in `db.rs`); e2e shim support and a scripted smoke run of it. Full suite 396 passed, 1 ignored (the existing KAT regenerator), `cargo fmt --check` and `clippy --all-targets -D warnings` clean. Existing tests changed: in `storage/db.rs` two `schema_version == 2` assertions now compare with `SCHEMA_VERSION` and the expected table list gained `files` (intended); no other existing test was touched.
+**Not verified:** everything Android (the Kotlin plugin, the `cfg(target_os = "android")` Rust block, and the picker: the dialog plugin returns `content://` URIs there and `DialogPicker` rejects them with "That location cannot be used. Choose files on this device.", so adding or saving files on Android needs a reader/writer based picker that is **not built**); the production `DialogPicker::open_files` / `save_file` with a real desktop dialog (never opened here; only the trait wiring is covered by tests); timing of 50 MB in a release build (see the performance note); an upload of a 50 MB blob through the real S3 client (tests use 1-3 MiB files; the code path is the same streaming call).
+**Limits:** files from other devices appear after a restore, not by the unlock-time pull; the exact plaintext size is visible from the ciphertext length; one 50 MB request cannot be cancelled once started.
+
+### Q3: e2e shim additions
+
+* All `file_*` commands and `screen_secure` go through `POST /ipc` like every other command. `file_read` answers the **raw bytes** with `Content-Type: application/octet-stream` and header `x-passman-binary: 1` (exposed to the page via `Access-Control-Expose-Headers`); errors stay `{"err": {code, message}}`.
+* `POST /e2e/pick-next {"paths": ["/abs/a", "/abs/b"]}` queues the answer of the **next** file dialog (an "add files" dialog receives all the paths, a "save a copy" dialog the first one); `{"paths": []}` queues a cancel; with nothing queued the add dialog is cancelled and the save dialogs fall back to `PASSMAN_E2E_SAVE_PATH`. Paths must be absolute (400 otherwise). Note: a queued answer stays queued until a dialog consumes it, and a re-prompt that fails (wrong password) never opens a dialog.
+* `GET /e2e/last-saved` -> `{"ok": null}` or `{"ok": {"path", "suggestedName", "exists", "size", "contentBase64"}}` for the destination the most recent save dialog chose (content included up to 8 MiB).
+* Still supported: `--data-dir --port --fast-kdf --fast-backup`, `/e2e/picker`, `/e2e/opened`. Smoke script used to verify it: scripted end to end run through the built binary (add via pick-next, raw read, rename, save copy with mode 0600, wrong password, item attachment, 50 MB + 1 refusal, no plaintext on disk).
+
+### Q3: performance note (dev builds)
+
+A 50 MiB encrypt + decrypt takes about 14 s in an unoptimized (`dev`/test) build on this machine; the 49.9 MB round-trip test therefore allows 240 s (it took 61 s once, with the whole suite running alongside). The brief's suggestion (`[profile.dev.package.<crate>] opt-level = 3` for `poly1305`, `cipher`, `universal-hash`, ...) does **not** help here: the generic AEAD code is instantiated inside the `passman` crate and compiled at the app's own opt-level (verified by trying it, then reverting). Two real fixes if dev speed matters: a small non-generic helper crate with `opt-level = 3` that exposes "seal chunk / open chunk", or `[profile.dev] opt-level = 1` for the `passman` crate. A release build was not built or timed here (rule: never `--release`); XChaCha20-Poly1305 in release mode is expected to be far faster, **UNVERIFIED**.
+
+## 2026-11-24: Q4 importer and plaintext exporter
+
+* Rust importer for 25 formats (list in README), content sniffing, a preview/commit flow with handles, three duplicate modes, one-transaction batch with history and outbox jobs, guarded plaintext export. Replaces the TypeScript importer that sealed items one at a time through the webview.
+* Dependencies (all pure Rust, no system library, nothing added to the Android build problem): `csv` 1.4.0 (Unlicense/MIT, BurntSushi/rust-csv), `quick-xml` 0.42.0 (MIT, tafia/quick-xml), `zip` 9.8.2 (MIT, zip-rs/zip2; `default-features = false`, `deflate-flate2` only), `flate2` 1.1.11 (MIT or Apache-2.0, rust-lang/flate2-rs; `rust_backend` = miniz_oxide), `keepass` 0.17.0 (MIT, sseemayer/keepass-rs; **no features** at runtime; dev-dependency with `save_kdbx4` so the tests can write real `.kdbx` files). `keepass` brings `rust-argon2` 3.0.0 next to the `argon2` 0.6.0 the vault uses (two Argon2 implementations in one binary; the importer's is only used to open KeePass files). Its `challenge_response` feature (a system USB library) is off. Latest stable of each was looked up on crates.io before pinning; sources were read under `~/.cargo/registry`.
+* **Freshness note for `zip`:** 9.8.2 was less than a day old when pinned (9.8.1 was 3 days old). It is the latest stable; if the orchestrator prefers a release that has had time in the wild, 9.8.1 is the alternative, but the importer's safety checks do not depend on the version (the member count is checked from the end-of-central-directory record before the crate builds its table, and every read is size-budgeted).
+* **KeePass key-derivation guard:** `keepass` 0.17.0 does not bound the Argon2 / AES-KDF cost a file asks for, so a crafted `.kdbx` could demand terabytes of memory. The importer reads the header first and refuses above 1 GiB of memory, 64 GiB-passes of work, 256 lanes, 2^20 iterations or 2^30 AES rounds (`This KeePass database asks for more memory or time to open than this device allows.`). Tested with crafted headers.
+
+**Verified (fresh runs 2026-11-24, in `passman-q4`):** `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`: 458 passed, 0 failed, 1 ignored (the pre-existing KAT fixture rewriter); 156 of those are Q4's (303 existed before). The shim `e2e_server_q4` was driven over loopback with curl: pick, preview, commit (5 added), second commit (all skipped), export to a 0600 file, refusal of a destination in the data folder, `Origin` and relative-path refusals.
+
+**Format table** (what each parser was written from and how it is tested):
+
+| Format ids | Parsed from | Verified how |
+|---|---|---|
+| `keepass-kdbx` | the KeePass file format via `keepass` 0.17.0 (KDBX 3.1 and 4) | **real `.kdbx` files** written by the same crate inside the tests: password, key file, password + key file, attachments, wrong password, hostile KDF headers, truncation. Not opened with the KeePass or KeePassXC apps. KDBX 3.1 reading relies on the crate (the tests write KDBX 4 only) |
+| `keepass-xml` | KeePass 2.x "KeePass XML (2.x)" layout | synthetic fixture shaped like the app's output; DOCTYPE/entity/depth tests |
+| `bitwarden-json`, `bitwarden-csv` | Bitwarden's documented export shape; carried over from the TypeScript importer's knowledge | synthetic fixtures; **plus** the exporter's own output is read back losslessly (round trip); **plus one real Bitwarden web-vault JSON export** (a card, a login, a secure note; 2026-11-24, see below). `bitwarden-csv` has no real file behind it |
+| `chrome-csv` (also Edge, Brave), `firefox-csv` | the browsers' password-export columns (`name,url,username,password`; Firefox adds `httpRealm`, `timeCreated` ...) | synthetic fixtures with the same columns |
+| `lastpass-csv`, `nordpass-csv`, `1password-csv` | public descriptions of the CSV columns | **not verified against a real export** (synthetic fixtures) |
+| `proton-json`, `proton-zip`, `proton-csv`, `1password-1pux`, `dashlane-csv`, `dashlane-json`, `enpass-csv`, `enpass-json`, `aegis-json`, `2fas-json`, `safari-csv` | the vendors' public descriptions | **not verified against a real export** (synthetic fixtures; the 1pux and the Proton zip are built inside the tests) |
+| `otpauth-list` | the `otpauth://` URI convention | synthetic list incl. HOTP/Steam skipped with a reason; **plus one real Ente Auth "plain text" export** (4 codes, 2026-11-24, see below) |
+| `google-migration` | Google Authenticator's `otpauth-migration://` protobuf layout, decoded by hand with bounds checks | synthetic link built from the documented layout; damaged links are errors, not panics |
+| `custom-csv` | any table + a column mapping | synthetic; mapping validation tests |
+
+None of the fixtures in `src-tauri/tests/fixtures/import/` is a real vendor export (two real exports were run through the importer once, outside the repo: see "Real exports tried") (they are synthetic, small, secret-free; they were generated by a script kept outside the repo, so edit them by hand if a format changes). The table above is the honest answer to "which formats were checked against the real thing": **two real exports were tried (below); the KDBX files are real KDBX but written by the library that reads them; nothing else was.** The seven formats the brief named (Proton, Dashlane, Enpass, 1pux, Aegis, 2FAS, Safari) plus LastPass, NordPass and 1Password CSV are the ones most likely to need a column or key fixed after a first real file; the parsers match columns on their letters and digits only (`Login_URI` = `loginuri`) and several alternative names per role, so a renamed column usually still works.
+
+**Real exports tried (2026-11-24).** The project owner exported two demo files and left them in `~/Downloads`; they were read in place, never copied into the repo, and their values are not in any test (the tests re-create the *shape* with made-up values).
+
+* **Bitwarden web vault, JSON** (`encrypted: false`, folders, three items): a card (type 3, `expMonth` "1"), a login (type 1, one URI, a `totp` value) and a secure note (type 2). All three import; the card month becomes `01`, the folder is kept, the note body lands in `body`. The login's authenticator key was not valid Base32 (it contained `.`, `@` and `1`, i.e. demo text typed into the field), so it is kept in a hidden custom field "One-time code (not imported)" with a warning, as designed.
+* **Ente Auth, "plain text" export** (one `otpauth://totp/...` link per line): four codes import and each produces a six-digit code through `totp_now`. **Ente adds `codeDisplay=<percent-encoded JSON>`** (`pinned`, `trashed`, `tags`, `note`, icon fields) to every link. Before the fix it was stored inside the saved code. Now `authenticators::split_code_display` reads it (pinned becomes a favourite, tags become tags, a note becomes the note, **a trashed code is skipped** with the reason "it is in the authenticator app's trash") and the stored link no longer contains it. One account label in the real file has two spaces and a trailing token (`name  2UEC...`); it is kept as written.
+* The preview used to count a code whose key cannot make codes ("1 one-time code" next to a warning that the code could not be read). It now counts only codes that will work (`ParsedImport::usable_seed_count`).
+* End to end through the real core and the real Import and Export pages: `e2e/real-import.mjs` (13 checks on its own, 25 with the two real files), including the second import being all duplicates, the plaintext export being `0600` and read back as all duplicates, and no marker of the imported data in the data directory.
+
+**Dev shim after the merge (`examples/e2e_server.rs`, dev only).** One `POST /e2e/pick-next` queue answers every native dialog: `{"paths": [...]}` (add files, save a copy) or `{"path": "/abs" | null}` (import file, key file, export destination); an empty queue cancels. `GET /e2e/last-saved` has one shape for drive copies and plaintext exports: `{"ok": null | {"path", "suggestedName", "exists", "size", "contentBase64"}}`. Flags: `--data-dir --port --fast-kdf --fast-backup --xdg-data-home --idle-unit-ms`. The built binary is large (about 360 MB with debug info): keep it outside `/tmp` (this machine's `/tmp` is a small tmpfs).
+
+**NOT verified yet (add to the list):**
+
+1. Only two formats were tried with a real export from the vendor's own app (Bitwarden web-vault JSON, Ente Auth plain text; see "Real exports tried"); all the others are synthetic (see table). The first real file of each unverified format may need a small parser fix; a failure is a clean error, never a crash or a wrong silent import of secrets into the wrong field without a warning.
+2. The native dialogs (`DialogPicker` import / key file / save) were not opened in a real window (rule: no synthetic input into the desktop); they are covered by the test picker and the shim.
+3. **Android:** the picker returns a path on desktop. On Android the dialog plugin returns a `content://` URI, which `picked()` in `commands/mod.rs` reports as "Choose a file on this device" (the existing behaviour for vault files), so importing from Android storage does not work yet. It needs a `ContentResolver`-based reader (a core API taking bytes or an open file descriptor instead of a path). Not attempted here; no Android build was run.
+4. No fuzzing with an external fuzzer; the in-tree fuzz-style test is deterministic (xorshift: random bytes, hostile prefixes, truncated and mutated copies of every fixture, damaged zip and kdbx).
+5. Real-time memory behaviour on a 256 MiB file (the size limit is tested with a zero-page vector; a real file of that size was not imported).

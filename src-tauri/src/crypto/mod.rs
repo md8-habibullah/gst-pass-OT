@@ -11,6 +11,7 @@ pub mod kdf;
 pub mod kem;
 pub mod rng;
 pub mod secret;
+pub mod stream;
 pub mod subkey;
 pub mod totp;
 pub mod vault_keys;

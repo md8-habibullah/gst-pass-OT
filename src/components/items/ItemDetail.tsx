@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, EyeOff, Paperclip, Pencil, Plus, Star, Trash2 } from "lucide-react";
-import { BackendError, TYPE_LABEL, type ItemDraft, type ItemView } from "../../backend";
+import { ArchiveRestore, ArrowLeft, EyeOff, ExternalLink, MoreHorizontal, Paperclip, Pencil, Star } from "lucide-react";
+import { TYPE_LABEL, type ItemDraft, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
-import { exactTime, formatBytes, relativeTime } from "../../lib/format";
-import { be, pushToast, refresh, select, app } from "../../state/app";
+import { exactTime, relativeTime } from "../../lib/format";
+import { be, pushToast, app } from "../../state/app";
 import { useStore } from "../../state/store";
-import { openEditor } from "../../state/ui";
 import { reprompt } from "../reprompt/Reprompt";
 import { Avatar } from "../ui/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { CountdownRing } from "../ui/Ring";
 import { CopyButton, FieldRow, HiddenPill, PasswordText, RevealToggle, TotpValue } from "./FieldRows";
+import { editItem, openLink, setArchived, type Target } from "./actions";
+import { openItemMenu } from "./ItemMenu";
+import { FileList } from "../files/FileList";
 import { VersionHistory } from "./VersionHistory";
 
 /** How long revealed secrets stay in the UI before they are wiped (spec: nothing lingers). */
@@ -31,6 +33,8 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
   const [revealed, setRevealed] = useState<Revealed | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const version = stored?.version;
+  const syncRevision = useStore(app, (s) => s.syncRevision);
+  const [showHistory, setShowHistory] = useState(0);
 
   // Load (and reload after edits). Switching items always wipes revealed secrets.
   useEffect(() => { setRevealed(null); setView(null); setError(null); }, [id]);
@@ -38,7 +42,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
     let alive = true;
     be().getItem(id).then((v) => alive && setView(v)).catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Could not open this item."));
     return () => { alive = false; };
-  }, [id, version]);
+  }, [id, version, syncRevision]);
   useEffect(() => { if (version !== undefined) setRevealed(null); }, [version]);
 
   // Auto-hide: one timer for the whole reveal window.
@@ -77,27 +81,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
     }
   }
 
-  async function edit() {
-    const session = await reprompt({ reason: `Edit “${title}”. Previous versions stay in the history.`, confirmLabel: "Edit item", run: (pw) => be().beginEdit(id, pw) });
-    if (session) openEditor(id, session);
-  }
-
-  async function trash() {
-    try {
-      await be().trashItem(id);
-      await refresh();
-      select(null);
-      onBack?.();
-      pushToast({
-        kind: "info",
-        text: `“${title}” moved to the trash.`,
-        ttlMs: 6000,
-        action: { label: "Undo", run: () => void be().restoreItem(id).then(refresh).then(() => pushToast({ kind: "success", text: `“${title}” is back in your vault.` })) },
-      });
-    } catch (e) {
-      pushToast({ kind: "error", text: e instanceof BackendError ? e.message : "Could not move the item to the trash." });
-    }
-  }
+  const target: Target = { id, type: view?.type ?? stored?.type ?? "login", title, archived: stored?.archived ?? false, favorite: view?.favorite ?? false };
 
   if (error) return <p role="alert" className="p-8 text-ember">{error}</p>;
   if (!view) return <div className="p-8 text-mist" aria-busy>Opening.</div>;
@@ -132,14 +116,31 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
           </div>
         </div>
         <div data-slot="actions" className="flex shrink-0 gap-1.5">
-          <Button icon={<Pencil className="size-4" />} onClick={() => void edit()}>
+          <Button icon={<Pencil className="size-4" />} onClick={() => void editItem(target)}>
             Edit
           </Button>
-          <IconButton label="Move to trash" tone="danger" onClick={() => void trash()}>
-            <Trash2 className="size-[18px]" />
+          <IconButton label="More actions" aria-haspopup="menu" onClick={(e) => openItemMenu(target, e.currentTarget)}>
+            <MoreHorizontal className="size-[18px]" />
           </IconButton>
         </div>
       </header>
+
+      {target.archived && (
+        <div role="status" className="frosted flex flex-wrap items-center gap-3 rounded-lg border border-hairline-strong px-4 py-2.5">
+          <p className="min-w-0 flex-1 text-[0.93em]">This item is archived. It stays encrypted and is hidden from your lists and codes.</p>
+          <Button className="min-h-8" icon={<ArchiveRestore className="size-3.5" />} onClick={() => void setArchived(target, false)}>Unarchive</Button>
+        </div>
+      )}
+
+      {view.changedElsewhere && (
+        <div role="status" className="frosted flex flex-wrap items-center gap-3 rounded-lg border border-brass/30 px-4 py-2.5">
+          <p className="min-w-0 flex-1 text-[0.93em]">Changed on another device. Your version stays current. The other device’s version is saved in the history, so nothing was lost.</p>
+          <div className="flex gap-1.5">
+            <Button className="min-h-8" onClick={() => setShowHistory((n) => n + 1)}>Show history</Button>
+            <Button variant="ghost" className="min-h-8" onClick={() => void be().reviewOtherDevice(id).then(() => be().getItem(id)).then(setView).catch(() => undefined)}>Got it</Button>
+          </div>
+        </div>
+      )}
 
       {secrets && (
         <div role="status" className="frosted flex items-center gap-3 rounded-lg border border-brass/30 px-4 py-2.5">
@@ -150,13 +151,32 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
       )}
 
       <div className="glass overflow-hidden rounded-lg">
-        {view.fields.map((f) => {
+        {view.fields.filter((f) => f.hasValue).map((f) => {
           const shown = secrets?.fields[f.key];
           if (f.kind === "totp") return <TotpValue key={f.key} id={id} onCopy={(c) => copyPlain("One-time code", c)} />;
           if (!f.secret) {
             return (
-              <FieldRow key={f.key} label={f.label} actions={f.value ? <CopyButton label={`Copy ${f.label.toLowerCase()}`} onCopy={() => copyPlain(f.label, f.value!)} /> : null}>
-                <span className={`block break-all ${f.kind === "url" ? "text-brass-hi" : ""}`}>{f.value}</span>
+              <FieldRow
+                key={f.key}
+                label={f.label}
+                actions={
+                  f.value ? (
+                    <>
+                      {f.kind === "url" && (
+                        <IconButton label="Open in your browser" onClick={() => void openLink(f.value!)}>
+                          <ExternalLink className="size-[18px]" />
+                        </IconButton>
+                      )}
+                      <CopyButton label={`Copy ${f.label.toLowerCase()}`} onCopy={() => copyPlain(f.label, f.value!)} />
+                    </>
+                  ) : null
+                }
+              >
+                {f.kind === "paragraph" ? (
+                  <span className="block font-mono text-[0.9em] leading-6 break-all whitespace-pre-wrap">{f.value}</span>
+                ) : (
+                  <span className={`block break-all ${f.kind === "url" ? "text-brass-hi" : ""}`}>{f.value}</span>
+                )}
               </FieldRow>
             );
           }
@@ -206,33 +226,18 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
             </FieldRow>
           );
         })}
-        {view.fields.length === 0 && view.customFields.length === 0 && <p className="px-4 py-6 text-mist">This item has no fields yet. Choose Edit to add some.</p>}
+        {!view.fields.some((f) => f.hasValue) && view.customFields.length === 0 && <p className="px-4 py-6 text-mist">This item has no fields yet. Choose Edit to add some.</p>}
       </div>
 
-      <section aria-labelledby={`att-${id}`} className="rounded-lg">
-        <div className="flex items-center gap-3 px-4 py-2">
+      <section aria-labelledby={`att-${id}`} className="flex flex-col gap-2 rounded-lg">
+        <div className="flex items-center gap-3 px-4 pt-2">
           <Paperclip className="size-[18px] text-mist" aria-hidden />
           <h3 id={`att-${id}`} className="flex-1 font-semibold">Attachments</h3>
-          <Button className="min-h-8" icon={<Plus className="size-3.5" />} disabled title="Encrypted attachments arrive with media support">
-            Add file
-          </Button>
         </div>
-        {view.attachments.length === 0 ? (
-          <p className="px-4 pb-2 text-[0.93em] text-fog">No files attached. Encrypted attachments arrive with media support.</p>
-        ) : (
-          <ul className="px-2">
-            {view.attachments.map((a) => (
-              <li key={a.id} className="flex items-center gap-3 rounded-lg px-2 py-2">
-                <span className="grid size-9 place-items-center rounded-sm bg-raised"><Paperclip className="size-4 text-mist" aria-hidden /></span>
-                <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                <span className="text-[0.86em] text-fog">{formatBytes(a.size)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="px-1"><FileList itemId={id} emptyText="No files attached to this item." /></div>
       </section>
 
-      <VersionHistory key={id} id={id} title={view.title} version={view.version} />
+      <VersionHistory key={id} id={id} title={view.title} version={view.version} stamp={syncRevision} openSignal={showHistory} />
     </article>
   );
 }

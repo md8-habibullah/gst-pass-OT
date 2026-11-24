@@ -1,19 +1,24 @@
-import { useMemo } from "react";
-import { ChevronRight, Timer } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronRight, Plus, Search, Timer, X } from "lucide-react";
 import type { ItemSummary } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { groupDigits } from "../../lib/format";
 import { ringTone, TONE_COLOR } from "../../lib/totp";
-import { app, pushToast, select, setFilter } from "../../state/app";
+import { app, pushToast } from "../../state/app";
 import { useStore } from "../../state/store";
+import { openNewItem } from "../../state/ui";
 import { Avatar } from "../ui/Avatar";
-import { IconButton } from "../ui/Button";
+import { Button, IconButton } from "../ui/Button";
+import { TextInput } from "../ui/Inputs";
 import { CountdownRing } from "../ui/Ring";
+import { useLayout } from "../../lib/layout";
 import { useTotp } from "./FieldRows";
+import { viewItem } from "./actions";
 
 function CodeTile({ item }: { item: ItemSummary }) {
   const { now, failed, remainingMs, seconds } = useTotp(item.id, true);
   const tone = ringTone(seconds);
+  const codeOnly = item.type === "totp";
   async function copy() {
     if (!now) return;
     try {
@@ -28,7 +33,10 @@ function CodeTile({ item }: { item: ItemSummary }) {
       <button type="button" onClick={() => void copy()} disabled={!now} aria-label={now ? `Copy code for ${item.title}` : `${item.title}, loading`} className="pressable glass flex w-full items-center gap-3.5 rounded-lg py-3.5 pr-14 pl-4 text-left hover:bg-raised/70 pointer-coarse:py-4">
         <Avatar title={item.title} size={42} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-semibold">{item.title}</span>
+          <span className="flex items-center gap-2">
+            <span className="min-w-0 truncate font-semibold">{item.title}</span>
+            <span className="shrink-0 rounded-full border border-hairline-strong px-2 py-px text-[0.76em] text-mist">{codeOnly ? "Code only" : "In a login"}</span>
+          </span>
           <span className="block truncate text-[0.86em] text-mist">{item.subtitle ?? "Tap to copy"}</span>
           <span className={`mt-1 block font-mono text-[1.55rem] leading-8 font-medium tracking-[0.08em] tabular-nums ${tone === "critical" ? "text-ember" : "text-frost"}`}>
             {failed ? <span className="text-[0.6em] text-ember">{failed}</span> : now ? groupDigits(now.code) : "••• •••"}
@@ -40,33 +48,56 @@ function CodeTile({ item }: { item: ItemSummary }) {
           </CountdownRing>
         )}
       </button>
-      <IconButton label={`Open ${item.title}`} className="absolute top-1/2 right-2 -translate-y-1/2" onClick={() => { setFilter("all"); select(item.id); }}>
+      <IconButton label={`Open ${item.title}`} className="absolute top-1/2 right-2 -translate-y-1/2" onClick={() => viewItem(item)}>
         <ChevronRight className="size-[18px]" />
       </IconButton>
     </li>
   );
 }
 
-/** Every item that has a one-time code, with live rings. Tap a tile to copy its code. */
+/** Every one-time code in the vault: stand-alone "Code only" items and the codes inside logins. */
 export function CodesView() {
   const items = useStore(app, (s) => s.items);
-  const withCodes = useMemo(() => items.filter((i) => i.hasTotp).sort((a, b) => a.title.localeCompare(b.title)), [items]);
+  const compact = useLayout() === "compact";
+  const [query, setQuery] = useState("");
+  const all = useMemo(() => items.filter((i) => i.hasTotp && !i.archived).sort((a, b) => a.title.localeCompare(b.title)), [items]);
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(() => all.filter((i) => !q || i.title.toLowerCase().includes(q) || (i.subtitle ?? "").toLowerCase().includes(q)), [all, q]);
   return (
     <section aria-label="Codes" className="flex min-h-0 flex-1 flex-col">
-      <div className="px-5 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
-        <h2 className="font-display text-[1.45rem] leading-none font-semibold">Codes</h2>
-        <p className="mt-2 text-[0.93em] text-mist">Time-based codes for every item that has one. They are generated on this device.</p>
+      <div className="flex items-start gap-3 px-5 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-[1.45rem] leading-none font-semibold">Codes</h2>
+          <p className="mt-2 text-[0.93em] text-mist">Every one-time code in your vault: code-only items and the codes saved inside logins. They are generated on this device.</p>
+        </div>
+        {!compact && <Button variant="key" icon={<Plus className="size-4" />} onClick={() => openNewItem("totp")}>Add code</Button>}
       </div>
+      {all.length > 4 && (
+        <div className="px-5 pb-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-fog" aria-hidden />
+            <TextInput type="search" aria-label="Search codes" placeholder="Search codes" value={query} onChange={(e) => setQuery(e.target.value)} className="pr-10 pl-9" />
+            {query && (
+              <IconButton label="Clear search" size="sm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setQuery("")}>
+                <X className="size-4" />
+              </IconButton>
+            )}
+          </div>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-28 min-[720px]:pb-6">
-        {withCodes.length === 0 ? (
+        {all.length === 0 ? (
           <div className="px-6 pt-14 text-center">
             <Timer className="mx-auto size-8 text-fog" aria-hidden />
             <p className="mt-3 font-display text-xl">No one-time codes yet</p>
-            <p className="mt-2 text-mist">Add a setup key or otpauth link to a login, or create a “Code only” item.</p>
+            <p className="mt-2 text-mist">Add a code on its own, or put a one-time code inside a login. Both show up here.</p>
+            <Button variant="key" className="mt-5" icon={<Plus className="size-4" />} onClick={() => openNewItem("totp")}>Add a code</Button>
           </div>
+        ) : shown.length === 0 ? (
+          <p className="px-6 pt-14 text-center text-mist">No code matches “{query}”.</p>
         ) : (
-          <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,17rem),1fr))] gap-3">
-            {withCodes.map((i) => <CodeTile key={i.id} item={i} />)}
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
+            {shown.map((i) => <CodeTile key={i.id} item={i} />)}
           </ul>
         )}
       </div>

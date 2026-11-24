@@ -81,10 +81,15 @@ export const EVENT_LABEL = {
   trashed: "Moved to trash",
   restored: "Restored from trash",
   restoredFromVersion: "Restored from an earlier version",
+  archived: "Moved to the archive",
+  unarchived: "Taken out of the archive",
 } as const;
 
 export const TYPE_NOUN: Record<ItemType, string> = {
   login: "login",
+  card: "card",
+  identity: "identity",
+  sshKey: "SSH key",
   totp: "code",
   secureNote: "note",
   media: "media item",

@@ -1,0 +1,5 @@
+# one link per line
+otpauth://totp/GitHub:me@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
+otpauth://totp/Bank:me?secret=JBSWY3DPEHPK3PXP&issuer=Bank&algorithm=SHA256&digits=8&period=60
+not a link
+otpauth://hotp/Counter:me?secret=JBSWY3DPEHPK3PXP&counter=1

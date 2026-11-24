@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Eye, History, RotateCcw } from "lucide-react";
 import { FIELD_SCHEMA, type ItemDraft, type VersionEntry } from "../../backend";
@@ -14,6 +14,10 @@ interface Props {
   title: string;
   /** Current stored version; the history reloads when it changes. */
   version: number;
+  /** Changes when a pull from the backup altered local data, so the timeline reloads. */
+  stamp?: number;
+  /** Counts up when something else (the "changed on another device" note) asks for the timeline to open. */
+  openSignal?: number;
 }
 
 function Snapshot({ draft, version, onClose, onRestore, current }: { draft: ItemDraft | null; version: number; onClose: () => void; onRestore: () => void; current: boolean }) {
@@ -61,7 +65,7 @@ function Snapshot({ draft, version, onClose, onRestore, current }: { draft: Item
 }
 
 /** Collapsible, append-only timeline. Viewing a snapshot's secrets and restoring both ask for the master password. */
-export function VersionHistory({ id, title, version }: Props) {
+export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }: Props) {
   // DEV deep link (?history) opens the timeline for design review; dead-code-eliminated from production builds.
   const [open, setOpen] = useState(() => import.meta.env.DEV && new URLSearchParams(location.search).has("history"));
   const [entries, setEntries] = useState<VersionEntry[] | null>(null);
@@ -77,7 +81,14 @@ export function VersionHistory({ id, title, version }: Props) {
     }
   }, [id]);
 
-  useEffect(() => { if (open) void load(); }, [open, load, version]);
+  useEffect(() => { if (open) void load(); }, [open, load, version, stamp]);
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (openSignal === 0) return;
+    setOpen(true);
+    // The timeline is below the fold on most screens; bring it to the person who asked for it.
+    requestAnimationFrame(() => section.current?.scrollIntoView({ block: "start" }));
+  }, [openSignal]);
 
   async function view(v: number) {
     const draft = await reprompt({ reason: `Show version ${v} of “${title}”, including its passwords.`, confirmLabel: "Show version", run: (pw) => be().getVersion(id, v, pw) });
@@ -93,9 +104,10 @@ export function VersionHistory({ id, title, version }: Props) {
     }
   }
 
-  const latest = entries?.[0]?.version;
+  // Copies that came from another device are never the current version, whatever their number.
+  const latest = entries?.find((e) => !e.otherDevice)?.version;
   return (
-    <section aria-labelledby={`hist-${id}`}>
+    <section ref={section} aria-labelledby={`hist-${id}`}>
       <button
         type="button"
         id={`hist-${id}`}
@@ -116,14 +128,15 @@ export function VersionHistory({ id, title, version }: Props) {
             {entries && (
               <ol className="relative mx-4 mt-2 mb-1 flex flex-col gap-1 border-l border-hairline-strong pl-5">
                 {entries.map((e) => {
-                  const isLatest = e.version === latest;
+                  const isLatest = !e.otherDevice && e.version === latest;
                   const lifecycle = e.event === "trashed" || e.event === "restored";
                   return (
-                    <li key={e.version} className="relative py-2.5">
+                    <li key={`${e.version}-${e.timestamp}-${e.otherDevice ? "o" : "l"}`} className="relative py-2.5">
                       <span aria-hidden className={`absolute top-[18px] -left-[25px] size-2.5 rounded-full border-2 ${isLatest ? "border-brass bg-brass" : "border-mist/60 bg-pane"}`} />
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="font-semibold">Version {e.version}</span>
                         {isLatest && <span className="rounded-full bg-brass/15 px-2 py-0.5 text-[0.8em] font-medium text-brass-hi">Current</span>}
+                        {e.otherDevice && <span className="rounded-full bg-raised px-2 py-0.5 text-[0.8em] font-medium text-mist shadow-e1">From another device</span>}
                         <span className="text-mist">{EVENT_LABEL[e.event]}{e.restoredFrom ? ` (version ${e.restoredFrom})` : ""}</span>
                       </div>
                       <p className="mt-0.5 text-[0.86em] text-fog" title={exactTime(e.timestamp)}>

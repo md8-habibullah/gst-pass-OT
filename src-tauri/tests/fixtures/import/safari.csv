@@ -1,0 +1,2 @@
+Title,URL,Username,Password,Notes,OTPAuth
+Example (me),https://example.com,me,pw,,otpauth://totp/Example:me?secret=JBSWY3DPEHPK3PXP&issuer=Example

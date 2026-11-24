@@ -1,0 +1,4 @@
+type,name,url,email,username,password,note,totp,createTime,modifyTime,vault
+login,Site,https://s.example,me@example.com,me,pw,n,JBSWY3DPEHPK3PXP,1700000000,1700000001,Personal
+login,Mail,https://m.example,only@example.com,,pw,,,,,Personal
+note,Memo,,,,,remember,,,,Work

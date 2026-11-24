@@ -36,11 +36,36 @@ hmac = { version = "0.13.0", features = ["zeroize"] }
 sha2 = { version = "0.11.1", features = ["zeroize"] }
 unicode-normalization = "0.1.26"
 totp-rs = { version = "6.0.0", default-features = false, features = ["std", "otpauth", "zeroize"] }
+# Q2 disguise: decode the embedded preset PNGs into window-icon pixels (pure Rust; already in the tree through tauri).
+png = "0.18.1"
 # Phase 2 storage: SQLite compiled in (no system lib). It only ever holds opaque envelopes, so no SQLCipher.
 rusqlite = { version = "0.43.0", default-features = false, features = ["bundled"] }
+# Phase 2b: native open/save dialogs, called from Rust only (the webview never supplies a file path).
+tauri-plugin-dialog = "2.8.4"
+# Phase 4a: S3-compatible backup targets. rusty-s3 is sans-IO (it only builds SigV4-presigned URLs);
+# ureq does the HTTP with rustls + ring + bundled web roots, so no OpenSSL is linked anywhere.
+rusty-s3 = { version = "0.12.0", default-features = false, features = ["rustcrypto", "xml"] }
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
+url = "2.5.9"
+# Phase 4a: open a web link in the system browser, called from Rust only (the webview gets no opener:* permission).
+tauri-plugin-opener = "2.7.3"
+# Phase Q4: the universal importer. Pure Rust only (no system libraries), parsing untrusted files in the core.
+csv = "1.4.0"
+quick-xml = "0.42.0"
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
+keepass = "0.17.0"
+
+# Phase 4a: QR scanning for TOTP setup exists on phones only; it must never be part of a desktop build.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2.5.3"
+# Q1: fingerprint for Stage 1 only (it never touches a vault key); phones only, like the scanner. Latest stable 2.5.0 (3.0.0-alpha.3 is a pre-release and is not used).
+tauri-plugin-biometric = "2.5.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# Q4 tests write real .kdbx fixtures with the same crate that reads them.
+keepass = { version = "0.17.0", features = ["save_kdbx4"] }
 # `test` enables tauri::test (mock runtime) so the real command argument mapping is tested.
 tauri = { version = "2.12.7", features = ["test"] }
 

@@ -202,3 +202,22 @@ button:disabled {
     grid-template-areas: "ident actions";
   }
 }
+
+/* In-app QR scanning (Android, iOS): the camera preview is drawn by the system behind the webview, so the
+   page goes see-through and everything except the scan overlay is hidden until the scan ends. */
+html[data-scanning],
+html[data-scanning] body {
+  background: transparent;
+}
+html[data-scanning] #root::before {
+  display: none;
+}
+html[data-scanning] #root > :not([data-scan-overlay]),
+html[data-scanning] body > :not(#root) {
+  visibility: hidden;
+}
+
+/* Stage 1 password field: readable while the text could still be a one-to-three character math answer, masked after. */
+.mask-chars {
+  -webkit-text-security: disc;
+}

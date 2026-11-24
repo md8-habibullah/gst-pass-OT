@@ -4,6 +4,7 @@
 //! Secrets live in [`ItemPayload`] and [`ItemDraft`]; both wipe their values on drop.
 
 use super::error::{Result, StorageError};
+use super::profiles::ProfileInfo;
 use crate::crypto::{CryptoError, TotpAccount, TotpParams};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -27,8 +28,11 @@ pub const MAX_ITEM_BYTES: usize = 4 * 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub enum ItemType {
     Login,
-    Totp,
+    Card,
+    Identity,
+    SshKey,
     SecureNote,
+    Totp,
     Media,
 }
 
@@ -38,8 +42,11 @@ pub enum FieldKind {
     Text,
     Url,
     Password,
+    /// Secret multi-line text.
     Note,
     Totp,
+    /// Non-secret multi-line text (for example an SSH public key).
+    Paragraph,
 }
 
 impl FieldKind {
@@ -67,6 +74,42 @@ const LOGIN: &[FieldSpec] = &[
     spec("totp", "One-time code", FieldKind::Totp),
     spec("notes", "Notes", FieldKind::Note),
 ];
+const CARD: &[FieldSpec] = &[
+    spec("cardholder", "Cardholder name", FieldKind::Text),
+    spec("brand", "Brand", FieldKind::Text),
+    spec("number", "Card number", FieldKind::Password),
+    spec("expMonth", "Expiry month", FieldKind::Text),
+    spec("expYear", "Expiry year", FieldKind::Text),
+    spec("code", "Security code", FieldKind::Password),
+    spec("pin", "PIN", FieldKind::Password),
+    spec("notes", "Notes", FieldKind::Note),
+];
+const IDENTITY: &[FieldSpec] = &[
+    spec("salutation", "Title", FieldKind::Text),
+    spec("firstName", "First name", FieldKind::Text),
+    spec("middleName", "Middle name", FieldKind::Text),
+    spec("lastName", "Last name", FieldKind::Text),
+    spec("email", "Email", FieldKind::Text),
+    spec("phone", "Phone", FieldKind::Text),
+    spec("company", "Company", FieldKind::Text),
+    spec("address1", "Address", FieldKind::Text),
+    spec("address2", "Address line 2", FieldKind::Text),
+    spec("city", "City", FieldKind::Text),
+    spec("state", "State or region", FieldKind::Text),
+    spec("postalCode", "Postal code", FieldKind::Text),
+    spec("country", "Country", FieldKind::Text),
+    spec("nationalId", "National ID", FieldKind::Password),
+    spec("passport", "Passport number", FieldKind::Password),
+    spec("license", "Driver's license", FieldKind::Password),
+    spec("notes", "Notes", FieldKind::Note),
+];
+const SSH_KEY: &[FieldSpec] = &[
+    spec("publicKey", "Public key", FieldKind::Paragraph),
+    spec("privateKey", "Private key", FieldKind::Note),
+    spec("passphrase", "Passphrase", FieldKind::Password),
+    spec("fingerprint", "Fingerprint", FieldKind::Text),
+    spec("notes", "Notes", FieldKind::Note),
+];
 const TOTP: &[FieldSpec] = &[
     spec("issuer", "Issuer", FieldKind::Text),
     spec("account", "Account", FieldKind::Text),
@@ -80,6 +123,9 @@ impl ItemType {
     pub fn schema(self) -> &'static [FieldSpec] {
         match self {
             Self::Login => LOGIN,
+            Self::Card => CARD,
+            Self::Identity => IDENTITY,
+            Self::SshKey => SSH_KEY,
             Self::Totp => TOTP,
             Self::SecureNote => SECURE_NOTE,
             Self::Media => MEDIA,
@@ -215,6 +261,9 @@ impl ItemDraft {
                 "Add the secret key or an otpauth:// link for this code.",
             ));
         }
+        if self.item_type == ItemType::Card {
+            self.normalize_card()?;
+        }
 
         if self.custom_fields.len() > MAX_CUSTOM_FIELDS {
             return Err(StorageError::invalid("Use at most 50 custom fields."));
@@ -238,6 +287,51 @@ impl ItemDraft {
         }
         if total > MAX_ITEM_BYTES {
             return Err(StorageError::invalid("This item is too large."));
+        }
+        Ok(())
+    }
+}
+
+impl ItemDraft {
+    /// Light, never-in-the-way checks for cards: the number looks like a number, the expiry like
+    /// a date. Values are stored trimmed. Luhn is deliberately not enforced (gift and store cards).
+    fn normalize_card(&mut self) -> Result<()> {
+        for key in ["number", "expMonth", "expYear"] {
+            if let Some(v) = self.fields.get_mut(key) {
+                let trimmed = v.trim().to_string();
+                v.zeroize();
+                *v = trimmed;
+            }
+        }
+        self.fields.retain(|_, v| !v.is_empty());
+        if let Some(n) = self.fields.get("number") {
+            let len = n.chars().count();
+            let shape_ok = n
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == ' ' || c == '-');
+            let digits = n.chars().filter(char::is_ascii_digit).count();
+            if !shape_ok || !(8..=23).contains(&len) || digits < 8 {
+                return Err(StorageError::invalid(
+                    "The card number may only contain digits, spaces and dashes (8 to 23 characters).",
+                ));
+            }
+        }
+        if let Some(m) = self.fields.get("expMonth") {
+            let ok = m.len() <= 2
+                && m.bytes().all(|b| b.is_ascii_digit())
+                && m.parse::<u8>().is_ok_and(|n| (1..=12).contains(&n));
+            if !ok {
+                return Err(StorageError::invalid(
+                    "The expiry month must be a number from 1 to 12.",
+                ));
+            }
+        }
+        if let Some(y) = self.fields.get("expYear") {
+            if y.len() != 4 || !y.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(StorageError::invalid(
+                    "The expiry year must have four digits, for example 2029.",
+                ));
+            }
         }
         Ok(())
     }
@@ -306,6 +400,8 @@ pub enum ItemEvent {
     Trashed,
     Restored,
     RestoredFromVersion,
+    Archived,
+    Unarchived,
 }
 
 /// Reference to an encrypted attachment blob (the blobs and their UI arrive in Phase 5).
@@ -317,6 +413,19 @@ pub struct AttachmentRef {
     pub mime: String,
     pub size: u64,
     pub sha256: String,
+}
+
+/// Which state an item's state grew out of: the `(version, timestamp)` of its envelope header.
+///
+/// This is the lineage that sync needs. Two devices that both edit the same item write
+/// different states with the same or overlapping version numbers; only the parent pointers tell
+/// a plain fast-forward (the other device's state grew out of mine) from a real divergence (both
+/// of us changed it). It is sealed inside the payload, so a bucket cannot forge or hide it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParentRef {
+    pub version: u64,
+    pub ts: u64,
 }
 
 /// What is sealed inside `items.blob` and `versions.blob`.
@@ -338,9 +447,16 @@ pub struct ItemPayload {
     pub updated_at: u64,
     pub deleted: bool,
     pub deleted_at: Option<u64>,
+    /// Added after schema 1 shipped: payloads written before it simply lack the key.
+    #[serde(default)]
+    pub archived: bool,
     pub event: ItemEvent,
     pub restored_from: Option<u64>,
     pub changed_fields: Vec<String>,
+    /// The state this one replaced (absent on version 1 and on states written before sync
+    /// existed, which sync treats as "lineage unknown").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ParentRef>,
 }
 
 impl Drop for ItemPayload {
@@ -367,9 +483,11 @@ impl ItemPayload {
             updated_at: now,
             deleted: false,
             deleted_at: None,
+            archived: false,
             event: ItemEvent::Created,
             restored_from: None,
             changed_fields: Vec::new(),
+            parent: None,
         };
         p.apply_draft(draft);
         p
@@ -425,6 +543,7 @@ impl ItemPayload {
             has_totp: self.fields.contains_key("totp"),
             updated_at: self.updated_at,
             version,
+            archived: self.archived,
         }
     }
 
@@ -477,6 +596,7 @@ impl ItemPayload {
             created_at: self.created_at,
             updated_at: self.updated_at,
             version,
+            changed_elsewhere: false,
         }
     }
 }
@@ -489,6 +609,39 @@ pub fn subtitle_of(item_type: ItemType, fields: &BTreeMap<String, String>) -> Op
             .map(str::to_string)
             .or_else(|| get("url").and_then(host_of)),
         ItemType::Totp => get("account").or_else(|| get("issuer")).map(str::to_string),
+        ItemType::Card => {
+            let digits: Vec<char> = get("number")
+                .map(|n| n.chars().filter(char::is_ascii_digit).collect())
+                .unwrap_or_default();
+            if digits.len() >= 4 {
+                let last4: String = digits[digits.len() - 4..].iter().collect();
+                Some(match get("brand") {
+                    Some(brand) => format!("{brand} •••• {last4}"),
+                    None => format!("•••• {last4}"),
+                })
+            } else {
+                get("cardholder").map(str::to_string)
+            }
+        }
+        ItemType::Identity => {
+            let name: Vec<&str> = ["firstName", "middleName", "lastName"]
+                .iter()
+                .filter_map(|k| get(k))
+                .collect();
+            if name.is_empty() {
+                get("email").map(str::to_string)
+            } else {
+                Some(name.join(" "))
+            }
+        }
+        // The fingerprint if the person typed one, else the comment of the public key line
+        // ("ssh-ed25519 AAAA… ana@laptop" → "ana@laptop").
+        ItemType::SshKey => get("fingerprint").map(str::to_string).or_else(|| {
+            get("publicKey")
+                .and_then(|k| k.lines().next())
+                .and_then(|line| line.split_whitespace().nth(2))
+                .map(str::to_string)
+        }),
         ItemType::SecureNote | ItemType::Media => None,
     }
 }
@@ -525,6 +678,8 @@ pub struct ItemSummary {
     pub has_totp: bool,
     pub updated_at: u64,
     pub version: u64,
+    /// Archived items are listed (they stay readable) but hidden from the default views by the UI.
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -569,6 +724,10 @@ pub struct ItemView {
     pub created_at: u64,
     pub updated_at: u64,
     pub version: u64,
+    /// Another device changed this item too, and the copy it sent is in the history ("from
+    /// another device") waiting to be looked at. Cleared by `item_review_other_device` or by
+    /// restoring such a copy.
+    pub changed_elsewhere: bool,
 }
 
 /// The trash listing exposes exactly these three values (spec: "ONLY title and timestamp").
@@ -588,6 +747,8 @@ pub struct VersionEntry {
     pub event: ItemEvent,
     pub changed_fields: Vec<String>,
     pub restored_from: Option<u64>,
+    /// A copy of another device's latest state that arrived while this device kept its own.
+    pub other_device: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -600,22 +761,25 @@ pub struct TotpNow {
     pub valid_until_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Capabilities {
-    pub quick_unlock: bool,
-    pub biometric: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
+    /// The selected profile's vault file exists (false when no profile is selected).
     pub exists: bool,
     pub unlocked: bool,
-    pub capabilities: Capabilities,
+    /// The selected profile; `None` when nothing is selected. Filled in by the profile layer.
+    pub profile: Option<ProfileInfo>,
     /// Items whose stored data failed authentication when the vault was unlocked (0 normally).
     /// Additive field, not in the original contract.
     pub damaged_items: usize,
+    /// Goes up every time a pull changed what is stored (a new item, a fast-forward, a deletion,
+    /// an other-device copy). The page re-reads its lists when it differs from the last one it saw.
+    /// Starts at 0 for every unlock; in memory only.
+    pub sync_revision: u64,
+    /// A pull is queued or running right now ("Checking your backup...").
+    pub reconciling: bool,
+    /// Objects in the backup that failed authentication during the last pull (never applied).
+    pub remote_damaged: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -873,6 +1037,7 @@ mod tests {
             "hasTotp",
             "updatedAt",
             "version",
+            "archived",
         ] {
             assert!(s.get(k).is_some(), "summary lacks {k}");
         }
@@ -883,14 +1048,19 @@ mod tests {
         let st = serde_json::to_value(VaultStatus {
             exists: true,
             unlocked: false,
-            capabilities: Capabilities {
-                quick_unlock: false,
-                biometric: false,
-            },
+            profile: None,
             damaged_items: 0,
+            sync_revision: 7,
+            reconciling: true,
+            remote_damaged: 2,
         })
         .unwrap();
-        assert_eq!(st["capabilities"]["quickUnlock"], false);
+        // The old quick-unlock design is gone: no `capabilities` field is sent any more.
+        assert!(st.get("capabilities").is_none());
+        assert_eq!(st["exists"], true);
+        assert_eq!(st["syncRevision"], 7);
+        assert_eq!(st["reconciling"], true);
+        assert_eq!(st["remoteDamaged"], 2);
         assert_eq!(
             serde_json::to_value(ItemEvent::RestoredFromVersion).unwrap(),
             json!("restoredFromVersion")

@@ -1,14 +1,34 @@
 // DEV-ONLY preview backend: lets the UI be designed and screenshotted in a normal browser.
 // It is NOT secure (plain in-memory data, string-compare "password check"). Never bundled in production
 // builds: src/backend/index.ts loads it behind import.meta.env.DEV and only outside Tauri.
+import { DISGUISES } from "../lib/disguise";
+import { MAX_FILE_BYTES, MAX_FILE_LABEL, mimeFor } from "../lib/files";
+import { ImportError, parseImport, type ImportResult } from "../lib/importers";
+import { checkDisplayName } from "../lib/profileName";
+import { MockGate } from "./mockGate";
 import {
   BackendError,
   FIELD_SCHEMA,
+  isSecretKind,
+  type AppSettings,
   type Backend,
+  type BackupTargetInput,
+  type BackupTargetView,
+  type DisguiseInput,
+  type DisguiseView,
+  type FileEntry,
+  type CsvInspect,
+  type ImportFormat,
+  type ImportOptions,
+  type ImportOutcome,
+  type ImportPick,
+  type ImportPreview,
   type ItemDraft,
+  type PlainExportFormat,
   type ItemSummary,
   type ItemType,
   type ItemView,
+  type ProfileInfo,
   type TotpNow,
   type VersionEntry,
   type VersionEvent,
@@ -21,6 +41,7 @@ interface Snapshot {
   changedFields: string[];
   restoredFrom: number | null;
   draft: ItemDraft;
+  otherDevice?: boolean;
 }
 interface Stored {
   id: string;
@@ -29,31 +50,56 @@ interface Stored {
   version: number;
   deleted: boolean;
   deletedAt: number | null;
+  archived: boolean;
   draft: ItemDraft;
   history: Snapshot[];
+  changedElsewhere?: boolean;
+}
+interface MockTarget extends Omit<BackupTargetView, "hasSecret" | "health"> {
+  secretAccessKey: string;
+  queued: number;
+  lastSuccessAt: number | null;
+  lastCheckedAt: number | null;
+  lastError: string | null;
+  tested: boolean;
+}
+interface MockProfile {
+  info: ProfileInfo;
+  password: string;
+  store: Map<string, Stored>;
+  targets: MockTarget[];
+  files: Map<string, { entry: FileEntry; bytes: Uint8Array }>;
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const clone = <T,>(v: T): T => structuredClone(v);
 const MIN = 60_000;
 
-let vaultPassword: string | null = null;
+const profiles: MockProfile[] = [];
+let selectedId: string | null = null;
 let unlocked = false;
-const store = new Map<string, Stored>();
 const tokens = new Map<string, { id: string; version: number; expires: number }>();
 
 function err(code: ConstructorParameters<typeof BackendError>[0], message: string): never {
   throw new BackendError(code, message);
 }
-function requireUnlocked() {
-  if (!unlocked) err("locked", "The vault is locked.");
+function selected(): MockProfile {
+  const p = profiles.find((x) => x.info.id === selectedId);
+  if (!p) err("no_vault", "Choose an account first.");
+  return p;
 }
-async function verify(password: string) {
+function requireUnlocked(): MockProfile {
+  const p = selected();
+  if (!unlocked) err("locked", "The vault is locked.");
+  return p;
+}
+const items = () => requireUnlocked().store;
+async function verify(password: string, p: MockProfile = selected()) {
   await delay(650); // stands in for Argon2id, which is slow on purpose
-  if (password !== vaultPassword) err("wrong_password", "That master password is not right.");
+  if (password !== p.password) err("wrong_password", "That master password is not right.");
 }
 function need(id: string): Stored {
-  const s = store.get(id);
+  const s = items().get(id);
   if (!s) err("not_found", "That item no longer exists.");
   return s;
 }
@@ -61,6 +107,21 @@ function active(id: string): Stored {
   const s = need(id);
   if (s.deleted) err("in_trash", "Restore this item from the trash to open it.");
   return s;
+}
+let syncRevision = 0;
+/** DEV deep link only: pretends another device saved a different version of this item (what a diverged pull leaves behind). */
+export function simulateOtherDeviceEdit(id: string): void {
+  const s = need(id);
+  const other = clone(s.draft);
+  other.title = `${other.title} (other device)`.slice(0, 256);
+  const top = s.history.reduce((m, h) => Math.max(m, h.version), 0);
+  s.history.push({ version: top + 1, timestamp: Date.now() - 4 * MIN, event: "edited", changedFields: ["title"], restoredFrom: null, draft: other, otherDevice: true });
+  s.changedElsewhere = true;
+  syncRevision += 1;
+}
+
+function touchQueue() {
+  for (const t of selected().targets) if (t.enabled) t.queued += 1;
 }
 
 function hostOf(url: string): string | null {
@@ -70,20 +131,41 @@ function hostOf(url: string): string | null {
     return null;
   }
 }
+/** The import's duplicate rule (the core's): same type and title and, for logins, the same username and website, ignoring case. */
+function sameEntry(a: ItemDraft, b: ItemDraft): boolean {
+  const lc = (s: string | undefined) => (s ?? "").trim().toLowerCase();
+  if (a.type !== b.type || lc(a.title) !== lc(b.title)) return false;
+  if (a.type !== "login") return true;
+  return lc(a.fields.username) === lc(b.fields.username) && lc(hostOf(a.fields.url ?? "") ?? "") === lc(hostOf(b.fields.url ?? "") ?? "");
+}
+function subtitleOf(d: ItemDraft): string | null {
+  const f = d.fields;
+  switch (d.type) {
+    case "login": return f.username || (f.url ? hostOf(f.url) : null) || null;
+    case "totp": return f.account || f.issuer || null;
+    case "card": {
+      const last4 = (f.number ?? "").replace(/\D/g, "").slice(-4);
+      return last4 ? `${f.brand ? `${f.brand} ` : ""}•••• ${last4}` : f.cardholder || null;
+    }
+    case "identity": return [f.firstName, f.lastName].filter(Boolean).join(" ") || f.email || null;
+    case "sshKey": return f.fingerprint || f.publicKey?.trim().split(/\s+/)[2] || null;
+    default: return null;
+  }
+}
 function summarize(s: Stored): ItemSummary {
   const d = s.draft;
-  const f = d.fields;
   return {
     id: s.id,
     type: d.type,
     title: d.title,
-    subtitle: f.username || f.account || (f.url ? hostOf(f.url) : null) || null,
+    subtitle: subtitleOf(d),
     favorite: d.favorite,
     tags: d.tags,
     folder: d.folder,
-    hasTotp: Boolean(f.totp),
+    hasTotp: Boolean(d.fields.totp),
     updatedAt: s.updatedAt,
     version: s.version,
+    archived: s.archived,
   };
 }
 
@@ -111,6 +193,9 @@ function cleanDraft(d: ItemDraft): ItemDraft {
     if (v.trim() !== "") fields[k] = v;
   }
   if (fields.totp) parseTotp(fields.totp); // throws invalid_input when unusable
+  if (fields.number && !/^[\d\s-]{8,23}$/.test(fields.number)) err("invalid_input", "A card number has 8 to 23 digits (spaces and dashes are fine).");
+  if (fields.expMonth && !(Number(fields.expMonth) >= 1 && Number(fields.expMonth) <= 12)) err("invalid_input", "The expiry month is 1 to 12.");
+  if (fields.expYear && !/^\d{4}$/.test(fields.expYear)) err("invalid_input", "The expiry year has four digits.");
   return { ...d, title, fields, tags: d.tags.map((t) => t.trim()).filter(Boolean) };
 }
 
@@ -120,7 +205,7 @@ function snapshot(s: Stored, event: VersionEvent, prev: ItemDraft | null, restor
 
 function seedItem(minsAgo: number, draft: ItemDraft, edits: { minsAgo: number; patch: Record<string, string>; title?: string }[] = []): Stored {
   const created = Date.now() - minsAgo * MIN;
-  const s: Stored = { id: crypto.randomUUID(), createdAt: created, updatedAt: created, version: 1, deleted: false, deletedAt: null, draft: clone(draft), history: [] };
+  const s: Stored = { id: crypto.randomUUID(), createdAt: created, updatedAt: created, version: 1, deleted: false, deletedAt: null, archived: false, draft: clone(draft), history: [] };
   snapshot(s, "created", null, null, created);
   for (const e of edits.sort((a, b) => b.minsAgo - a.minsAgo)) {
     const prev = clone(s.draft);
@@ -137,8 +222,41 @@ const login = (title: string, fields: Record<string, string>, extra: Partial<Ite
   type: "login", title, favorite: false, tags: [], folder: null, fields, customFields: [], ...extra,
 });
 
-function seed() {
-  store.clear();
+/** A tiny but valid PDF so the in-app PDF preview can be reviewed without a real file. */
+function miniPdf(text: string): Uint8Array {
+  const enc = new TextEncoder();
+  const stream = `BT /F1 26 Tf 60 720 Td (${text}) Tj ET`;
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objs.forEach((o, i) => { offsets.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return enc.encode(out);
+}
+
+function seedFiles(p: MockProfile) {
+  p.files.clear();
+  const add = (name: string, bytes: Uint8Array, minsAgo: number, itemId: string | null = null) => {
+    const entry: FileEntry = { id: crypto.randomUUID(), name, size: bytes.length, mime: mimeFor(name), itemId, addedAt: Date.now() - minsAgo * MIN };
+    p.files.set(entry.id, { entry, bytes });
+  };
+  const enc = new TextEncoder();
+  add("recovery-notes.txt", enc.encode("Recovery notes\n\nSpare router login is on the label under the unit.\nBackup phone: ask Dana.\n"), 30);
+  add("lakehouse-floorplan.svg", enc.encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" fill="#16323d"/><rect x="30" y="30" width="150" height="140" fill="none" stroke="#e2b259" stroke-width="4"/><rect x="180" y="70" width="110" height="100" fill="none" stroke="#e2b259" stroke-width="4"/><circle cx="105" cy="100" r="22" fill="#52d3b8"/></svg>'), 60 * 5);
+  add("insurance-receipt.pdf", miniPdf("Insurance receipt - paid in full"), 60 * 48);
+  add("archive-2024.zip", enc.encode("PK\u0005\u0006".padEnd(22, "\0")), 60 * 24 * 9);
+}
+
+function seedInto(p: MockProfile) {
+  p.store.clear();
+  seedFiles(p);
   const items: Stored[] = [
     seedItem(60 * 24 * 90, login("GitHub", { username: "marlowe-dev", password: "kX9#mQ2vTz!8pLd4", url: "https://github.com/login", totp: "otpauth://totp/GitHub:marlowe-dev?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&period=30&digits=6", notes: "Personal account. Recovery codes are in the Recovery codes note." }, { favorite: true, tags: ["work", "dev"] }), [
       { minsAgo: 60 * 24 * 41, patch: { password: "t7Rw-Nq4!zYb2uHc" } },
@@ -165,7 +283,15 @@ function seed() {
     snapshot(s, "trashed", prev, null, s.deletedAt);
     items.push(s);
   }
-  for (const s of items) store.set(s.id, s);
+  const extra: Stored[] = [
+    seedItem(60 * 24 * 6, { type: "card", title: "Northline Visa", favorite: false, tags: ["finance"], folder: null, fields: { cardholder: "M. Marlowe", brand: "Visa", number: "4111 1111 1111 4242", expMonth: "08", expYear: "2029", code: "913", pin: "4821" }, customFields: [] }),
+    seedItem(60 * 24 * 40, { type: "identity", title: "Personal details", favorite: false, tags: ["home"], folder: null, fields: { salutation: "Mx", firstName: "Marlowe", lastName: "Dean", email: "marlowe@example.com", phone: "+44 20 7946 0000", address1: "14 Linden Row", city: "Bristol", postalCode: "BS1 4DJ", country: "United Kingdom", passport: "563201948" }, customFields: [] }),
+    seedItem(60 * 24 * 9, { type: "sshKey", title: "Deploy key (edge-cluster)", favorite: false, tags: ["infra"], folder: null, fields: { publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ3x9bK2deploy marlowe@edge", privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----", fingerprint: "SHA256:Qm3vN8wLr2TmZxHq4vN8wLr2TmZxHq4vN8w" }, customFields: [] }),
+  ];
+  const archived = seedItem(60 * 24 * 300, login("Old Slack workspace", { username: "marlowe", password: "sl4ck-0ld-pass!", url: "https://oldteam.slack.example" }));
+  archived.archived = true;
+  extra.push(archived);
+  for (const s of [...items, ...extra]) p.store.set(s.id, s);
 }
 
 // ---- TOTP (real maths, for realistic rings in the preview) ----
@@ -221,11 +347,12 @@ function view(s: Stored): ItemView {
     fields: FIELD_SCHEMA[d.type]
       .filter((spec) => d.fields[spec.key])
       .map((spec) => {
-        const secret = spec.kind === "password" || spec.kind === "note" || spec.kind === "totp";
-        return { key: spec.key, label: spec.label, kind: spec.kind, secret, value: secret ? null : (d.fields[spec.key] ?? null), hasValue: true };
+        const secret = isSecretKind(spec.kind);
+        return { key: spec.key, label: spec.label, kind: spec.kind, secret, value: secret ? null : (d.fields[spec.key] ?? null), hasValue: Boolean(d.fields[spec.key]) };
       }),
     customFields: d.customFields.map((c) => ({ name: c.name, hidden: c.hidden, value: c.hidden ? null : c.value })),
     attachments: [], createdAt: s.createdAt, updatedAt: s.updatedAt, version: s.version,
+    changedElsewhere: s.changedElsewhere === true,
   };
 }
 
@@ -236,6 +363,52 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
   if (t.version !== expectedVersion) err("version_conflict", "This item changed since you opened it.");
 }
 
+const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info });
+
+function toView(t: MockTarget): BackupTargetView {
+  const { secretAccessKey, queued, lastSuccessAt, lastCheckedAt, lastError, tested, ...rest } = t;
+  const lagging = queued > 0 && lastSuccessAt !== null && Date.now() - lastSuccessAt > 5 * MIN;
+  const state = !t.enabled ? "disabled" : lastError ? "failing" : !tested && lastSuccessAt === null ? "untested" : lagging ? "lagging" : "healthy";
+  return { ...rest, hasSecret: secretAccessKey.length > 0, health: { state, queued, lastSuccessAt, lastCheckedAt, lastError, conditionalWrites: tested ? "strong" : "unknown" } };
+}
+function checkTargetInput(i: BackupTargetInput, keepSecret = false) {
+  if (!i.name.trim()) err("invalid_input", "Give this backup a name.");
+  if (!i.bucket.trim()) err("invalid_input", "Enter the bucket name.");
+  if (!i.accessKeyId.trim()) err("invalid_input", "Enter the access key ID.");
+  if (!keepSecret && !i.secretAccessKey) err("invalid_input", "Enter the secret access key.");
+  if (i.endpoint && !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)/i.test(i.endpoint.trim())) err("invalid_input", "The endpoint must start with https://.");
+}
+
+/** Preview-only stand-in for the core's native picker. The input stays in the page so a test can feed it files. */
+function pickFilesInBrowser(): Promise<File[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file"; input.multiple = true; input.hidden = true; input.dataset.mockPicker = "1";
+    input.addEventListener("change", () => { const files = [...(input.files ?? [])]; input.remove(); resolve(files.length ? files : null); });
+    input.addEventListener("cancel", () => { input.remove(); resolve(null); });
+    document.body.append(input);
+    input.click();
+  });
+}
+
+const imports = new Map<string, { result: ImportResult | null; name: string; text: string }>();
+function importFor(o: ImportOptions): { result: ImportResult } {
+  const f = imports.get(o.handle);
+  if (!f) err("not_found", "That file is no longer open. Choose it again.");
+  if (o.format === "keepass-kdbx") err("invalid_input", "KeePass files are read by the real app only (this preview cannot open them).");
+  try { return { result: f.result ?? parseImport(f.text) }; } catch (e) { return err("unsupported_file", e instanceof ImportError ? e.message : "That file could not be read."); }
+}
+
+export const gate = new MockGate();
+gate.onWipe = () => { profiles.length = 0; selectedId = null; unlocked = false; tokens.clear(); };
+let appSettings: AppSettings = { lockAfterMinutes: 5 };
+let disguise: DisguiseInput = { presetId: null, customName: null, lowercase: false };
+function disguiseView(): DisguiseView {
+  const preset = DISGUISES.find((d) => d.id === disguise.presetId);
+  const base = disguise.customName ?? preset?.name ?? "Passman";
+  return { ...disguise, appliedName: disguise.lowercase ? base.toLowerCase() : base, note: "Preview only: nothing outside this page changes." };
+}
+
 export const previewBackend: Backend = {
   kind: "preview",
   async suiteInfo() {
@@ -243,118 +416,414 @@ export const previewBackend: Backend = {
   },
   async status() {
     await delay(120);
-    return { exists: vaultPassword !== null, unlocked, capabilities: { quickUnlock: true, biometric: true } };
+    const p = profiles.find((x) => x.info.id === selectedId) ?? null;
+    return { exists: p !== null, unlocked: p !== null && unlocked, profile: p ? profileInfo(p) : null, syncRevision, reconciling: false };
   },
-  async createVault(password) {
-    if (vaultPassword !== null) err("vault_exists", "A vault already exists.");
+
+  async listProfiles() {
+    await delay(60);
+    const sorted = [...profiles].sort((a, b) => (b.info.lastUsedAt ?? b.info.createdAt) - (a.info.lastUsedAt ?? a.info.createdAt));
+    return { profiles: sorted.map(profileInfo), selectedId, lastUsedId: sorted.find((p) => p.info.lastUsedAt !== null)?.info.id ?? null };
+  },
+  async createProfile(displayName, password) {
+    const check = checkDisplayName(displayName, profiles.map((p) => p.info));
+    if (!check.ok) err(check.message.startsWith("You already") ? "profile_name_taken" : "invalid_input", check.message);
     if (password.length < 8) err("invalid_input", "Use at least 8 characters.");
     await delay(900);
-    vaultPassword = password; unlocked = true; seed();
+    const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: Date.now() }, password, store: new Map(), targets: [], files: new Map() };
+    profiles.push(p);
+    selectedId = p.info.id; unlocked = true; tokens.clear();
+    return profileInfo(p);
   },
+  async selectProfile(id) {
+    const p = profiles.find((x) => x.info.id === id);
+    if (!p) err("not_found", "That account no longer exists on this device.");
+    if (selectedId !== id) { unlocked = false; tokens.clear(); }
+    selectedId = id;
+  },
+  async renameProfile(id, displayName) {
+    const p = requireUnlocked();
+    if (p.info.id !== id) err("locked", "Unlock this account to rename it.");
+    const check = checkDisplayName(displayName, profiles.map((x) => x.info), id);
+    if (!check.ok) err(check.message.startsWith("You already") ? "profile_name_taken" : "invalid_input", check.message);
+    p.info.displayName = check.name;
+    return profileInfo(p);
+  },
+  async removeProfile(id, password, confirmation) {
+    const p = profiles.find((x) => x.info.id === id);
+    if (!p) err("not_found", "That account no longer exists on this device.");
+    await verify(password, p);
+    const c = confirmation.trim();
+    if (c !== "CONFIRM" && c !== p.info.displayName) err("confirmation_mismatch", "Type the account name or CONFIRM exactly.");
+    profiles.splice(profiles.indexOf(p), 1);
+    if (selectedId === id) { selectedId = null; unlocked = false; tokens.clear(); }
+  },
+  async importProfileFile(displayName) {
+    const check = checkDisplayName(displayName, profiles.map((p) => p.info));
+    if (!check.ok) err(check.message.startsWith("You already") ? "profile_name_taken" : "invalid_input", check.message);
+    await delay(400);
+    const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
+    seedInto(p);
+    profiles.push(p);
+    selectedId = p.info.id; unlocked = false;
+    return profileInfo(p);
+  },
+  async restoreProfileFromBackup(displayName, input) {
+    checkTargetInput(input);
+    const check = checkDisplayName(displayName, profiles.map((p) => p.info));
+    if (!check.ok) err(check.message.startsWith("You already") ? "profile_name_taken" : "invalid_input", check.message);
+    await delay(1200);
+    if (/fail|bad/i.test(input.bucket)) err("remote", "The bucket answered “Access denied”. Check the access key and the bucket name.");
+    const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
+    seedInto(p);
+    profiles.push(p);
+    selectedId = p.info.id; unlocked = false;
+    return profileInfo(p);
+  },
+
   async unlock(password) {
-    if (vaultPassword === null) err("no_vault", "There is no vault yet.");
-    await verify(password);
+    const p = selected();
+    await verify(password, p);
     unlocked = true;
+    p.info.lastUsedAt = Date.now();
   },
   async lock() { unlocked = false; tokens.clear(); },
-  async quickUnlockPin(pin) {
-    await delay(350);
-    if (pin !== PREVIEW_PIN) err("wrong_password", "That PIN is not right.");
-    unlocked = true;
-  },
-  async quickUnlockBiometric() {
-    await delay(800);
-    unlocked = true;
-  },
   async changePassword(oldPassword, newPassword) {
-    requireUnlocked(); await verify(oldPassword);
+    const p = requireUnlocked(); await verify(oldPassword, p);
     if (newPassword.length < 8) err("invalid_input", "Use at least 8 characters.");
-    vaultPassword = newPassword;
+    p.password = newPassword;
+  },
+  async exportVaultFile(password) {
+    const p = requireUnlocked(); await verify(password, p);
+    await delay(300);
+    return { path: `~/Documents/${p.info.displayName}-${new Date().toISOString().slice(0, 10)}.passman` };
   },
 
   async listItems() {
-    requireUnlocked(); await delay(60);
-    return [...store.values()].filter((s) => !s.deleted).map(summarize).sort((a, b) => b.updatedAt - a.updatedAt);
+    await delay(60);
+    return [...items().values()].filter((s) => !s.deleted).map(summarize).sort((a, b) => b.updatedAt - a.updatedAt);
   },
-  async getItem(id) { requireUnlocked(); await delay(50); return view(active(id)); },
-  async revealItem(id, password) { requireUnlocked(); const s = active(id); await verify(password); return clone(s.draft); },
+  async getItem(id) { items(); await delay(50); return view(active(id)); },
+  async revealItem(id, password) { const s = active(id); await verify(password); return clone(s.draft); },
   async beginEdit(id, password) {
-    requireUnlocked(); const s = active(id); await verify(password);
+    const s = active(id); await verify(password);
     const token = crypto.randomUUID();
     tokens.set(token, { id, version: s.version, expires: Date.now() + 10 * MIN });
     return { token, draft: clone(s.draft), version: s.version };
   },
   async createItem(draft) {
-    requireUnlocked(); await delay(150);
+    const store = items(); await delay(150);
     const d = cleanDraft(draft); const now = Date.now();
-    const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, draft: d, history: [] };
-    snapshot(s, "created", null); store.set(s.id, s);
+    const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
+    snapshot(s, "created", null); store.set(s.id, s); touchQueue();
     return summarize(s);
   },
   async updateItem(id, token, expectedVersion, draft) {
-    requireUnlocked(); await delay(150);
+    items(); await delay(150);
     const s = active(id); consumeToken(token, id, expectedVersion);
     if (s.version !== expectedVersion) err("version_conflict", "This item changed since you opened it.");
     const next = cleanDraft(draft);
     if (next.type !== s.draft.type) err("invalid_input", "An item cannot change type.");
     const prev = clone(s.draft);
     s.draft = next; s.version += 1; s.updatedAt = Date.now();
-    snapshot(s, "edited", prev);
+    snapshot(s, "edited", prev); touchQueue();
     return summarize(s);
   },
   async trashItem(id) {
-    requireUnlocked(); await delay(100); const s = active(id);
+    items(); await delay(100); const s = active(id);
     s.version += 1; s.deleted = true; s.deletedAt = Date.now(); s.updatedAt = s.deletedAt;
-    snapshot(s, "trashed", s.draft);
+    snapshot(s, "trashed", s.draft); touchQueue();
   },
   async restoreItem(id) {
-    requireUnlocked(); await delay(100); const s = need(id);
+    items(); await delay(100); const s = need(id);
     if (!s.deleted) err("not_in_trash", "That item is not in the trash.");
     s.version += 1; s.deleted = false; s.deletedAt = null; s.updatedAt = Date.now();
-    snapshot(s, "restored", s.draft);
+    snapshot(s, "restored", s.draft); touchQueue();
     return summarize(s);
   },
   async listTrash() {
-    requireUnlocked(); await delay(60);
-    return [...store.values()].filter((s) => s.deleted).map((s) => ({ id: s.id, title: s.draft.title, deletedAt: s.deletedAt ?? s.updatedAt })).sort((a, b) => b.deletedAt - a.deletedAt);
+    await delay(60);
+    return [...items().values()].filter((s) => s.deleted).map((s) => ({ id: s.id, title: s.draft.title, deletedAt: s.deletedAt ?? s.updatedAt })).sort((a, b) => b.deletedAt - a.deletedAt);
   },
   async purgeItem(id, password, confirmation) {
-    requireUnlocked(); const s = need(id);
+    const store = items(); const s = need(id);
     if (!s.deleted) err("not_in_trash", "Only items in the trash can be deleted forever.");
     await verify(password);
     const c = confirmation.trim();
     if (c !== "CONFIRM" && c !== s.draft.title.trim()) err("confirmation_mismatch", "Type the item name or CONFIRM exactly.");
-    store.delete(id);
+    store.delete(id); touchQueue();
+  },
+  async archiveItem(id) {
+    items(); await delay(80); const s = active(id);
+    if (!s.archived) { s.archived = true; s.version += 1; s.updatedAt = Date.now(); snapshot(s, "archived", s.draft); touchQueue(); }
+    return summarize(s);
+  },
+  async unarchiveItem(id) {
+    items(); await delay(80); const s = active(id);
+    if (s.archived) { s.archived = false; s.version += 1; s.updatedAt = Date.now(); snapshot(s, "unarchived", s.draft); touchQueue(); }
+    return summarize(s);
+  },
+  async cloneItem(id, password) {
+    const store = items(); const src = active(id); await verify(password);
+    const now = Date.now();
+    const d = clone(src.draft); d.title = `${d.title} (copy)`.slice(0, 256);
+    const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
+    snapshot(s, "created", null); store.set(s.id, s); touchQueue();
+    return summarize(s);
   },
 
   async listHistory(id) {
-    requireUnlocked(); await delay(60); const s = active(id);
-    return s.history.map<VersionEntry>(({ version, timestamp, event, changedFields, restoredFrom }) => ({ version, timestamp, event, changedFields, restoredFrom })).sort((a, b) => b.version - a.version);
+    items(); await delay(60); const s = active(id);
+    return s.history.map<VersionEntry>(({ version, timestamp, event, changedFields, restoredFrom, otherDevice }) => ({ version, timestamp, event, changedFields, restoredFrom, otherDevice: otherDevice === true })).sort((a, b) => b.timestamp - a.timestamp || b.version - a.version);
   },
+  async reviewOtherDevice(id) { const s = active(id); s.changedElsewhere = false; },
+  async syncFlush() { return { complete: true }; },
+  async screenSecure() { /* nothing to block in a browser preview */ },
   async getVersion(id, version, password) {
-    requireUnlocked(); const s = active(id); await verify(password);
+    const s = active(id); await verify(password);
     const snap = s.history.find((h) => h.version === version);
     if (!snap) err("not_found", "That version does not exist.");
     return clone(snap.draft);
   },
   async restoreVersion(id, version, password) {
-    requireUnlocked(); const s = active(id); await verify(password);
+    const s = active(id); await verify(password);
     const snap = s.history.find((h) => h.version === version);
     if (!snap) err("not_found", "That version does not exist.");
     const prev = clone(s.draft);
-    s.draft = clone(snap.draft); s.version += 1; s.updatedAt = Date.now();
-    snapshot(s, "restoredFromVersion", prev, version);
+    s.draft = clone(snap.draft); s.version = Math.max(s.version, ...s.history.map((h) => h.version)) + 1; s.updatedAt = Date.now();
+    s.changedElsewhere = false;
+    snapshot(s, "restoredFromVersion", prev, version); touchQueue();
     return summarize(s);
   },
 
   async totpNow(id) {
-    requireUnlocked(); const s = active(id);
+    items(); const s = active(id);
     const raw = s.draft.fields.totp;
     if (!raw) err("invalid_input", "This item has no one-time code.");
     return totpAt(raw, Date.now());
   },
+
+  async listBackups() {
+    const p = requireUnlocked(); await delay(80);
+    return [...p.targets].sort((a, b) => Number(b.master) - Number(a.master)).map(toView);
+  },
+  async testBackup(input) {
+    checkTargetInput(input, true);
+    await delay(1100);
+    if (/fail|bad/i.test(input.bucket) || /fail/i.test(input.endpoint ?? "")) return { ok: false, message: "The bucket answered “Access denied” (403). Check the access key, the secret and the bucket name.", conditionalWrites: "unknown" };
+    return { ok: true, message: "Connected. Wrote, read and removed a test object.", conditionalWrites: "strong" };
+  },
+  async addBackup(input) {
+    const p = requireUnlocked(); checkTargetInput(input);
+    if (p.targets.some((t) => t.name.trim().toLowerCase() === input.name.trim().toLowerCase())) err("invalid_input", "You already have a backup with that name.");
+    await delay(300);
+    const master = input.master || p.targets.length === 0;
+    if (master) p.targets.forEach((t) => (t.master = false));
+    const t: MockTarget = { id: crypto.randomUUID(), name: input.name.trim(), endpoint: input.endpoint?.trim() || null, region: input.region.trim() || "auto", bucket: input.bucket.trim(), prefix: input.prefix.trim(), accessKeyId: input.accessKeyId.trim(), secretAccessKey: input.secretAccessKey, pathStyle: input.pathStyle, enabled: input.enabled, master, shareInMaster: input.shareInMaster, queued: [...p.store.values()].length, lastSuccessAt: null, lastCheckedAt: null, lastError: null, tested: false };
+    p.targets.push(t);
+    return toView(t);
+  },
+  async updateBackup(id, input) {
+    const p = requireUnlocked(); checkTargetInput(input, true);
+    const t = p.targets.find((x) => x.id === id);
+    if (!t) err("not_found", "That backup no longer exists.");
+    await delay(250);
+    if (input.master) p.targets.forEach((x) => (x.master = false));
+    Object.assign(t, { name: input.name.trim(), endpoint: input.endpoint?.trim() || null, region: input.region.trim() || "auto", bucket: input.bucket.trim(), prefix: input.prefix.trim(), accessKeyId: input.accessKeyId.trim(), pathStyle: input.pathStyle, enabled: input.enabled, master: input.master || t.master, shareInMaster: input.shareInMaster });
+    if (input.secretAccessKey) t.secretAccessKey = input.secretAccessKey;
+    return toView(t);
+  },
+  async removeBackup(id) {
+    const p = requireUnlocked(); await delay(150);
+    const i = p.targets.findIndex((x) => x.id === id);
+    if (i < 0) err("not_found", "That backup no longer exists.");
+    const wasMaster = p.targets[i]!.master;
+    p.targets.splice(i, 1);
+    if (wasMaster && p.targets[0]) p.targets[0].master = true;
+  },
+  async setMasterBackup(id) {
+    const p = requireUnlocked();
+    if (!p.targets.some((t) => t.id === id)) err("not_found", "That backup no longer exists.");
+    p.targets.forEach((t) => (t.master = t.id === id));
+  },
+  async runBackup(id) {
+    const p = requireUnlocked(); await delay(1400);
+    for (const t of p.targets) {
+      if (id !== null && t.id !== id) continue;
+      if (!t.enabled) continue;
+      t.lastCheckedAt = Date.now();
+      if (/fail|bad/i.test(t.bucket)) { t.lastError = "Access denied (403) while uploading."; continue; }
+      t.lastError = null; t.tested = true; t.queued = 0; t.lastSuccessAt = Date.now();
+    }
+    return p.targets.map(toView);
+  },
+  async revealBackupSecret(id, password) {
+    const p = requireUnlocked(); await verify(password, p);
+    const t = p.targets.find((x) => x.id === id);
+    if (!t) err("not_found", "That backup no longer exists.");
+    return t.secretAccessKey;
+  },
+
+  // ---- import and export (preview: the old browser-side parsers stand in for the core's Rust importer) ----
+  async importPick() {
+    const [file] = (await pickFilesInBrowser()) ?? [];
+    if (!file) return null;
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    const kdbx = head[0] === 0x03 && head[1] === 0xd9 && head[2] === 0xa2 && head[3] === 0x9a;
+    const handle = crypto.randomUUID();
+    let format: ImportFormat | "unknown" = "unknown";
+    let result: ImportResult | null = null;
+    if (kdbx) format = "keepass-kdbx";
+    else {
+      try { result = parseImport(await file.text()); format = result.format === "Bitwarden JSON" ? "bitwarden-json" : "chrome-csv"; } catch { /* unknown */ }
+    }
+    imports.set(handle, { result, name: file.name, text: kdbx ? "" : await file.text() });
+    const pick: ImportPick = { handle, fileName: file.name, size: file.size, format, needsPassword: kdbx, needsKeyfile: false };
+    return pick;
+  },
+  async importPickKeyfile() {
+    const [file] = (await pickFilesInBrowser()) ?? [];
+    return file ? { handle: crypto.randomUUID(), fileName: file.name } : null;
+  },
+  async inspectCsvHeaders(handle) {
+    const f = imports.get(handle);
+    if (!f) err("not_found", "That file is no longer open. Choose it again.");
+    const rows = f.text.split(/\r?\n/).filter(Boolean).map((l) => l.split(","));
+    const out: CsvInspect = { delimiter: ",", headers: rows[0] ?? [], sample: rows.slice(1, 6) };
+    return out;
+  },
+  async importPreview(options) {
+    const { result } = importFor(options);
+    const p = requireUnlocked();
+    const existing = [...p.store.values()].filter((x) => !x.deleted);
+    const dup = (d: ItemDraft) => existing.some((x) => sameEntry(x.draft, d));
+    const preview: ImportPreview = {
+      entries: result.drafts.length, totpSeeds: result.drafts.filter((d) => d.fields.totp).length, attachments: 0,
+      duplicates: result.drafts.filter(dup).length, skipped: result.skipped.length, warnings: result.warnings, titles: result.drafts.slice(0, 50).map((d) => d.title),
+    };
+    return preview;
+  },
+  async importCommit(options) {
+    const { result } = importFor(options);
+    const p = requireUnlocked();
+    const out: ImportOutcome = { added: 0, appended: 0, skipped: 0, failed: 0, warnings: [] };
+    for (const d of result.drafts) {
+      const match = [...p.store.values()].find((x) => !x.deleted && sameEntry(x.draft, d));
+      if (match && options.mode === "skip_duplicates") { out.skipped++; continue; }
+      if (match && options.mode === "append_version") {
+        const prev = clone(match.draft); match.draft = cleanDraft(d); match.version += 1; match.updatedAt = Date.now();
+        snapshot(match, "edited", prev); out.appended++; continue;
+      }
+      await previewBackend.createItem(d); out.added++;
+    }
+    out.skipped += result.skipped.length;
+    imports.delete(options.handle); touchQueue();
+    return out;
+  },
+  async importCancel(handle) { imports.delete(handle); },
+  async exportPlain(format: PlainExportFormat, password) {
+    const p = requireUnlocked(); await verify(password, p);
+    const rows = [...p.store.values()].filter((x) => !x.deleted);
+    const text = format === "csv"
+      ? ["name,url,username,password,totp,notes", ...rows.map((x) => [x.draft.title, x.draft.fields.url, x.draft.fields.username, x.draft.fields.password, x.draft.fields.totp, x.draft.fields.notes].map((v) => `"${(v ?? "").replace(/"/g, '""')}"`).join(","))].join("\n")
+      : JSON.stringify({ encrypted: false, folders: [], items: rows.map((x) => ({ type: 1, name: x.draft.title, login: { username: x.draft.fields.username, password: x.draft.fields.password } })) }, null, 2);
+    const name = format === "csv" ? "vault-export.csv" : "vault-export.json";
+    const url = URL.createObjectURL(new Blob([text]));
+    const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return { path: name, warnings: [] };
+  },
+
+  // ---- encrypted drive (preview: plain bytes in memory; the real core streams 1 MiB sealed chunks) ----
+  async fileList(itemId) {
+    const p = requireUnlocked();
+    return [...p.files.values()].map((f) => f.entry).filter((e) => e.itemId === itemId).sort((a, b) => b.addedAt - a.addedAt).map(clone);
+  },
+  async fileAdd(itemId) {
+    const p = requireUnlocked();
+    if (itemId !== null) need(itemId);
+    const picked = await pickFilesInBrowser();
+    if (picked === null) return null;
+    const tooBig = picked.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig) err("invalid_input", `${tooBig.name} is larger than ${MAX_FILE_LABEL}.`);
+    const added: FileEntry[] = [];
+    for (const f of picked) {
+      const entry: FileEntry = { id: crypto.randomUUID(), name: f.name, size: f.size, mime: f.type || mimeFor(f.name), itemId, addedAt: Date.now() };
+      p.files.set(entry.id, { entry, bytes: new Uint8Array(await f.arrayBuffer()) });
+      added.push(clone(entry));
+    }
+    return added;
+  },
+  async fileRename(id, name) {
+    const p = requireUnlocked(); const f = p.files.get(id);
+    if (!f) err("not_found", "That file no longer exists.");
+    if (!name.trim() || name.length > 200) err("invalid_input", "Use 1 to 200 characters for the file name.");
+    f.entry.name = name.trim();
+    return clone(f.entry);
+  },
+  async fileDelete(id, password) {
+    const p = requireUnlocked(); await verify(password, p);
+    if (!p.files.delete(id)) err("not_found", "That file no longer exists.");
+  },
+  async fileRead(id) {
+    const f = requireUnlocked().files.get(id);
+    if (!f) err("not_found", "That file no longer exists.");
+    return f.bytes.slice().buffer;
+  },
+  async fileSaveCopy(id, password) {
+    const p = requireUnlocked(); await verify(password, p);
+    const f = p.files.get(id);
+    if (!f) err("not_found", "That file no longer exists.");
+    const url = URL.createObjectURL(new Blob([f.bytes.slice().buffer]));
+    const a = document.createElement("a"); a.href = url; a.download = f.entry.name; a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return { path: f.entry.name };
+  },
+
+  // ---- app-level preview of the gate, inactivity lock and disguise (same rules as the core; see mockGate.ts) ----
+  async gateStatus() { return gate.status(); },
+  async gateSubmit(input) { await delay(160); return gate.submit(input); },
+  async gateBiometric() { await delay(500); return gate.biometric(); },
+  async gatePanic() { try { return gate.panic(); } catch (e) { return err("invalid_input", e instanceof Error ? e.message : "Not available."); } },
+  async gateClose() { gate.close(); unlocked = false; tokens.clear(); },
+  async gateConfigure(input) {
+    const p = requireUnlocked(); await verify(input.masterPassword, p);
+    try { return gate.configure(input); } catch (e) { return err("invalid_input", e instanceof Error ? e.message : "Could not save the app lock."); }
+  },
+  async appReset() { gate.reset(); },
+  async appSettingsGet() { return { ...appSettings }; },
+  async appSettingsSet(input) { appSettings = { ...input }; return { ...appSettings }; },
+  async activityPing() { /* the preview never times out */ },
+  async disguiseGet() { return disguiseView(); },
+  async disguiseSet(input) {
+    const name = input.customName?.trim() ?? "";
+    if (input.customName !== null && (name.length === 0 || name.length > 30)) err("invalid_input", "Use 1 to 30 characters for the name.");
+    if (input.presetId !== null && !DISGUISES.some((d) => d.id === input.presetId)) err("invalid_input", "That icon is not one of the choices.");
+    disguise = { presetId: input.presetId, customName: input.customName === null ? null : name, lowercase: input.lowercase };
+    return disguiseView();
+  },
+
+  async openUrl(url) {
+    if (!/^https?:\/\//i.test(url)) err("invalid_input", "Only web links can be opened.");
+    window.open(url, "_blank", "noopener,noreferrer");
+  },
 };
 
+/** DEV deep links: create a profile that already holds the demo items (and a second, empty one for the picker). */
+export async function seedPreview(): Promise<void> {
+  if (profiles.length > 0) return;
+  const a: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Marlowe", createdAt: Date.now() - 40 * 86_400_000, lastUsedAt: Date.now() - 3_600_000 }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
+  seedInto(a);
+  a.targets.push(
+    { id: crypto.randomUUID(), name: "Cloudflare R2", endpoint: "https://0123abcd.r2.cloudflarestorage.example", region: "auto", bucket: "passman-main", prefix: "marlowe/", accessKeyId: "AKIAPREVIEWR2KEY", secretAccessKey: "preview-secret-r2", pathStyle: false, enabled: true, master: true, shareInMaster: true, queued: 0, lastSuccessAt: Date.now() - 2 * MIN, lastCheckedAt: Date.now() - 2 * MIN, lastError: null, tested: true },
+    { id: crypto.randomUUID(), name: "Home MinIO", endpoint: "https://minio.home.example", region: "us-east-1", bucket: "vault-mirror", prefix: "", accessKeyId: "minio-marlowe", secretAccessKey: "preview-secret-minio", pathStyle: true, enabled: true, master: false, shareInMaster: false, queued: 3, lastSuccessAt: Date.now() - 49 * MIN, lastCheckedAt: Date.now() - 6 * MIN, lastError: null, tested: true },
+    { id: crypto.randomUUID(), name: "Backblaze B2", endpoint: "https://s3.us-west-004.backblazeb2.example", region: "us-west-004", bucket: "passman-offsite", prefix: "", accessKeyId: "004preview", secretAccessKey: "preview-secret-b2", pathStyle: false, enabled: true, master: false, shareInMaster: true, queued: 9, lastSuccessAt: Date.now() - 3 * 3_600_000, lastCheckedAt: Date.now() - 5 * MIN, lastError: "Access denied (403) while uploading.", tested: true },
+  );
+  const b: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Atlas Registry (work)", createdAt: Date.now() - 12 * 86_400_000, lastUsedAt: Date.now() - 2 * 86_400_000 }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
+  const c: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Family", createdAt: Date.now() - 80 * 86_400_000, lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
+  profiles.push(a, b, c);
+  selectedId = a.info.id;
+}
+
 export const PREVIEW_PASSWORD = "preview-vault-1";
-export const PREVIEW_PIN = "246810";
 export type { ItemType };

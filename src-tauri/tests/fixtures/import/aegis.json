@@ -1,0 +1,9 @@
+{"version":1,"header":{"slots":null,"params":null},"db":{"version":2,
+      "entries":[
+        {"type":"totp","uuid":"1","name":"me@example.com","issuer":"GitHub","note":"work","favorite":true,"icon":null,
+         "info":{"secret":"JBSWY3DPEHPK3PXP","algo":"SHA1","digits":6,"period":30},"groups":["g1"]},
+        {"type":"totp","uuid":"2","name":"b","issuer":"Bank","info":{"secret":"jbsw y3dp ehpk 3pxp","algo":"SHA256","digits":8,"period":60}},
+        {"type":"hotp","uuid":"3","name":"c","issuer":"X","info":{"secret":"JBSWY3DPEHPK3PXP","algo":"SHA1","digits":6,"counter":1}},
+        {"type":"steam","uuid":"4","name":"d","issuer":"Steam","info":{"secret":"JBSWY3DPEHPK3PXP","algo":"SHA1","digits":5,"period":30}},
+        {"type":"totp","uuid":"5","name":"bad","issuer":"Bad","info":{"secret":"!!!","algo":"SHA1","digits":6,"period":30}}
+      ],"groups":[{"uuid":"g1","name":"Work"}]}}

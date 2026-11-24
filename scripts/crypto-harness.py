@@ -33,7 +33,10 @@ def derive_manifest() -> str:
         if header:
             section = header.group(1)
         if section == "dependencies" or (section or "").startswith("profile."):
-            if re.match(r"^(tauri|tauri-build)\s*=", line):
+            # GUI crates, plus the Phase 4a network stack (rusty-s3, ureq, url): the crypto module
+            # needs none of them, and rustls/ring would only slow this build down. The mobile-only
+            # barcode scanner sits in a [target.*] section, which this filter never keeps.
+            if re.match(r"^(tauri|tauri-build|tauri-plugin-[a-z0-9-]+|rusty-s3|ureq|url)\s*=", line):
                 continue
             keep.append(line)
     head = (

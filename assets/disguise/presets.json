@@ -1,0 +1,70 @@
+{
+  "presets": [
+    {
+      "id": "tally",
+      "name": "Tally",
+      "description": "Minimal grid",
+      "background": "#1F2A33"
+    },
+    {
+      "id": "vellum",
+      "name": "Vellum",
+      "description": "Stacked paper sheets",
+      "background": "#EDE6D8"
+    },
+    {
+      "id": "drizzle",
+      "name": "Drizzle",
+      "description": "Cloud and drops",
+      "background": "#CFE3EE"
+    },
+    {
+      "id": "trim",
+      "name": "Trim",
+      "description": "Storage bar",
+      "background": "#26332E"
+    },
+    {
+      "id": "plinth",
+      "name": "Plinth",
+      "description": "Nested wireframe prism",
+      "background": "#14171F"
+    },
+    {
+      "id": "kerf",
+      "name": "Kerf",
+      "description": "Cursor and dot",
+      "background": "#0F1013"
+    },
+    {
+      "id": "basalt",
+      "name": "Basalt",
+      "description": "Wireframe mesh",
+      "background": "#23262B"
+    },
+    {
+      "id": "cairn",
+      "name": "Cairn",
+      "description": "Hexagon circuit node",
+      "background": "#1D2B2B"
+    },
+    {
+      "id": "kovren",
+      "name": "Kovren",
+      "description": "Two overlapping cards",
+      "background": "#3A3340"
+    },
+    {
+      "id": "tivlo",
+      "name": "Tivlo",
+      "description": "Muted dot matrix",
+      "background": "#2B2B33"
+    },
+    {
+      "id": "orvyn",
+      "name": "Orvyn",
+      "description": "Two dusk circles",
+      "background": "#2A2440"
+    }
+  ]
+}

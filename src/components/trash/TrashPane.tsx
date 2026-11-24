@@ -9,9 +9,12 @@ import { Avatar } from "../ui/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
+import { useLayout } from "../../lib/layout";
+import { FilterChips } from "../shell/FilterChips";
 
 /** Trash list: only the title and when it was deleted (spec: nothing else is visible or openable). */
 export function TrashList() {
+  const layout = useLayout();
   const trash = useStore(app, (s) => s.trash);
   const selectedId = useStore(app, (s) => s.selectedId);
   return (
@@ -19,6 +22,7 @@ export function TrashList() {
       <div className="px-4 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
         <h2 className="font-display text-[1.45rem] leading-none font-semibold">Trash</h2>
         <p className="mt-2 text-[0.93em] text-mist">Deleted items wait here until you restore them or delete them forever. Nothing is removed automatically.</p>
+        {layout !== "wide" && <div className="mt-3"><FilterChips /></div>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-28 min-[720px]:pb-6">
         {trash.length === 0 ? (

@@ -1,24 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
 import { LayoutGroup } from "motion/react";
-import { Plus, Search, X } from "lucide-react";
+import { Archive, Plus, Search, Star, X } from "lucide-react";
 import { recencyGroup, type RecencyGroup } from "../../lib/format";
 import { useLayout } from "../../lib/layout";
-import { app, counts, select, setFilter, setQuery, visibleItems, type Filter } from "../../state/app";
+import { app, select, setQuery, visibleItems, type Filter } from "../../state/app";
 import { useStore } from "../../state/store";
 import { openNewItem } from "../../state/ui";
 import { Button, IconButton } from "../ui/Button";
 import { TextInput } from "../ui/Inputs";
-import { TITLE } from "../shell/nav";
+import { FilterChips } from "../shell/FilterChips";
+import { FILTER_TYPE, TITLE } from "../shell/nav";
+import { TYPE_NOUN } from "../../lib/format";
 import { ItemRow } from "./ItemRow";
 
 const GROUP_ORDER: RecencyGroup[] = ["Today", "Last 7 days", "Last 30 days", "Older"];
-const CHIPS: { filter: Filter; label: string }[] = [
-  { filter: "all", label: "All" },
-  { filter: "logins", label: "Logins" },
-  { filter: "notes", label: "Notes" },
-  { filter: "media", label: "Media" },
-  { filter: "favorites", label: "Favorites" },
-];
 
 function EmptyState({ query, filter, empty }: { query: string; filter: Filter; empty: boolean }) {
   if (query) {
@@ -29,12 +24,33 @@ function EmptyState({ query, filter, empty }: { query: string; filter: Filter; e
       </div>
     );
   }
+  if (filter === "archive") {
+    return (
+      <div className="px-8 pt-16 text-center">
+        <Archive className="mx-auto size-8 text-fog" aria-hidden strokeWidth={1.4} />
+        <p className="mt-3 font-display text-xl">Nothing archived</p>
+        <p className="mt-2 text-mist">Archive items you rarely need. They stay encrypted, keep their history, and disappear from your lists and codes.</p>
+      </div>
+    );
+  }
+  if (filter === "favorites") {
+    return (
+      <div className="px-8 pt-16 text-center">
+        <Star className="mx-auto size-8 text-fog" aria-hidden strokeWidth={1.4} />
+        <p className="mt-3 font-display text-xl">No favorites yet</p>
+        <p className="mt-2 text-mist">Turn on Favorite when you edit an item to keep it here.</p>
+      </div>
+    );
+  }
+  const type = FILTER_TYPE[filter] ?? null;
   return (
     <div className="px-8 pt-16 text-center">
-      <p className="font-display text-xl">{empty ? "Your vault is empty" : `No ${TITLE[filter].toLowerCase()} yet`}</p>
-      <p className="mt-2 text-mist">Add your first login, one-time code or secure note. Everything is encrypted on this device.</p>
-      <Button variant="key" className="mt-5" icon={<Plus className="size-4" />} onClick={() => openNewItem()}>
-        New item
+      <p className="font-display text-xl">{empty ? "Your vault is empty" : type ? `No ${TITLE[filter].toLowerCase()} yet` : "Nothing here yet"}</p>
+      <p className="mt-2 text-mist">
+        {type ? `Add your first ${TYPE_NOUN[type]}. Everything is encrypted on this device.` : "Add a login, card, identity, SSH key, note or one-time code. Everything is encrypted on this device."}
+      </p>
+      <Button variant="key" className="mt-5" icon={<Plus className="size-4" />} onClick={() => openNewItem(type)}>
+        {type ? `New ${TYPE_NOUN[type]}` : "New item"}
       </Button>
     </div>
   );
@@ -45,7 +61,6 @@ export function ListPane() {
   const layout = useLayout();
   const compact = layout === "compact";
   const items = useStore(app, (s) => s.items);
-  const trashCount = useStore(app, (s) => s.trash.length);
   const filter = useStore(app, (s) => s.filter);
   const query = useStore(app, (s) => s.query);
   const selectedId = useStore(app, (s) => s.selectedId);
@@ -62,8 +77,7 @@ export function ListPane() {
     }
     return GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({ name: g, items: map.get(g)! }));
   }, [visible]);
-  const totals = useMemo(() => counts(items, trashCount), [items, trashCount]);
-
+  
   // "/" and Ctrl/Cmd+K focus search from anywhere that is not a text field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -93,9 +107,11 @@ export function ListPane() {
       <div className="flex items-center justify-between gap-3 px-4 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
         <h2 className="font-display text-[1.45rem] leading-none font-semibold tracking-[-0.005em]">{TITLE[filter]}</h2>
         {!compact && (
-          <Button variant="key" icon={<Plus className="size-4" />} onClick={() => openNewItem()}>
-            New
-          </Button>
+          filter !== "archive" && (
+            <Button variant="key" icon={<Plus className="size-4" />} onClick={() => openNewItem(FILTER_TYPE[filter] ?? null)}>
+              New
+            </Button>
+          )
         )}
       </div>
       <div className="px-4 pb-3">
@@ -119,19 +135,7 @@ export function ListPane() {
             </IconButton>
           )}
         </div>
-        {compact && (
-          <div className="no-scrollbar -mx-4 mt-3 flex gap-2 overflow-x-auto px-4" role="tablist" aria-label="Item type">
-            {CHIPS.map((c) => {
-              const on = filter === c.filter;
-              return (
-                <button key={c.filter} type="button" role="tab" aria-selected={on} onClick={() => setFilter(c.filter)} className={`pressable min-h-10 shrink-0 rounded-full border px-4 text-[0.93em] font-medium ${on ? "border-brass/60 bg-brass/15 text-brass-hi" : "border-hairline bg-raised text-mist"}`}>
-                  {c.label}
-                  <span className="ml-1.5 text-fog">{totals[c.filter]}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {layout !== "wide" && <div className="mt-3"><FilterChips /></div>}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-28 min-[720px]:pb-6" onKeyDown={onListKey}>
@@ -145,7 +149,7 @@ export function ListPane() {
                   <p className="sticky top-0 z-10 bg-pane/90 px-3 pt-3 pb-1.5 text-[0.86em] font-medium text-fog backdrop-blur-sm">{g.name}</p>
                   <ul role="presentation" className="flex flex-col gap-0.5">
                     {g.items.map((i) => (
-                      <ItemRow key={i.id} item={i} selected={i.id === selectedId} roomy={compact} onSelect={() => select(i.id)} />
+                      <ItemRow key={i.id} item={i} selected={i.id === selectedId} roomy={compact} showType={filter === "all" || filter === "favorites" || filter === "archive"} onSelect={() => select(i.id)} />
                     ))}
                   </ul>
                 </li>

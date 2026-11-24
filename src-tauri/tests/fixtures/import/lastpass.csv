@@ -1,0 +1,12 @@
+url,username,password,totp,extra,name,grouping,fav
+https://a.example,u,p,,some notes,Site,Work\Sub,1
+http://sn,,,,"NoteType:Credit Card
+Language:en-US
+Name on Card:A B
+Type:Visa
+Number:4111111111111111
+Security Code:123
+Start Date:January,2020
+Expiration Date:September,2029
+Notes:my card",My Visa,Cards,0
+http://sn,,,,just a note,Plain,,0

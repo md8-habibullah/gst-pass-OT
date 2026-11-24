@@ -1,0 +1,10 @@
+{"folders":[{"uuid":"f1","title":"Work","parent_uuid":""},{"uuid":"f2","title":"Servers","parent_uuid":"f1"}],
+      "items":[
+        {"uuid":"i1","title":"Site","category":"login","template_type":"login.default","favorite":1,"folders":["f2"],"note":"n","createdAt":1700000000,"updated_at":1700000100,
+         "fields":[{"label":"Username","type":"username","value":"me","sensitive":0},{"label":"Password","type":"password","value":"pw","sensitive":1},{"label":"Website","type":"url","value":"https://a.example"},{"label":"TOTP","type":"totp","value":"JBSWY3DPEHPK3PXP"},{"label":"Recovery","type":"text","value":"abc","sensitive":1},{"label":"Gone","type":"text","value":"x","deleted":1}],
+         "attachments":[{"name":"a.txt","data":"SGVsbG8h"}]},
+        {"uuid":"i2","title":"Visa","category":"creditcard","template_type":"creditcard.default","fields":[{"label":"Cardholder","type":"ccName","value":"A B"},{"label":"Number","type":"ccNumber","value":"4111111111111111"},{"label":"CVC","type":"ccCvc","value":"123"},{"label":"Expiry","type":"ccExpiry","value":"09/29"}]},
+        {"uuid":"i3","title":"Memo","category":"note","template_type":"note.default","note":"text"},
+        {"uuid":"i4","title":"Me","category":"identity","template_type":"identity.default","fields":[{"label":"First name","type":"text","value":"Ana"},{"label":"Last name","type":"text","value":"Lopez"},{"label":"Email","type":"email","value":"a@example.com"}]},
+        {"uuid":"i5","title":"Old","category":"login","trashed":1,"fields":[{"label":"Password","type":"password","value":"x"}]}
+      ]}

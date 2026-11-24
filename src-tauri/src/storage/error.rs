@@ -36,6 +36,16 @@ pub enum StorageError {
     Storage(String),
     #[error("{0}")]
     Crypto(String),
+    #[error("An account with this name already exists on this device.")]
+    ProfileNameTaken,
+    #[error("{0}")]
+    UnsupportedFile(String),
+    /// The storage service could not be reached (offline, DNS, TLS, timeout).
+    #[error("{0}")]
+    Network(String),
+    /// The storage service answered, but refused or could not do what was asked.
+    #[error("{0}")]
+    Remote(String),
 }
 
 impl StorageError {
@@ -55,6 +65,10 @@ impl StorageError {
             Self::TokenInvalid => "token_invalid",
             Self::Storage(_) => "storage",
             Self::Crypto(_) => "crypto",
+            Self::ProfileNameTaken => "profile_name_taken",
+            Self::UnsupportedFile(_) => "unsupported_file",
+            Self::Network(_) => "network",
+            Self::Remote(_) => "remote",
         }
     }
 
@@ -159,6 +173,10 @@ mod tests {
             "token_invalid",
             "storage",
             "crypto",
+            "profile_name_taken",
+            "unsupported_file",
+            "network",
+            "remote",
         ];
         let all = [
             StorageError::Locked,
@@ -174,6 +192,10 @@ mod tests {
             StorageError::TokenInvalid,
             StorageError::Storage("x".into()),
             StorageError::Crypto("x".into()),
+            StorageError::ProfileNameTaken,
+            StorageError::UnsupportedFile("x".into()),
+            StorageError::Network("x".into()),
+            StorageError::Remote("x".into()),
         ];
         for e in all {
             assert!(allowed.contains(&e.code()), "{e:?}");

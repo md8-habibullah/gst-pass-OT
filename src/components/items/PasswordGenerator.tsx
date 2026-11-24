@@ -14,7 +14,7 @@ const TOGGLES: { key: keyof Pick<GenOptions, "lower" | "upper" | "digits" | "sym
 ];
 
 /** Inline generator. Randomness: crypto.getRandomValues with rejection sampling (lib/password.ts). */
-export function PasswordGenerator({ onUse }: { onUse: (pw: string) => void }) {
+export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: { onUse: (pw: string) => void; actionLabel?: string }) {
   const [opts, setOpts] = useState<GenOptions>(DEFAULT_GEN);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export function PasswordGenerator({ onUse }: { onUse: (pw: string) => void }) {
         ))}
       </ul>
       <Button variant="key" disabled={!value} onClick={() => onUse(value)}>
-        Use this password
+        {actionLabel}
       </Button>
     </div>
   );

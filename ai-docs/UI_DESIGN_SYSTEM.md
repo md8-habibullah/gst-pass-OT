@@ -67,33 +67,43 @@ One codebase, three layouts chosen by viewport width (`useLayout`), plus input-a
 | Layout | Width | Structure |
 |--------|-------|-----------|
 | Wide (Linux desktop) | ≥ 1100 px | Sidebar 236 · List 344 · Detail (flex). Editor slides in from the right as a glass drawer. Keyboard: `/` or `Ctrl K` focuses search, arrows move in the list, `Esc` closes drawers. |
-| Medium | 720–1099 px | Icon rail 64 · List 320 · Detail. |
-| Compact (Android) | < 720 px | One column. Bottom navigation (Vault · Codes · Trash · Settings), a thumb-reach FAB above it, detail as a full page that slides in, add/edit/re-prompt as drag-to-dismiss **bottom sheets** with a handle. Respects `env(safe-area-inset-*)`. Android back closes sheet → detail → list (History API). |
+| Medium | 720–1099 px | Icon rail 64 · List 320 · Detail. Type filters become chips above the list. |
+| Compact (Android) | < 720 px | One column. Bottom navigation (Vault · Codes · Generator · Settings; Trash, Archive, Import, Export and Backup are reached from the type chips and the Settings page), a thumb-reach FAB above it that creates the type of the current filter, detail as a full page that slides in, add/edit/re-prompt as drag-to-dismiss **bottom sheets** with a handle. Respects `env(safe-area-inset-*)`. Android back closes sheet → detail → list (History API). |
 
-Lock screens: master password (all platforms); Quick PIN pad and biometric button are built but **shown only when `VaultStatus.capabilities` says they work** (false until Phase 3), so the UI never offers an unlock path the core cannot honour. In `npm run dev` in a browser the preview backend enables them so the designs can be reviewed.
+Lock screens: an **account picker** when several accounts exist (one tile per account, most recently used first), then that account's master password (all platforms); Quick PIN pad and biometric button are built but **shown only when `VaultStatus.capabilities` says they work** (false until Phase 3), so the UI never offers an unlock path the core cannot honour. In `npm run dev` in a browser the preview backend enables them so the designs can be reviewed.
 
 Native follow-ups that need Rust/Android work and are not part of this UI pass: `FLAG_SECURE` on sensitive screens, BiometricPrompt, window-blur lock (Phase 3).
 
 ## 4. Screens and components
 
-* **Lock / create vault** — glass card on the lattice. Create: master password + confirm, live strength meter (length + character classes, honest "no recovery" notice), then the unlock moment.
-* **Vault** — sidebar (All items, Logins, Codes, Notes, Media, Favorites, Trash, Settings; footer shows the real sync state "Local only"), list (search, grouped by recency, selection edge in brass that glides between rows with a shared layout animation), detail.
-* **Detail** — Fraunces title, avatar tile (monogram on a hue derived from the title), one grouped panel of fields separated by hairlines (not a card per field). Each secret is a frosted pill; **Reveal** is password-gated (re-prompt sheet), auto-hides after 20 s with a shrinking ring; **Copy** on a secret works inside the reveal window. TOTP: live ring + grouped digits + seconds, the secret never reaches the UI. Below: Attachments (list; adding arrives with Phase 5, so the add button is disabled with a plain explanation) and a collapsible **Version history** (v1, v2, … with exact time and changed field names; viewing a snapshot's secrets and **Restore this version** are password-gated).
-* **Editor** — type picker for new items; fields per type from the contract's schema; password generator (length slider, character classes, uses `crypto.getRandomValues` with rejection sampling); custom fields; tags; favourite. Saving a changed item goes through `item_update` with the edit token.
-* **Re-prompt** — one promise-based component for every gated action: states the reason ("Reveal the password for GitHub"), shows progress while Argon2id runs (it is slow on purpose), shakes once and keeps the sheet open on a wrong password.
-* **Codes** — all TOTP items as a grid with live rings (tab on mobile, filter on desktop).
-* **Trash** — rows show only the title and "Deleted <time>". The detail area states that the item must be restored to open it. **Delete forever** is a two-step flow: warning, then master password plus typing the item name or `CONFIRM`. Nothing auto-expires and the copy says so.
-* **Settings** — clipboard clear (15 / 30 / 60 s, default 30), change master password, lock now, about (suite from `crypto_suite_info`). Lock timers, quick unlock and sync controls are added when their backends exist, not before.
-* **Feedback** — toasts with Undo for trash; a copy toast with a ring that counts down to clipboard clearing; empty states that say what to do next.
+* **Lock** — glass card on the lattice. First run offers *Create a new vault*, *Open a vault file* and *Restore from a backup*. With accounts it shows the picker, then the chosen account's avatar and password field. Create: unique account name (live check), master password + confirm, live strength meter (honest "no recovery" notice), then **"Back up this vault?"** (set up now or skip; skipping is fine and the Backup page says so), then the unlock moment.
+* **Accounts** — one local vault per account, each with its own master password. Names are unique per device (case, spacing and width-insensitive). The sidebar chip (avatar on rail/compact) opens the account sheet: switch (locks first), add, lock now. Settings → Accounts renames and deletes (delete needs that account's password plus its name or `CONFIRM`).
+* **Vault** — sidebar groups: items by type (All, Logins, Cards, Identities, SSH keys, Notes, Media) · Codes, Favorites, Archive, Trash · Generator, Import, Export, Backup · Settings. Counts per entry, a real backup-status chip ("Local only", "Backed up 3 min ago", "Backup needs attention"), list (search, grouped by recency, selection edge in brass that glides between rows), detail.
+* **Item menu** (Bitwarden-style) — right-click, long-press (480 ms) or the "more" button: View, Edit, Clone, Archive/Unarchive, Move to trash, Launch (only when the item has a web address; opens the system browser, never the webview), and quick copies per type (Login: username, password; Card: number, security code; Identity: email, phone; SSH key: public key, private key). Secrets in quick copies and Clone go through the re-prompt. Desktop: popover with arrow-key navigation. Compact: bottom sheet.
+* **Item types** — Login, Card, Identity, SSH key, Secure note, Media, each with its own field set (`paragraph` fields render as mono text; secret fields are masked until revealed). Archived items leave every list and Codes, and live only under Archive (banner with Unarchive on the detail).
+* **Detail** — Fraunces title, avatar tile (monogram on a hue derived from the title), one grouped panel of fields separated by hairlines. Each secret is a frosted pill; **Reveal** is password-gated, auto-hides after 20 s with a shrinking ring; **Copy** works inside the reveal window. Web addresses offer "Open in your browser". TOTP: live ring + grouped digits + seconds; the setup key never reaches the UI. Below: Attachments (adding arrives with Phase 5) and a collapsible **Version history**.
+* **Editor** — type picker (7 types), fields per type, password generator for login passwords and SSH passphrases only, custom fields, tags, favourite. The one-time-code field accepts anything: an `otpauth://` link, a bare key (any case, spaces, dashes, `secret=` prefix), a web link carrying `?secret=`, a Google Authenticator `otpauth-migration://` export (split into one item per account on a Code-only item), or a QR image (file, paste, or drop). On Android there is also **Scan QR code**, in-app, asking for the camera permission. The field says what it recognised ("GitHub, 6 digits, every 30 s") and the Rust core still validates on save.
+* **Codes** — every item with a one-time code: logins that have one *and* Code-only items, with an "In a login" / "Code only" badge, live rings, search when there are many, "Add code". Tapping a row opens its item.
+* **Generator / Import / Export** — full pages. Generator: the same generator as the editor, standalone. Import: Bitwarden JSON or a Chrome/Firefox/1Password CSV, with a preview, a list of skipped rows and warnings; items are sealed one by one and the parsed plaintext is dropped afterwards. Export: an **encrypted** Passman vault file saved through a native dialog behind the re-prompt. There is no plaintext export, by design.
+* **Backup** — multiple S3 or S3-compatible targets (Amazon S3, Cloudflare R2, Backblaze B2, other). Each row shows a health dot and state, queue, last success and error, with Back up now, Edit, Make master, Copy secret key (re-prompt) and Remove. Two checkboxes in the form: **Also keep these credentials in the master backup** and **Use this as the master backup**. Credentials are stored sealed in the local vault database, so they survive every lock and are never asked for again.
+* **Re-prompt** — one promise-based component for every gated action: states the reason, shows progress while Argon2id runs, shakes once and keeps the sheet open on a wrong password.
+* **Trash** — rows show only the title and "Deleted <time>". The detail states that the item must be restored to open it. **Delete forever** is two steps: warning, then master password plus typing the item name or `CONFIRM`. Nothing auto-expires and the copy says so.
+* **Settings** — Accounts, clipboard clear (15 / 30 / 60 s, default 30), change master password, "Backup and files" links (Backup, Import, Export), lock now, about (suite from `crypto_suite_info`). Lock timers and quick unlock are added when their backends exist.
+* **Feedback** — toasts with Undo for trash and archive; a copy toast with a ring that counts down to clipboard clearing; per-filter empty states that say what to do next.
+* **App lock gate (Stage 1)** — optional, set up in Settings → App lock. Full-screen card with one decoy: an arithmetic exercise (`(48 + 27) − 19 = ?`, Fraunces, tabular figures) above an answer box and the credential entry of the chosen mode: **PIN** keypad, **password** field (`inputMode="text"`), or the **numbered 3×3 grid** (a tap types the digit; dragging across two or more numbers draws a brass line and sends the sequence on release). Digits stay readable for the first three characters (they might be a maths answer) and are masked from the fourth. "Correct!" / "Incorrect, try again" are quiet one-liners; a wrong passcode of four or more characters shows a red banner with the exact attempts left. Biometric button only when the platform offers it. The reset is deliberately discreet: a small "?" mark and a long-press on the equation open a **three-step** confirmation (three different warnings, the last one the only "Erase everything"). The optional panic mark is a 10 px dot at the lower right that needs a 1.2 s hold or a double tap. A panic credential, a panic mark or the 15th failure ends on the first-run screen with no banner, toast or animation. The gate card never shows the app name or the keyhole.
+* **App icon and name** — Settings → App icon and name: the 11 presets as a radio grid of tiles (the original first), a lower-case switch, and a custom-name field. The chosen name and icon replace "Passman" and the keyhole inside the app (sidebar, lock screens, window title). `assets/disguise/presets.json` is the source of the ids, names and tile colours; the icons are generated by `scripts/gen_disguise_icons.py`.
+* **Files** — sidebar entry and Settings link: list of encrypted files with Preview, Save copy, Rename and Delete (re-prompt), add up to 50 MB each. Item attachments use the same list inside the item detail. Preview sheet: images in an `<img>` from a blob URL, text in a mono block (first 2 MB), PDFs drawn page by page on canvases with pdf.js (loaded only when a PDF is opened). Bytes exist in the webview only while a preview is open.
+* **Import and export** — Import is a guided page: choose a file (the core opens the dialog and names the format from the content), confirm or correct the format, give a KeePass password and optional key file, match columns for an unknown CSV, pick how duplicates are handled, check the file (counts, warnings, names), import, then a reminder to delete the unencrypted source. Export offers the encrypted vault file and, behind a danger re-prompt and a plain warning, a readable Bitwarden JSON or CSV.
+* **QR scanning (mobile)** — the barcode-scanner plugin renders the camera *behind* a transparent webview (`windowed: true`); `ScanOverlay` and the `html[data-scanning]` rules in `base.css` hide everything else and draw the frame, a hint and Cancel. Images are decoded with jsQR on every platform. **Not yet verified on a device** (no Android SDK on the build machine).
 
 ## 5. Security-driven UX rules
 
 1. The webview is untrusted for secrets: it holds a secret only inside an open reveal/edit window, and clears it afterwards (state reset, not just hidden).
-2. Re-prompt for edit, reveal, history secrets, restore-from-history and permanent delete, exactly as the spec says. Create, trash and restore-from-trash are not gated.
+2. Re-prompt for edit, reveal, history secrets, restore-from-history, permanent delete, Clone, copying a secret from the item menu, copying a backup secret key, exporting a vault file and deleting an account. Create, archive/unarchive, trash and restore-from-trash are not gated.
 3. Trash is restricted in Rust; the UI additionally never offers actions that would fail.
 4. Clipboard: copying a secret schedules a clear after the configured time; the toast shows the countdown. Non-secret values (username, url) are not auto-cleared.
-5. No telemetry, no external requests, no inline scripts. Fonts and icons are bundled.
-6. Honest status: the sidebar says "Local only" until a sync target exists; unavailable features are absent or explained, never faked.
+5. No telemetry and no inline scripts. Fonts and icons are bundled. The webview makes no network requests at all; the only traffic leaving the machine is the Rust core talking to the S3 endpoints the user configured. Web addresses are opened by the core in the system browser, never inside the webview.
+6. Honest status: the sidebar says "Local only" until a backup target exists, then reports real health and the time of the last successful upload; unavailable features are absent or explained, never faked.
 
 ## 6. The unlock moment (the single orchestrated animation)
 
@@ -107,23 +117,28 @@ Visible focus ring (2 px brass with 2 px offset) on every interactive element; d
 
 ```
 src/
-  main.tsx, App.tsx          providers, phase switch (boot → create/lock → app)
-  styles/                    tokens.css (design tokens), base.css (ground, lattice, utilities)
-  backend/                   types.ts (contract), tauri.ts (invoke), mock.ts (preview), index.ts
-  state/                     store.ts (tiny external store), actions.ts
-  lib/                       format, password (generate + strength), totp ring math, clipboard, layout hook
-  components/ui/             Button, IconButton, Field, Switch, Segmented, Sheet, Modal, Toast, Avatar, Ring, Glass
-  components/lock/           LockScreen, CreateVault, PinPad
-  components/shell/          Shell, Sidebar, RailNav, BottomNav, Fab
-  components/items/          ItemList, ItemDetail, FieldRow, SecretValue, TotpRing, VersionHistory, Attachments, ItemEditor, PasswordGenerator
-  components/trash/          TrashView, PurgeFlow
-  components/reprompt/       RepromptHost (promise API)
-  components/settings/       SettingsView
+  main.tsx, App.tsx          providers, phase switch (boot → welcome/picker/locked → ready)
+  styles/                    tokens.css (design tokens), base.css (ground, lattice, utilities, scan-mode rules)
+  backend/                   types.ts (contract), tauri.ts (invoke), mock.ts (DEV preview), http.ts (DEV e2e), index.ts
+  state/                     store.ts, app.ts (phases, accounts, items, gate), backup.ts, brand.ts, activity.ts, ui.ts, dev.ts (DEV deep links)
+  lib/                       format, password, totp ring math, otp.ts (every setup-key shape), scan.ts (QR), clipboard, layout hook, import parsers
+  components/ui/             Button, Inputs, Sheet, Toasts, Avatar, Ring
+  components/lock/           LockScreen (chooser, picker, unlock), CreateFlow, JoinFlows (open file, restore), NameField, PinPad
+  components/shell/          Shell, Navigation (Sidebar, Rail, BottomNav, Fab), nav.ts, AccountMenu, FilterChips, PageHeader
+  components/items/          ListPane, ItemRow, ItemMenu, ItemDetail, ItemEditor, TotpInput, CodesView, actions.ts, typeMeta.ts, FieldRows, VersionHistory, PasswordGenerator
+  components/gate/           GateScreen, GridPad, ResetFlow
+  components/files/          FilesView, FileList, FilePreview
+  components/tools/          GeneratorView, ImportView, ExportView
+  components/backup/         BackupView, TargetForm
+  components/settings/       SettingsView, Accounts, AppLock, Disguise
+  components/trash/          TrashPane (list, detail, purge flow)
+  components/reprompt/       Reprompt (promise API)
+  components/scan/           ScanOverlay
 ```
 
 `src/backend/index.ts` picks the Tauri backend when `isTauri()` is true. The **preview backend** (in-memory, fake password check, real TOTP maths) is loaded only in development outside Tauri, behind `import.meta.env.DEV`, so it is not part of production bundles. It exists to iterate on the design in a normal browser and to drive screenshots; it is **not secure** and says so.
 
-Dev-only deep links for screenshots (preview backend only): `?vault=unlocked|locked`, `&open=<n>` (nth item), `&sheet=edit|new|reprompt`, `&filter=trash|codes|settings`, `&history` (opens the version timeline). Motion animations do not finish under a short headless virtual-time budget; use a budget of about 20 s when a sheet or timeline must be fully open in a screenshot.
+Dev-only deep links for screenshots (preview backend only): `?vault=unlocked|locked|picker`, `&account=<name>`, `&filter=<any filter>`, `&open=<n>` (nth item), `&sheet=edit|new|reprompt`, `&type=<item type>` (with `sheet=new`), `?vault=gate&gate=pin|password|grid[&panic=1]` (the gate; preview credentials 24680, abcd, 12589), `&disguise=<preset id>[&lower=1]`. Motion animations do not finish under a short headless virtual-time budget; use a budget of about 20 s when a sheet or timeline must be fully open in a screenshot. `?e2e=<port>` (DEV only) points the UI at the loopback HTTP shim around the real Rust core, so the whole app can be driven in headless Chromium against real cryptography and real files; it is compiled out of production builds.
 
 ## 9. CSP
 

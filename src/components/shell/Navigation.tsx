@@ -1,12 +1,16 @@
+import { useEffect, useMemo } from "react";
 import { motion } from "motion/react";
 import { Lock, Plus } from "lucide-react";
-import { app, counts, lockVault, setFilter } from "../../state/app";
+import { app, counts, lockVault, setFilter, type Filter } from "../../state/app";
+import { backups, refreshBackups, summarize } from "../../state/backup";
 import { useStore } from "../../state/store";
+import type { ItemType } from "../../backend";
 import { openNewItem } from "../../state/ui";
+import { brand } from "../../state/brand";
 import { VaultMark } from "../lock/VaultMark";
 import { IconButton } from "../ui/Button";
-import { NAV, TABS } from "./nav";
-import { useMemo } from "react";
+import { AccountChip } from "./AccountMenu";
+import { NAV_GROUPS, RAIL, TABS } from "./nav";
 
 function useCounts() {
   const items = useStore(app, (s) => s.items);
@@ -15,48 +19,73 @@ function useCounts() {
 }
 
 const SPRING = { type: "spring", stiffness: 520, damping: 42 } as const;
+const NO_COUNT: ReadonlySet<Filter> = new Set<Filter>(["files", "generator", "import", "export", "backup", "settings"]);
 
-/** Wide layout: glass sidebar with counts, a gliding active pill and the real sync state. */
+/** Keeps the backup summary fresh while the app is open (cheap read; the core does the work). */
+function useBackupSummary() {
+  const targets = useStore(backups, (s) => s.targets);
+  const phase = useStore(app, (s) => s.phase);
+  useEffect(() => {
+    if (phase !== "ready") return;
+    let alive = true;
+    const load = () => { if (alive) void refreshBackups().catch(() => undefined); };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [phase]);
+  return summarize(targets);
+}
+
+const TONE_DOT = { none: "bg-fog", ok: "bg-verdigris", busy: "bg-brass", bad: "bg-ember", untested: "bg-brass" } as const;
+
+/** Wide layout: glass sidebar with the account chip, grouped places with counts, and the real backup state. */
 export function Sidebar() {
+  const brandName = useStore(brand, (b) => b.name);
   const filter = useStore(app, (s) => s.filter);
   const total = useCounts();
+  const summary = useBackupSummary();
   return (
-    <nav aria-label="Main" className="glass flex h-full flex-col border-y-0 border-l-0 px-3 pt-5 pb-4">
-      <div className="mb-6 flex items-center gap-2.5 px-2.5">
-        <VaultMark size={30} />
-        <span className="font-display text-[1.35rem] leading-none font-semibold tracking-[-0.01em]">Passman</span>
+    <nav aria-label="Main" className="glass flex h-full flex-col border-y-0 border-l-0 px-3 pt-4 pb-3">
+      <div className="mb-3 flex items-center gap-2.5 px-2.5">
+        <VaultMark size={28} />
+        <span className="font-display text-[1.3rem] leading-none font-semibold tracking-[-0.01em]">{brandName}</span>
       </div>
-      <ul className="flex flex-col gap-0.5">
-        {NAV.map((n) => {
-          const on = filter === n.filter;
-          const Icon = n.icon;
-          return (
-            <li key={n.filter} className={n.filter === "trash" ? "mt-3 border-t border-hairline pt-3" : ""}>
-              <button
-                type="button"
-                aria-current={on ? "page" : undefined}
-                onClick={() => setFilter(n.filter)}
-                className={`pressable relative flex min-h-10 w-full items-center gap-3 rounded-sm px-2.5 text-left font-medium transition-colors ${on ? "text-frost" : "text-mist hover:bg-raised/60 hover:text-frost"}`}
-              >
-                {on && <motion.span layoutId="nav-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
-                {on && <motion.span layoutId="nav-edge" className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full bg-brass" transition={SPRING} />}
-                <Icon className={`relative size-[18px] ${on ? "text-brass" : ""}`} aria-hidden />
-                <span className="relative flex-1">{n.label}</span>
-                {n.filter !== "settings" && <span className="relative text-[0.86em] text-fog tabular-nums">{total[n.filter]}</span>}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="mt-auto flex flex-col gap-3 pt-4">
-        <div className="mx-1 flex items-start gap-2.5 rounded-lg bg-pane/70 px-3 py-2.5 shadow-e1">
-          <span className="mt-[7px] size-2 shrink-0 rounded-full bg-verdigris" aria-hidden />
-          <div>
-            <p className="text-[0.93em] leading-5 font-medium">Local only</p>
-            <p className="text-[0.8em] leading-4 text-fog">Stored encrypted on this device. No sync targets yet.</p>
-          </div>
-        </div>
-        <button type="button" onClick={() => void lockVault()} className="pressable flex min-h-10 items-center gap-3 rounded-sm px-2.5 font-medium text-mist hover:bg-raised/60 hover:text-frost">
+      <AccountChip className="mb-3 bg-pane/60 shadow-e1" />
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
+        {NAV_GROUPS.map((group, gi) => (
+          <ul key={gi} className={`flex flex-col gap-0.5 ${gi > 0 ? "mt-2 border-t border-hairline pt-2" : ""}`}>
+            {group.map((n) => {
+              const on = filter === n.filter;
+              const Icon = n.icon;
+              return (
+                <li key={n.filter}>
+                  <button
+                    type="button"
+                    aria-current={on ? "page" : undefined}
+                    onClick={() => setFilter(n.filter)}
+                    className={`pressable relative flex min-h-9 w-full items-center gap-3 rounded-sm px-2.5 text-left font-medium transition-colors ${on ? "text-frost" : "text-mist hover:bg-raised/60 hover:text-frost"}`}
+                  >
+                    {on && <motion.span layoutId="nav-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
+                    {on && <motion.span layoutId="nav-edge" className="absolute top-2 bottom-2 left-0 w-[3px] rounded-full bg-brass" transition={SPRING} />}
+                    <Icon className={`relative size-[18px] ${on ? "text-brass" : ""}`} aria-hidden />
+                    <span className="relative flex-1">{n.label}</span>
+                    {!NO_COUNT.has(n.filter) && <span className="relative text-[0.86em] text-fog tabular-nums">{total[n.filter]}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+      </div>
+      <div className="flex flex-col gap-2 pt-3">
+        <button type="button" onClick={() => setFilter("backup")} className="pressable mx-1 flex items-start gap-2.5 rounded-lg bg-pane/70 px-3 py-2.5 text-left shadow-e1 hover:bg-pane">
+          <span className={`mt-[7px] size-2 shrink-0 rounded-full ${TONE_DOT[summary.tone]}`} aria-hidden />
+          <span className="min-w-0">
+            <span className="block text-[0.93em] leading-5 font-medium">{summary.title}</span>
+            <span className="block text-[0.8em] leading-4 text-fog">{summary.detail}</span>
+          </span>
+        </button>
+        <button type="button" onClick={() => void lockVault()} className="pressable flex min-h-9 items-center gap-3 rounded-sm px-2.5 font-medium text-mist hover:bg-raised/60 hover:text-frost">
           <Lock className="size-[18px]" aria-hidden />
           Lock now
         </button>
@@ -68,24 +97,33 @@ export function Sidebar() {
 /** Medium layout: 64px icon rail. */
 export function Rail() {
   const filter = useStore(app, (s) => s.filter);
+  useBackupSummary();
+  const items = useStore(app, (s) => s.items);
+  const itemFilterOn = !RAIL.flat().some((n) => n.filter === filter);
+  void items;
   return (
     <nav aria-label="Main" className="glass flex h-full flex-col items-center gap-1 border-y-0 border-l-0 py-4">
       <VaultMark size={30} />
-      <ul className="mt-5 flex flex-col gap-1">
-        {NAV.map((n) => {
-          const on = filter === n.filter;
-          const Icon = n.icon;
-          return (
-            <li key={n.filter} className={n.filter === "trash" ? "mt-2 border-t border-hairline pt-2" : ""}>
-              <button type="button" aria-label={n.label} title={n.label} aria-current={on ? "page" : undefined} onClick={() => setFilter(n.filter)} className={`pressable relative grid size-11 place-items-center rounded-sm ${on ? "text-brass" : "text-mist hover:bg-raised/60 hover:text-frost"}`}>
-                {on && <motion.span layoutId="rail-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
-                <Icon className="relative size-5" />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <IconButton label="Lock now" className="mt-auto" onClick={() => void lockVault()}>
+      <AccountChip compact className="mt-3" />
+      <div className="no-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto">
+        {RAIL.map((group, gi) => (
+          <ul key={gi} className={`flex flex-col items-center gap-1 ${gi > 0 ? "mt-2 border-t border-hairline pt-2" : ""}`}>
+            {group.map((n) => {
+              const on = filter === n.filter || (n.filter === "all" && itemFilterOn);
+              const Icon = n.icon;
+              return (
+                <li key={n.filter}>
+                  <button type="button" aria-label={n.label} title={n.label} aria-current={on ? "page" : undefined} onClick={() => setFilter(n.filter)} className={`pressable relative grid size-11 place-items-center rounded-sm ${on ? "text-brass" : "text-mist hover:bg-raised/60 hover:text-frost"}`}>
+                    {on && <motion.span layoutId="rail-active" className="absolute inset-0 rounded-sm bg-raised shadow-e2" transition={SPRING} />}
+                    <Icon className="relative size-5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+      </div>
+      <IconButton label="Lock now" className="mt-1" onClick={() => void lockVault()}>
         <Lock className="size-5" />
       </IconButton>
     </nav>
@@ -95,11 +133,12 @@ export function Rail() {
 /** Compact layout: Material-style bottom navigation with a pill indicator behind the active icon. */
 export function BottomNav() {
   const filter = useStore(app, (s) => s.filter);
+  useBackupSummary();
   return (
     <nav aria-label="Main" className="glass-strong fixed inset-x-0 bottom-0 z-30 rounded-t-xl border-b-0 pt-1.5 pb-[calc(0.5rem+var(--safe-bottom))]">
       <ul className="mx-auto flex max-w-md justify-around px-2">
         {TABS.map((t) => {
-          const on = filter === t.filter || (t.filter === "all" && !TABS.some((x) => x.filter === filter));
+          const on = t.owns.has(filter);
           const Icon = t.icon;
           return (
             <li key={t.filter} className="flex-1">
@@ -119,12 +158,12 @@ export function BottomNav() {
 }
 
 /** Thumb-reach floating action button (compact layout). */
-export function Fab({ visible }: { visible: boolean }) {
+export function Fab({ visible, type = null }: { visible: boolean; type?: ItemType | null }) {
   return (
     <motion.button
       type="button"
       aria-label="New item"
-      onClick={() => openNewItem()}
+      onClick={() => openNewItem(type)}
       initial={false}
       animate={visible ? { scale: 1, opacity: 1, y: 0 } : { scale: 0.6, opacity: 0, y: 16 }}
       transition={{ type: "spring", stiffness: 520, damping: 34 }}

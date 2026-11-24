@@ -1,0 +1,10 @@
+{
+          "AUTHENTIFIANT": [
+            {"title":"Shop","domain":"https://shop.example","login":"me","email":"me@example.com","secondaryLogin":"alt","password":"pw","note":"n","otpSecret":"JBSWY3DPEHPK3PXP","category":"Shopping"},
+            {"title":"","domain":"https://empty.example"}
+          ],
+          "SECURENOTE": [{"title":"Memo","content":"remember","category":"Notes"}],
+          "PAYMENTMEAN_CREDITCARD": [{"name":"Visa","owner":"A B","cardNumber":"4111111111111111","expireMonth":"09","expireYear":"2029","securityCode":"123"}],
+          "IDENTITY": [{"firstName":"Ana"}],
+          "version": "1"
+        }

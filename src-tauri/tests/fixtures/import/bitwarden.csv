@@ -1,0 +1,5 @@
+folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp
+Work/Servers,1,login,Box,"n","pin: 1234
+other: x",0,"https://a.example
+https://b.example",u,p,JBSWY3DPEHPK3PXP
+,,note,A note,body text,,0,,,,

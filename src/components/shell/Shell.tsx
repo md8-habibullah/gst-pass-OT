@@ -2,15 +2,34 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { AnimatePresence, motion } from "motion/react";
 import { ShieldCheck } from "lucide-react";
 import { ItemDetail } from "../items/ItemDetail";
+import { BackupView } from "../backup/BackupView";
 import { CodesView } from "../items/CodesView";
 import { ListPane } from "../items/ListPane";
 import { SettingsView } from "../settings/SettingsView";
+import { ExportView } from "../tools/ExportView";
+import { GeneratorView } from "../tools/GeneratorView";
+import { ImportView } from "../tools/ImportView";
 import { TrashDetail, TrashList } from "../trash/TrashPane";
 import { app, consumeUnlockMoment, select } from "../../state/app";
 import { useStore } from "../../state/store";
 import { useLayout } from "../../lib/layout";
+import { FilesView } from "../files/FilesView";
 import { BottomNav, Fab, Rail, Sidebar } from "./Navigation";
-import { ITEM_FILTERS } from "./nav";
+import { FILTER_TYPE, ITEM_FILTERS, WIDE_VIEWS } from "./nav";
+import type { Filter } from "../../state/app";
+
+/** The full-width views (no list/detail split). */
+function WideView({ filter }: { filter: Filter }) {
+  switch (filter) {
+    case "codes": return <CodesView />;
+    case "generator": return <GeneratorView />;
+    case "import": return <ImportView />;
+    case "export": return <ExportView />;
+    case "files": return <FilesView />;
+    case "backup": return <BackupView />;
+    default: return <SettingsView />;
+  }
+}
 
 function EmptyDetail({ trash }: { trash?: boolean }) {
   return (
@@ -66,8 +85,7 @@ export function Shell() {
         <Rise play={play} order={0} className="flex min-h-0 flex-1 flex-col bg-pane/55">
           {itemMode && <ListPane />}
           {trashMode && <TrashList />}
-          {filter === "codes" && <CodesView />}
-          {filter === "settings" && <SettingsView />}
+          {WIDE_VIEWS.has(filter) && <WideView filter={filter} />}
         </Rise>
         <AnimatePresence>
           {hasDetailPage && (
@@ -83,20 +101,20 @@ export function Shell() {
             </motion.div>
           )}
         </AnimatePresence>
-        <Fab visible={(filter === "all" || filter === "logins" || filter === "notes" || filter === "media" || filter === "favorites" || filter === "codes") && !hasDetailPage} />
+        <Fab visible={((ITEM_FILTERS.has(filter) && filter !== "archive") || filter === "codes") && !hasDetailPage} type={FILTER_TYPE[filter] ?? null} />
         {!hasDetailPage && <BottomNav />}
       </div>
     );
   }
 
   const cols = layout === "wide" ? "grid-cols-[236px_344px_minmax(0,1fr)]" : "grid-cols-[64px_320px_minmax(0,1fr)]";
-  const fullBleed = filter === "codes" || filter === "settings";
+  const fullBleed = WIDE_VIEWS.has(filter);
   return (
     <div className={`grid h-dvh ${cols}`}>
       <Rise play={play} order={0} className="min-h-0">{layout === "wide" ? <Sidebar /> : <Rail />}</Rise>
       {fullBleed ? (
         <Rise play={play} order={1} className="col-span-2 flex min-h-0 flex-col bg-pane/55">
-          {filter === "codes" ? <CodesView /> : <SettingsView />}
+          <WideView filter={filter} />
         </Rise>
       ) : (
         <>

@@ -1,0 +1,157 @@
+//! `AppCore` and the Stage 1 gate (`crate::gate`).
+//!
+//! This is a child module of `app` so it can reach the core's private state, and it is the only
+//! place that connects the Tauri-free gate to the account registry and the open session:
+//!
+//! * the **wipe**: drop the session (keys zeroized, backup worker joined), erase every known file
+//!   (`gate::wipe`, cryptographic erase first), then forget the gate and the account list in
+//!   memory so the next `profile_list` is empty;
+//! * **`gate_configure`**: needs an unlocked vault and its master password (the re-prompt guard);
+//! * **`gate_close`** and the **idle lock**: back to Stage 1 *and* the vault locked;
+//! * the neutral `vault_status` answer while the gate is closed (see `AppCore::status`).
+//!
+//! Lock order: the gate's `attempt` lock, then `ops`, `registry`, `active` (`app.rs`).
+
+use super::{relock, Active, AppCore};
+use crate::gate::settings::AppSettings;
+use crate::gate::wipe::{self, NoObserver, WipeObserver, WipePlan, WipeReport};
+use crate::gate::{GateConfigInput, GateCore, GateOutcome, GateStatus, LockVault};
+use crate::storage::error::{Result, StorageError};
+use crate::storage::profiles::{Entry, Registry};
+use crate::storage::session::SessionConfig;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
+
+/// Build the gate for a data folder. The idle timer's action locks whatever is open: it holds the
+/// same `active` cell the core uses, so it can never lock a session the core no longer owns.
+pub(super) fn open_gate(
+    dir: &Path,
+    cfg: &SessionConfig,
+    active: &Arc<Mutex<Option<Active>>>,
+) -> Result<GateCore> {
+    let active = Arc::clone(active);
+    let lock_vault: LockVault = Arc::new(move || {
+        let session = relock(&active).as_ref().map(|a| Arc::clone(&a.session));
+        if let Some(session) = session {
+            session.lock();
+        }
+    });
+    GateCore::open(dir, &cfg.kdf, lock_vault)
+}
+
+impl AppCore {
+    /// The gate, for the command layer and tests.
+    pub fn gate(&self) -> &GateCore {
+        &self.gate
+    }
+
+    /// The gate is on and has not been opened in this run: only the allow-listed commands work.
+    pub(super) fn gate_is_closed(&self) -> bool {
+        self.gate.is_closed()
+    }
+
+    /// Runs before every IPC command (see `commands::gate::guarded`).
+    pub fn before_command(&self, cmd: &str) -> Result<()> {
+        self.gate.before_command(cmd)
+    }
+
+    pub fn gate_status(&self) -> GateStatus {
+        self.gate.status()
+    }
+
+    /// Typed text on the gate screen. The text is wiped when this returns.
+    pub fn gate_submit(&self, input: Zeroizing<String>) -> Result<GateOutcome> {
+        self.gate.submit(&input, &|| self.wipe_unserialised())
+    }
+
+    pub fn gate_biometric(&self) -> Result<GateOutcome> {
+        self.gate.biometric()
+    }
+
+    /// The discreet lock-screen mark: the same silent wipe as a panic credential.
+    pub fn gate_panic(&self) -> Result<GateOutcome> {
+        self.gate.panic(&|| self.wipe_unserialised())
+    }
+
+    /// Back to Stage 1 (when it is on) and lock the open vault: keys zeroized, backup worker
+    /// stopped. Works with the gate off too (then it is just a lock).
+    pub fn gate_close(&self) {
+        self.gate.close();
+        self.lock();
+    }
+
+    /// `gate_configure`: needs the open vault and its master password.
+    pub fn gate_configure(&self, input: GateConfigInput) -> Result<GateStatus> {
+        let session = self.session()?;
+        if !session.status()?.unlocked {
+            return Err(StorageError::Locked);
+        }
+        let verify = |password: String| session.confirm_password(password);
+        let status = self.gate.configure(input, &verify)?;
+        self.gate.ping();
+        Ok(status)
+    }
+
+    pub fn app_settings_get(&self) -> AppSettings {
+        self.gate.settings()
+    }
+
+    pub fn app_settings_set(&self, settings: AppSettings) -> Result<AppSettings> {
+        self.gate.set_settings(settings)
+    }
+
+    /// The person is active; restart the inactivity timer.
+    pub fn activity_ping(&self) {
+        self.gate.ping();
+    }
+
+    // ------------------------------------------------------------------ the wipe
+
+    /// `app_reset`: the manual "erase this device" (three confirmations in the UI). Allowed with
+    /// the gate closed. Waits for a security attempt in flight instead of racing it.
+    pub fn app_reset(&self, confirmed_steps: u64) -> Result<()> {
+        if confirmed_steps != 3 {
+            return Err(StorageError::invalid(
+                "Confirm all three steps to erase this device.",
+            ));
+        }
+        self.gate.exclusive(|| self.wipe_unserialised())
+    }
+
+    /// The wipe as the gate's closure uses it: the gate already holds its own serial lock.
+    fn wipe_unserialised(&self) -> Result<()> {
+        self.wipe_with(&mut NoObserver).map(|_| ())
+    }
+
+    /// Erase everything Passman keeps in the data folder. See `gate::wipe` for the order of the
+    /// file steps. In memory, **first** the open session goes (the keys are zeroized and the
+    /// backup worker is joined, whatever happens next); **after** the files are gone the gate and
+    /// the account list are reset, so a refused wipe never leaves the gate open.
+    ///
+    /// `Err` means nothing on disk was touched (the pre-flight refused); the vault is locked and
+    /// the gate unchanged.
+    pub(crate) fn wipe_with(&self, observer: &mut dyn WipeObserver) -> Result<WipeReport> {
+        let _ops = relock(&self.ops);
+        let open = relock(&self.active).take();
+        if let Some(a) = open {
+            a.session.lock();
+        }
+        let plan = {
+            let reg = self.reg();
+            WipePlan {
+                legacy_registered: reg.entries().iter().any(Entry::is_legacy),
+                expect_data: !reg.entries().is_empty() || self.gate.is_enabled(),
+            }
+        };
+        let report = wipe::secure_wipe_all_local_data(&self.dir, &plan, observer)
+            .map_err(|_| StorageError::Storage("This device could not be erased.".into()))?;
+        self.gate.forget_everything();
+        *self.reg() = Registry::empty(&self.dir);
+        // The launcher entry, its icons and the window title live outside the vaults (Q2): put the
+        // original look back. It cannot fail the wipe; a launcher problem only leaves a stale entry.
+        let _ = self.disguise_wipe();
+        self.gate.run_wipe_hooks();
+        Ok(report)
+    }
+}

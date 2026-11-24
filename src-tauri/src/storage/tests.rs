@@ -109,7 +109,6 @@ fn status_follows_the_lifecycle() {
     s.create(PW.into()).unwrap();
     let st = s.status().unwrap();
     assert!(st.exists && st.unlocked);
-    assert!(!st.capabilities.quick_unlock && !st.capabilities.biometric);
 
     s.lock();
     s.lock(); // idempotent

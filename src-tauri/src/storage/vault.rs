@@ -5,16 +5,28 @@
 //! [`Session`](super::session::Session) verifies the master password before it calls the gated
 //! operations, and the trash policy ("title and time only") is enforced here, in Rust.
 
+use super::backup::vault_ext::BackupHandle;
 use super::db::{ItemRow, Store};
+use super::drive::DriveState;
 use super::error::{Result, StorageError};
 use super::model::{
     changed_fields, totp_account, ItemDraft, ItemEvent, ItemPayload, ItemSummary, ItemView,
-    TotpNow, TrashEntry, VersionEntry,
+    ParentRef, TotpNow, TrashEntry, VersionEntry, MAX_TITLE_CHARS,
 };
 use super::uuid;
 use crate::crypto::{now_millis, KeyPurpose, VaultKeyBundle, VaultRootKey};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::Zeroizing;
+
+/// Hands every opened vault its own number, so work that was started for one unlock can tell
+/// that the vault it belonged to has since been locked and unlocked again.
+static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
+
+// Batch import and the plaintext export (slice Q4). A child module, so it can use this file's
+// private index and sealing helpers.
+#[path = "vault_import.rs"]
+pub mod import;
 
 /// In-memory index entry. Trashed items keep only what the trash view may show.
 enum IndexEntry {
@@ -28,12 +40,26 @@ enum IndexEntry {
 }
 
 pub struct Vault {
-    store: Store,
-    root: VaultRootKey,
+    // Visible to `storage::backup`, which seals target settings and owns the replication handle.
+    pub(super) store: Store,
+    pub(super) root: VaultRootKey,
     bundle: VaultKeyBundle,
     index: HashMap<String, IndexEntry>,
     damaged: Vec<String>,
+    /// The replication engine (set by `attach_backup`; stopped when the vault is dropped).
+    pub(super) backup: Option<BackupHandle>,
+    /// Which unlock this is (see [`NEXT_INSTANCE`]).
+    instance: u64,
+    /// Counts the pulls that changed what is stored (`VaultStatus.syncRevision`).
+    pub(super) sync_revision: u64,
+    /// Objects in the backup that failed authentication during the last pull.
+    pub(super) remote_damaged: usize,
+    /// The encrypted drive's per-unlock state (`vault_drive.rs`).
+    pub(super) drive: DriveState,
 }
+
+/// Appended to the title of a cloned item.
+const COPY_SUFFIX: &str = " (copy)";
 
 fn check_id(id: &str) -> Result<()> {
     if uuid::is_valid(id) {
@@ -60,6 +86,11 @@ impl Vault {
             bundle,
             index: HashMap::new(),
             damaged: Vec::new(),
+            backup: None,
+            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            sync_revision: 0,
+            remote_damaged: 0,
+            drive: DriveState::new(),
         };
         for row in vault.store.all_item_rows()? {
             match vault.open_row(&row) {
@@ -67,12 +98,13 @@ impl Vault {
                 Err(_) => vault.damaged.push(row.id),
             }
         }
+        vault.files_startup();
         Ok(vault)
     }
 
     // ------------------------------------------------------------------ internals
 
-    fn open_row(&self, row: &ItemRow) -> Result<ItemPayload> {
+    pub(in crate::storage) fn open_row(&self, row: &ItemRow) -> Result<ItemPayload> {
         let opened =
             self.root
                 .open_object(KeyPurpose::Item, &row.id, Some(row.version), &row.blob)?;
@@ -81,7 +113,12 @@ impl Vault {
         Ok(payload)
     }
 
-    fn open_snapshot(&self, id: &str, version: u64, blob: &[u8]) -> Result<(ItemPayload, u64)> {
+    pub(in crate::storage) fn open_snapshot(
+        &self,
+        id: &str,
+        version: u64,
+        blob: &[u8],
+    ) -> Result<(ItemPayload, u64)> {
         let opened = self
             .root
             .open_object(KeyPurpose::Version, id, Some(version), blob)?;
@@ -96,7 +133,7 @@ impl Vault {
         Ok((payload, row.version))
     }
 
-    fn index_insert(&mut self, payload: &ItemPayload, version: u64) {
+    pub(in crate::storage) fn index_insert(&mut self, payload: &ItemPayload, version: u64) {
         let entry = if payload.deleted {
             IndexEntry::Trashed {
                 title: payload.title.clone(),
@@ -109,14 +146,69 @@ impl Vault {
         self.index.insert(payload.id.clone(), entry);
     }
 
+    /// Which unlock this vault belongs to.
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The number the next state of `id` gets: above the head and above every other number in
+    /// use, so that a copy that arrived from another device (which has a number of its own) can
+    /// never be mistaken for it.
+    fn next_number(&self, id: &str, head: u64) -> Result<u64> {
+        next_version(self.store.max_version(id)?.max(head))
+    }
+
+    /// Re-read one item's latest state into the in-memory index (after a pull changed it).
+    pub(in crate::storage) fn reindex(&mut self, id: &str) {
+        match self.store.item_row(id) {
+            Ok(Some(row)) => match self.open_row(&row) {
+                Ok(payload) => {
+                    self.damaged.retain(|d| d != id);
+                    self.index_insert(&payload, row.version);
+                }
+                Err(_) => {
+                    self.index.remove(id);
+                    if !self.damaged.iter().any(|d| d == id) {
+                        self.damaged.push(id.to_string());
+                    }
+                }
+            },
+            _ => {
+                self.index.remove(id);
+                self.damaged.retain(|d| d != id);
+            }
+        }
+    }
+
     /// Seal the payload twice (latest state and immutable snapshot, independent keys and
-    /// nonces) and write both in one transaction.
+    /// nonces) and write both in one transaction. The new state records the one it replaces.
     fn commit(
         &mut self,
         payload: ItemPayload,
         prev_version: Option<u64>,
         version: u64,
     ) -> Result<ItemSummary> {
+        self.commit_with_parent(payload, prev_version, version, None)
+    }
+
+    /// `commit`, with the parent pointer chosen by the caller (restoring a copy that came from
+    /// another device makes the new state a descendant of that copy, which is what lets the other
+    /// device fast-forward to it).
+    fn commit_with_parent(
+        &mut self,
+        mut payload: ItemPayload,
+        prev_version: Option<u64>,
+        version: u64,
+        parent: Option<ParentRef>,
+    ) -> Result<ItemSummary> {
+        payload.parent = match (parent, prev_version) {
+            (Some(p), _) => Some(p),
+            (None, Some(_)) => self.store.item_row(&payload.id)?.map(|r| ParentRef {
+                version: r.version,
+                ts: r.ts,
+            }),
+            (None, None) => None,
+        };
         let ts = payload.updated_at;
         let json = Zeroizing::new(serde_json::to_vec(&payload)?);
         let item_blob = self
@@ -135,6 +227,7 @@ impl Vault {
             &snapshot_blob,
         )?;
         self.index_insert(&payload, version);
+        self.wake_backup();
         Ok(payload.summary(version))
     }
 
@@ -170,6 +263,7 @@ impl Vault {
         self.store
             .replace_bundle(&old.to_json()?, &new.to_json()?)?;
         self.bundle = new;
+        self.wake_backup();
         Ok(())
     }
 
@@ -180,7 +274,8 @@ impl Vault {
 
     // ------------------------------------------------------------------ reading
 
-    /// Active items, most recently changed first. Served from the index, no decryption.
+    /// Every item that is not in the trash (active and archived), most recently changed first.
+    /// Served from the index, no decryption.
     pub fn list_active(&self) -> Vec<ItemSummary> {
         let mut out: Vec<ItemSummary> = self
             .index
@@ -227,7 +322,10 @@ impl Vault {
     pub fn get_view(&self, id: &str) -> Result<ItemView> {
         self.require_active(id)?;
         let (payload, version) = self.load_latest(id)?;
-        Ok(payload.view(version))
+        let mut view = payload.view(version);
+        view.changed_elsewhere = self.store.has_unreviewed_other_device(id)?;
+        view.attachments = self.attachments_of(id);
+        Ok(view)
     }
 
     /// Full decrypted content and its version. Password-gated by the caller.
@@ -311,7 +409,7 @@ impl Vault {
         next.event = ItemEvent::Edited;
         next.restored_from = None;
         next.changed_fields = changed;
-        self.commit(next, Some(version), next_version(version)?)
+        self.commit(next, Some(version), self.next_number(id, version)?)
     }
 
     /// Soft delete: a new version with `deleted = true`. Nothing is removed.
@@ -326,7 +424,7 @@ impl Vault {
         next.event = ItemEvent::Trashed;
         next.restored_from = None;
         next.changed_fields = Vec::new();
-        self.commit(next, Some(version), next_version(version)?)?;
+        self.commit(next, Some(version), self.next_number(id, version)?)?;
         Ok(())
     }
 
@@ -341,7 +439,7 @@ impl Vault {
         next.event = ItemEvent::Restored;
         next.restored_from = None;
         next.changed_fields = Vec::new();
-        self.commit(next, Some(version), next_version(version)?)
+        self.commit(next, Some(version), self.next_number(id, version)?)
     }
 
     /// Everything that must hold before a purge is attempted: the item is in the trash and
@@ -363,9 +461,58 @@ impl Vault {
     /// checked by the caller; the in-trash state and the confirmation text are re-checked here.
     pub fn purge_item(&mut self, id: &str, confirmation: &str) -> Result<()> {
         self.purge_checks(id, confirmation)?;
-        self.store.purge(id, now_millis())?;
+        // The sealed proof of deletion that every backup target receives.
+        let now = now_millis();
+        let tombstone = self.seal_tombstone(id, now)?;
+        let file_ids = self.store.file_ids_of_item(id)?;
+        self.store.purge(id, now, &tombstone)?;
+        self.remove_file_blobs(&file_ids);
         self.index.remove(id);
+        self.wake_backup();
         Ok(())
+    }
+
+    /// Move an item to the archive (hidden from the default views, still readable). Archiving an
+    /// already archived item changes nothing and writes no version.
+    pub fn archive_item(&mut self, id: &str) -> Result<ItemSummary> {
+        self.set_archived(id, true)
+    }
+
+    pub fn unarchive_item(&mut self, id: &str) -> Result<ItemSummary> {
+        self.set_archived(id, false)
+    }
+
+    fn set_archived(&mut self, id: &str, archived: bool) -> Result<ItemSummary> {
+        self.require_active(id)?;
+        let (old, version) = self.load_latest(id)?;
+        if old.archived == archived {
+            return Ok(old.summary(version));
+        }
+        let mut next = old.clone();
+        next.archived = archived;
+        next.updated_at = now_millis().max(old.updated_at);
+        next.event = if archived {
+            ItemEvent::Archived
+        } else {
+            ItemEvent::Unarchived
+        };
+        next.restored_from = None;
+        // Like trash and restore, a lifecycle event: nothing about the content changed.
+        next.changed_fields = Vec::new();
+        self.commit(next, Some(version), self.next_number(id, version)?)
+    }
+
+    /// Copy an item into a brand-new one (version 1, "<title> (copy)", not archived). The secrets
+    /// are copied inside Rust and never leave it. Attachments are not copied.
+    pub fn clone_item(&mut self, id: &str) -> Result<ItemSummary> {
+        let (mut draft, _) = self.reveal(id)?;
+        let base: String = draft
+            .title
+            .chars()
+            .take(MAX_TITLE_CHARS - COPY_SUFFIX.len())
+            .collect();
+        draft.title = format!("{base}{COPY_SUFFIX}");
+        self.create_item(draft)
     }
 
     // ------------------------------------------------------------------ history
@@ -382,6 +529,7 @@ impl Vault {
                 event: payload.event,
                 changed_fields: payload.changed_fields.clone(),
                 restored_from: payload.restored_from,
+                other_device: row.other_device,
             });
         }
         Ok(out)
@@ -414,10 +562,56 @@ impl Vault {
         next.updated_at = now_millis().max(latest.updated_at);
         next.event = ItemEvent::RestoredFromVersion;
         next.restored_from = Some(version);
-        self.commit(next, Some(current), next_version(current)?)
+        // A copy from another device: the new state grows out of *that* state, so the other
+        // device sees a plain fast-forward and the two devices agree again.
+        let parent = match (row.other_device, row.remote_version) {
+            (true, Some(remote_version)) => Some(ParentRef {
+                version: remote_version,
+                ts: row.ts,
+            }),
+            _ => None,
+        };
+        let number = self.next_number(id, current)?;
+        let summary = self.commit_with_parent(next, Some(current), number, parent)?;
+        if row.other_device {
+            self.store.review_other_device(id)?;
+        }
+        Ok(summary)
+    }
+
+    /// "Got it": the person has looked at the copies that came from another device.
+    pub fn review_other_device(&mut self, id: &str) -> Result<()> {
+        self.require_active(id)?;
+        self.store.review_other_device(id)
+    }
+
+    // ------------------------------------------------------------------ files
+
+    /// Write a consistent copy of the encrypted database to `dest` (see `Store::export_to`).
+    pub fn export_copy(&self, dest: &std::path::Path) -> Result<()> {
+        self.store.export_to(dest)
     }
 
     // ------------------------------------------------------------------ test support
+
+    /// Seal `json` verbatim as version `version` of `id` and index it (no validation), so tests
+    /// can plant payloads written by older builds.
+    #[cfg(test)]
+    pub fn test_commit_raw(&mut self, id: &str, version: u64, json: &[u8]) -> Result<()> {
+        let ts = now_millis();
+        let item_blob = self
+            .root
+            .seal_object(KeyPurpose::Item, id, version, ts, json)?;
+        let snapshot_blob = self
+            .root
+            .seal_object(KeyPurpose::Version, id, version, ts, json)?;
+        let prev = (version > 1).then(|| version - 1);
+        self.store
+            .commit_state(id, prev, version, ts, &item_blob, &snapshot_blob)?;
+        let payload: ItemPayload = serde_json::from_slice(json)?;
+        self.index_insert(&payload, version);
+        Ok(())
+    }
 
     #[cfg(test)]
     pub fn store(&self) -> &Store {

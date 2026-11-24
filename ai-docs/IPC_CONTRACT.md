@@ -4,7 +4,7 @@ Single source of truth for the boundary in `ARCHITECTURE.md` §4. The React UI (
 
 Conventions: JSON over Tauri IPC; **camelCase** on the wire (`#[serde(rename_all = "camelCase")]`); JS passes camelCase arguments (Tauri maps them to snake_case Rust parameters); timestamps are UTC milliseconds; ids are lowercase UUIDv4. Every error is `{ "code": string, "message": string }` (the message is safe to show; it never contains secrets).
 
-Error codes: `locked` · `no_vault` · `vault_exists` · `wrong_password` · `not_found` · `in_trash` · `not_in_trash` · `version_conflict` · `invalid_input` · `confirmation_mismatch` · `token_invalid` · `storage` · `crypto`.
+Error codes: `locked` · `no_vault` · `vault_exists` · `wrong_password` · `not_found` · `in_trash` · `not_in_trash` · `version_conflict` · `invalid_input` · `confirmation_mismatch` · `token_invalid` · `storage` · `crypto` · `profile_name_taken` · `unsupported_file` · `network` · `remote`.
 
 ## 1. Re-prompt rule (from the spec, enforced in Rust)
 
@@ -18,36 +18,41 @@ Editing any entry, revealing a password/secret, viewing or restoring history sna
 ## 2. Types
 
 ```ts
-type ItemType = "login" | "totp" | "secureNote" | "media";
+type ItemType = "login" | "card" | "identity" | "sshKey" | "secureNote" | "totp" | "media";
 
 interface SuiteInfo { /* unchanged, see src-tauri/src/crypto/mod.rs */ }
 
 interface VaultStatus {
   exists: boolean;                    // a vault file with a key bundle exists
   unlocked: boolean;
-  capabilities: { quickUnlock: boolean; biometric: boolean };  // false until Phase 3
   damagedItems: number;               // additive (Phase 2): items that failed authentication at unlock and were
                                       // skipped instead of locking the whole vault; 0 normally. The UI shows a
                                       // warning toast after unlock when this is > 0. Optional in the TS type
                                       // because the preview backend omits it.
+  syncRevision: number;               // additive (R3a): goes up by one every time a pull changed what is stored
+                                      // (new item, fast-forward, deletion, other-device copy). In memory, starts at 0
+                                      // at every unlock. The page re-reads its lists when it differs from the last
+                                      // value it saw (poll vault_status while unlocked; no event is emitted).
+  reconciling: boolean;               // additive (R3a): a pull is queued or running ("Checking your backup...")
+  remoteDamaged: number;              // additive (R3a, beyond the brief): objects in the backup that failed
+                                      // authentication during the last pull; skipped, never applied; 0 normally
 }
 
-// Planned for Phase 3 (not implemented; the UI hides PIN / biometric entry points because the real backend
-// lacks the optional methods): quick_unlock_set_pin, quick_unlock_pin(pin), quick_unlock_biometric,
-// quick_unlock_clear, lock-timer settings. The TypeScript `Backend` interface already declares the two unlock
-// calls as optional (`quickUnlockPin?`, `quickUnlockBiometric?`).
+// There is no quick-unlock and no `capabilities` field any more (decision D13, strict lock separation): the
+// Stage 1 gate (section "Stage 1 gate" below) is a privacy screen only and never holds a vault key.
 
 interface ItemSummary {               // list rows; no secrets
   id: string; type: ItemType; title: string;
   subtitle: string | null;            // username or url host, for the row's second line
   favorite: boolean; tags: string[]; folder: string | null;
   hasTotp: boolean; updatedAt: number; version: number;
+  archived: boolean;                  // §5.2; item_list returns active AND archived items, never trashed ones
 }
 
-type FieldKind = "text" | "url" | "password" | "note" | "totp";
+type FieldKind = "text" | "url" | "password" | "note" | "totp" | "paragraph";  // paragraph = non-secret multi-line text
 interface FieldView {                 // masked view of one field
   key: string; label: string; kind: FieldKind;
-  secret: boolean;                    // password / note / totp are secret
+  secret: boolean;                    // password / note / totp are secret; text / url / paragraph are not
   value: string | null;               // present only when !secret
   hasValue: boolean;
 }
@@ -58,6 +63,8 @@ interface ItemView {                  // item_get: everything except secret valu
   customFields: { name: string; hidden: boolean; value: string | null }[]; // value null when hidden
   attachments: { id: string; name: string; mime: string; size: number }[];
   createdAt: number; updatedAt: number; version: number;
+  changedElsewhere: boolean;          // additive (R3a): another device changed this item in a way that could not be
+                                      // fast-forwarded and its copy is in the history, not yet reviewed (§6.2)
 }
 
 interface ItemDraft {                 // full decrypted, editable content (secrets included)
@@ -71,9 +78,11 @@ interface TrashEntry { id: string; title: string; deletedAt: number }  // nothin
 
 interface VersionEntry {
   version: number; timestamp: number;
-  event: "created" | "edited" | "trashed" | "restored" | "restoredFromVersion";
+  event: "created" | "edited" | "trashed" | "restored" | "restoredFromVersion" | "archived" | "unarchived";
   changedFields: string[];            // field keys / "title" / "tags" ...; never values
   restoredFrom: number | null;
+  otherDevice: boolean;               // additive (R3a): a copy that came from another device (§6.2); its `version`
+                                      // is a local number above every own entry, so it can sit above the head
 }
 
 interface TotpNow { code: string; period: number; digits: number; secondsRemaining: number; validUntilMs: number }
@@ -84,9 +93,14 @@ interface TotpNow { code: string; period: number; digits: number; secondsRemaini
 | Type | Keys (in display order) |
 |------|--------------------------|
 | `login` | `username` text · `password` password · `url` url · `totp` totp · `notes` note |
+| `card` | `cardholder` text · `brand` text · `number` password · `expMonth` text · `expYear` text · `code` password · `pin` password · `notes` note |
+| `identity` | `salutation` text · `firstName` text · `middleName` text · `lastName` text · `email` text · `phone` text · `company` text · `address1` text · `address2` text · `city` text · `state` text · `postalCode` text · `country` text · `nationalId` password · `passport` password · `license` password · `notes` note |
+| `sshKey` | `publicKey` paragraph · `privateKey` note · `passphrase` password · `fingerprint` text · `notes` note |
 | `totp` | `issuer` text · `account` text · `totp` totp |
 | `secureNote` | `body` note |
 | `media` | `description` note (attachments arrive in Phase 5) |
+
+Light validation only (never blocks legitimate data): `card.number` digits, spaces and dashes, 8-23 characters; `expMonth` 1-12 and `expYear` 4 digits when present; `sshKey.privateKey` at most 64 KiB. List-row subtitles built in Rust: `card` → `<brand> •••• <last4>` (else cardholder), `identity` → full name (else email), `sshKey` → fingerprint (else first word of the public key comment), others as before.
 
 `totp` accepts an `otpauth://totp/...` URI **or** a bare base32 secret; Rust validates with `TotpAccount::from_uri` / `new` and rejects with `invalid_input`. Unknown keys are rejected. Empty values are dropped.
 
@@ -96,7 +110,7 @@ interface TotpNow { code: string; period: number; digits: number; secondsRemaini
 |---------|------|---------|-------|
 | `crypto_suite_info` | – | `SuiteInfo` | exists today |
 | `vault_status` | – | `VaultStatus` | works while locked |
-| `vault_create` | `password` | `void` | `vault_exists` if one exists; leaves the vault **unlocked**; enforces min length 8 (`invalid_input`); Argon2 default params |
+| `vault_create` | – | – | **removed** in this revision: vaults are created through `profile_create` (§5.1) |
 | `vault_unlock` | `password` | `void` | `wrong_password` / `no_vault`; builds the in-memory index |
 | `vault_lock` | – | `void` | drops the VaultRootKey, index and edit tokens (zeroized) |
 | `vault_change_password` | `oldPassword`, `newPassword` | `void` | re-seals the keyring only (`change_password`) |
@@ -110,12 +124,13 @@ interface TotpNow { code: string; period: number; digits: number; secondsRemaini
 | `item_restore` | `id` | `ItemSummary` | from trash; new version |
 | `trash_list` | – | `TrashEntry[]` | **only** id, title, deletedAt |
 | `item_purge` | `id`, `password`, `confirmation` | `void` | must be in trash (`not_in_trash`); `confirmation` must equal the item title (trimmed) or the literal `CONFIRM` (`confirmation_mismatch`); writes tombstone, removes items/versions/attachments/conflicts rows |
-| `history_list` | `id` | `VersionEntry[]` | newest first; refused for trashed items |
+| `history_list` | `id` | `VersionEntry[]` | newest first by number; refused for trashed items. Entries with `otherDevice: true` come from another device (§6.2) |
 | `history_get` | `id`, `version`, `password` | `ItemDraft` | password-gated |
-| `history_restore` | `id`, `version`, `password` | `ItemSummary` | new snapshot `n+1`, `event = restoredFromVersion` |
+| `history_restore` | `id`, `version`, `password` | `ItemSummary` | new snapshot (next free number), `event = restoredFromVersion`; restoring an other-device copy makes the new head a descendant of both lines and clears `changedElsewhere` (§6.2) |
+| `item_review_other_device` | `id` | `void` | R3a: "got it", marks the item's other-device copies as seen without restoring anything, which clears `changedElsewhere`; idempotent; `not_found` / `in_trash` / `locked` as for the other item commands |
 | `totp_now` | `id` | `TotpNow` | active items with a `totp` field only |
 
-Nothing returns keys, seeds, hashes or the master password. S3 and export commands arrive with Phases 4–5.
+Nothing returns keys, seeds, hashes or the master password.
 
 ## 4. Behavioural guarantees the tests must cover
 
@@ -124,3 +139,286 @@ Nothing returns keys, seeds, hashes or the master password. S3 and export comman
 * Nothing is auto-purged. `item_purge` is the only deletion path and requires the password, the in-trash state and the confirmation text.
 * A tombstoned id can never be re-created or re-imported.
 * After `vault_lock`, every command except `vault_status`, `vault_unlock`, `vault_create` and `crypto_suite_info` returns `locked`.
+
+## 5. Accounts (profiles), archive, clone, vault files (Phase 2b)
+
+### 5.1 Profiles: several accounts in one app
+
+Each **profile** is a separate vault with its own master password, key bundle and SQLite file. Profiles share nothing: no key, no table, no folder. The login screen lists them and the user picks one before typing its master password.
+
+```ts
+interface ProfileInfo { id: string; displayName: string; createdAt: number; lastUsedAt: number | null }
+interface ProfileList { profiles: ProfileInfo[]; selectedId: string | null; lastUsedId: string | null }
+interface VaultStatus {                // extended: describes the *selected* profile
+  exists: boolean;                     // the selected profile's vault file exists (false when nothing is selected)
+  unlocked: boolean;
+  profile: ProfileInfo | null;         // null when no profile is selected
+  damagedItems: number;
+  syncRevision: number; reconciling: boolean; remoteDamaged: number;   // R3a, see §2 and §6.2
+}
+```
+
+* **Registry** `<app data dir>/profiles.json` (plain JSON, not secret: it must be readable before any unlock, so the display names are visible to anyone who can read the folder; documented trade-off). Written atomically (temp file, fsync, rename, fsync of the folder). Each vault lives in its own folder `<data dir>/vaults/<id>/vault.db`; the folder name is the random id, never the display name (no path tricks, no unicode surprises). A pre-existing `<data dir>/vault.db` from the single-vault era is **adopted in place** as a profile named "My vault" (registry `dir` is `"."`); it is never moved or rewritten.
+* **Display name rules** (enforced in Rust; the UI mirrors them for instant feedback): Unicode NFKC, trimmed, internal whitespace runs collapsed to one space, 1-40 characters, no control characters, **unique per app** compared case-insensitively on the normalized form (`profile_name_taken`). It is a label, not a secret and not a login id.
+* **Lost or corrupt registry:** a registry that fails to parse is renamed to `profiles.json.corrupt-<ms>` (never deleted) and rebuilt by scanning `vaults/*/vault.db` and the legacy file; recovered profiles are named "Recovered vault 1..n" and can be renamed.
+* Only one profile is unlocked at a time. Selecting another profile locks (wipes) the current one first.
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `profile_list` | – | `ProfileList` | works while locked; newest-used first |
+| `profile_create` | `displayName`, `password` | `ProfileInfo` | validates the name, creates the folder and the vault (min password length 8, Argon2id default params), selects it and leaves it **unlocked**; atomic (nothing is left behind on failure) |
+| `profile_select` | `id` | `void` | locks the current profile, selects this one (still locked); `not_found` |
+| `profile_rename` | `id`, `displayName` | `ProfileInfo` | the selected, unlocked profile only; `profile_name_taken` |
+| `profile_remove` | `id`, `password`, `confirmation` | `void` | verifies that profile's master password (Argon2id) even if it is not selected; `confirmation` must equal its display name or `CONFIRM` (`confirmation_mismatch`); deletes only that profile's folder and registry entry (legacy-adopted vault: its files) |
+| `profile_import_file` | `displayName` | `ProfileInfo \| null` | Rust opens the **native open dialog** (the webview never supplies a path), validates the chosen file structurally without any password (SQLite header, `application_id`, `user_version`, key bundle parses), copies it into a new profile folder, selects the profile (locked). `null` if the dialog is cancelled; `unsupported_file` otherwise on a bad file |
+| `vault_export_file` | `password` | `{ path: string } \| null` | password-gated; Rust opens the **native save dialog**, writes a consistent copy of the unlocked vault (SQLite backup, already fully encrypted), file name suggestion `<displayName>-<yyyy-mm-dd>.passman`. Backup-target connection details marked "this device only" are stripped from the copy |
+
+`vault_unlock(password)` and the rest of §3 act on the **selected** profile. `vault_create` no longer exists.
+
+### 5.2 Archive and clone
+
+* **Archive** = a flag inside the sealed payload (`archived`), not a state change in the trash lifecycle. Archived items are fully readable and editable, keep their history, are hidden from the default list, search of "All items" and the Codes view, and have their own list. Archiving and unarchiving are versioned events (`archived` / `unarchived`). Trashing an archived item is allowed; restoring it returns it to the archive.
+* **Clone** copies an item into a brand-new item (version 1, title `<title> (copy)`, not archived, same type, tags, folder and custom fields; attachments are not copied). It is password-gated because it duplicates secrets, and it happens entirely in Rust so the secrets never travel to the UI.
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `item_archive` | `id` | `ItemSummary` | `in_trash` refused; no password |
+| `item_unarchive` | `id` | `ItemSummary` | no password |
+| `item_clone` | `id`, `password` | `ItemSummary` | password-gated |
+
+### 5.3 As built: where Phase 2b is more specific than §5 (backend, verified by tests)
+
+None of these change a shape or a command name; they pin behaviour the text above left open.
+
+* **Restoring an old version keeps the current archive flag** (`history_restore` restores content only; archived is a lifecycle flag like the trash state). `item_archive` / `item_unarchive` are idempotent: repeating one returns the item without a new version.
+* **Argument checks come before key derivation.** An empty password or a malformed item id is `invalid_input`, answered without running Argon2id (same as every other gated command). A refused clone (wrong password) creates nothing.
+* **`profile_select`** always locks whatever was unlocked, including the same account if it is re-selected. Selecting also updates `lastUsedAt`, as does a successful `vault_unlock`; failing to save that timestamp never blocks a login.
+* **`profile_create`** checks the name first (an invalid or taken name is answered before anything is created or any key derived). A too-short password or any later failure (folder, key generation, saving the account list) removes everything it made again; the previously selected account stays selected and unlocked.
+* **`profile_remove`**: the confirmation is compared first (`confirmation_mismatch`), then the account's own master password (`wrong_password`). If the account's vault file is already gone, no password is asked and the entry is dropped. The adopted single-vault file is deleted together with its `-wal` / `-shm`, and nothing else in the data folder is touched.
+* **`profile_import_file`**: the name is validated (and `profile_name_taken` raised) *before* the dialog opens. A file inside the app's own data folder is `invalid_input`; every other bad file is `unsupported_file` with a specific message (folder, unreadable, not a database, a database but not a Passman vault, saved by a newer version of Passman, empty, damaged or truncated, no vault inside, damaged key data). The chosen file is only read. The new account gets a fresh device id.
+* **`vault_export_file`**: the password is verified before the dialog opens; a destination inside the app's own data folder is `invalid_input`; a cancelled dialog is `null`, never an error. The file is written 0600 via a temp file and rename.
+* **`vault_status`** with no account selected: `exists: false`, `unlocked: false`, `profile: null`. With one selected: `exists` is whether *its* vault file has a key bundle.
+* The development shim `src-tauri/examples/e2e_server.rs` is not part of this contract or of any build: it serves the same commands over loopback HTTP for browser-driven tests (`POST /ipc` `{cmd, args}` answering `{ok}` or `{err: {code, message}}`), stands in for the native dialogs with the environment variables `PASSMAN_E2E_OPEN_PATH` and `PASSMAN_E2E_SAVE_PATH`, and adds a dev-only `POST /e2e/picker` that sets those two variables at run time.
+
+### 5.4 Opening a link: `open_url` (Phase 4a)
+
+The UI shows web addresses (an item's `url` field, the provider's help page). It must not open them itself and must not hold a plugin permission that could open *anything*, so a link goes through one command that checks it first.
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `open_url` | `url` | `void` | needs no account and no unlocked vault. Only **`http`** and **`https`** are opened. Rust validates, then hands the *canonical* form of the address (what `url::Url` serializes, so exactly what was checked is what is opened) to the system browser through `tauri-plugin-opener`, called **from Rust only** |
+
+Refused with `invalid_input` and a fixed message, before anything is opened: an empty address, one longer than 2048 characters, any control character, any whitespace, any backslash (browsers read `\` as `/`), a scheme other than `http`/`https` (`javascript:`, `file:`, `data:`, `vbscript:`, `mailto:`, `ftp:`, `tauri:` and the rest), no host, and **credentials in the address** (`https://user:password@host/`). A relative address (`example.com`, `//host/x`) has no scheme and is refused too. `https:///path` is not an error: like a browser, the parser reads it as `https://path/`, and that canonical form is what gets opened. If the operating system cannot open the link the error is `storage` ("The link could not be opened.").
+
+**Capability.** `src-tauri/capabilities/default.json` still grants the main window only `core:default`. Neither `opener:*` nor `dialog:*` is granted, so the plugin's own commands (`plugin:opener|open_url`, `reveal_item_in_dir`, `default_urls`) are closed to the webview, and the plugin's click-interception script is switched off (`open_js_links_on_click(false)`), so a plain `<a href>` does nothing special either. This was checked on the generated files, not assumed: after a build, `src-tauri/gen/schemas/capabilities.json` lists exactly two capabilities, `default` (`core:default`) and `mobile` (platforms `android` and `iOS` only; the five `barcode-scanner:*` permissions of §6.1), and no permission of `opener` or `dialog` appears in either. The `opener` and `dialog` entries of `acl-manifests.json` are only the list of what each plugin *offers*.
+
+The development shim (`src-tauri/examples/e2e_server.rs`) opens nothing: it records the validated address instead (`GET /e2e/opened` returns `{ok: [urls]}`, `POST /e2e/opened` clears the list).
+
+## 6. Backup targets and the master backup (Phase 4a)
+
+A **backup target** is an S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi, Storj and others). Targets, their credentials and their queues live **inside that profile's vault file**, sealed with the vault's `meta` sub-key (credentials never touch disk in plaintext, never reach the bucket in plaintext, and never return to the UI except through a password-gated reveal).
+
+* **What is replicated:** the already-encrypted objects of `STORAGE_AND_SYNC.md` §2 (key bundle, latest item states, immutable version snapshots, tombstones). The bucket sees only ciphertext and the metadata listed in §8 there.
+* **Master backup:** at most one target is the *master*. Every change is replicated to the master first and then to the other enabled targets. Each target also has the checkbox **"Save in master backup"** (`shareInMaster`, default on): when set, that target's connection details travel inside the vault snapshot, so on a fresh device you only have to enter the **master** target once and unlock with your master password to get all shared targets back; when unset the details stay on this device only (they are stripped from exported files and from what is uploaded).
+* Phase 4a is **single-writer replication plus restore**: push from the active device, restore into a fresh profile. A remote item that changed since this device last saw it is *not overwritten* by a push. Since R3a (§6.2) the pull at unlock and at "Back up now" brings such changes in (fast-forward, or an "other device" copy in the history when both sides changed), so a target shows `failing` for this only when the other device wrote between the pull and the push; a conflict screen with side-by-side merge is not built.
+* Capability probe at setup (conditional writes) as in `STORAGE_AND_SYNC.md` §6.
+
+```ts
+interface BackupTargetInput {
+  name: string;                        // label shown in the UI, unique per vault
+  endpoint: string | null;             // null / empty = AWS; https URL for other providers (http only for localhost)
+  region: string; bucket: string; prefix: string;
+  accessKeyId: string; secretAccessKey: string;
+  pathStyle: boolean;                  // true for MinIO and most self-hosted
+  enabled: boolean; master: boolean; shareInMaster: boolean;
+}
+type HealthState = "untested" | "healthy" | "lagging" | "failing" | "disabled";
+interface TargetHealth {
+  state: HealthState; queued: number; lastSuccessAt: number | null; lastCheckedAt: number | null;
+  lastError: string | null; conditionalWrites: "strong" | "weak" | "unknown";
+}
+interface BackupTargetView {           // never contains the secret key
+  id: string; name: string; endpoint: string | null; region: string; bucket: string; prefix: string;
+  accessKeyId: string; hasSecret: boolean; pathStyle: boolean;
+  enabled: boolean; master: boolean; shareInMaster: boolean; health: TargetHealth;
+}
+```
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `backup_list` | – | `BackupTargetView[]` | master first |
+| `backup_test` | `input` | `{ ok: boolean; message: string; conditionalWrites: "strong" \| "weak" \| "unknown" }` | does not save: writes, reads and deletes a probe object, lists the prefix; `network` / `remote` errors carry a human message |
+| `backup_add` | `input` | `BackupTargetView` | saves sealed; enqueues a full first upload when enabled; a new master demotes the old one |
+| `backup_update` | `id`, `input` (secret optional) | `BackupTargetView` | an empty `secretAccessKey` keeps the stored one |
+| `backup_remove` | `id` | `void` | removes the target and its queue only; nothing is deleted in the bucket |
+| `backup_set_master` | `id` | `void` | |
+| `backup_run` | `id \| null` | `BackupTargetView[]` | "Back up now": pull and reconcile from the source target (§6.2), then drain the queue for one target or all; returns the fresh health |
+| `backup_reveal_secret` | `id`, `password` | `string` | password-gated (spec: exporting S3 configs) |
+| `sync_flush` | – | `{ complete: boolean }` | R3a, trigger 3 for phones: sends what is queued for at most 8 seconds in total, then answers; `complete` is true when nothing is left queued (also with the vault locked or no targets: a no-op). Call it from `visibilitychange` (hidden). Never an error for network problems |
+| `profile_restore_from_backup` | `displayName`, `input` | `ProfileInfo` | fresh-device flow: connects to the target, downloads the key bundle, items and versions into a new profile folder (authenticated only after unlock, since the bundle is public by design), selects it (locked). `shareInMaster` targets reappear after the user unlocks |
+
+Automatic runs (R3a, no timers): a change enqueues work, and a background worker drains each target's queue at exactly three triggers, **unlock** (after a pull), **a committed local change**, and **app exit or backgrounding** (`sync_flush`, the window-close hook). A failed job stays queued and is retried at the next trigger, never on a schedule. `lagging` is a failed attempt since the last success or an oldest job older than 5 minutes (read when asked), `failing` is 5 consecutive failed triggers. The UI polls `backup_list` while the backup view or the status chip is on screen (that is a read of stored state, it contacts nobody).
+
+### 6.1 As built: where Phase 4a is more specific than §6 (backend, verified by tests)
+
+Shapes and command names are exactly those above (camelCase on the wire; a snake_case argument or field name is rejected by Tauri, and a mock-runtime test pins it). What the text above left open:
+
+* **Where it lives.** Settings, credentials, queue and health are rows of the vault file (schema v2: `targets`, `outbox`, `remote_objects`). The whole of a target's settings, **including the secret access key**, is one envelope sealed with the `meta` sub-key (`target-<uuid>`); the columns beside it hold only flags, counters and the last error text. A test scans the vault file, its `-wal` and the registry after targets were added, edited and replicated: no secret key, key id, bucket, prefix, endpoint, region or target name is in any of them. The secret exists in memory only while the vault is unlocked (it is zeroized after use) and returns to the UI only through `backup_reveal_secret`.
+* **Validation comes first, with no network.** Every `input` is checked before any request leaves the device: name (NFKC, 1-60 characters, unique per vault ignoring case), `endpoint` (`null`/empty is AWS; otherwise `https`, or `http` for loopback only: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`; no credentials, query or fragment), region, bucket (3-63 characters), prefix (no `.`/`..` parts), key id and secret (no whitespace; a pasted trailing newline is trimmed). Failures are `invalid_input` with a message that never repeats the secret. At most **12 targets** per vault.
+* **`backup_test`** needs no account, no unlocked vault and does not save anything. It writes a random object under `vault/probe/`, reads it back, sends a second `If-None-Match: *` write and an `If-Match` write with a wrong ETag (both must be refused with 412 for `conditionalWrites: "strong"`; any accepted one is `weak`; a service that refuses the headers outright, or a probe that cannot finish, is `unknown`), lists `vault/`, and deletes the probe object on every path (a failed delete is a note in the message, not a failure). A target that cannot be reached or refuses the keys is an *answer* (`ok: false`, a fixed human message, `conditionalWrites: "unknown"`), not an error; only invalid input is an error. Messages never contain the endpoint, bucket, key names or any part of a request.
+* **`backup_add` / `backup_update`** probe outside the vault lock and **save even when the probe fails**: the person typed the settings once and should not have to type them again because the service is down. The failure shows as `health.state: "failing"` (keys, bucket and signature errors count as failing at once) with `health.lastError`. `conditionalWrites` is whatever the probe learned. A new master (`master: true`, on add or update) demotes the old one in the same transaction; **the first target is not promoted automatically**, a vault has no master until one is asked for, and removing the master leaves none. A **disabled target cannot be the master** (`invalid_input`). Disabling empties its queue; re-enabling, or changing endpoint, region, bucket, prefix or path style, schedules a fresh full upload (everything is verified against the new location, not assumed to be there).
+* **`backup_list`** is ordered master first, then in the order the targets were added. `lastCheckedAt` is the last time the target was contacted for any reason (success or failure), `lastSuccessAt` the last time a request succeeded.
+* **Health.** `untested` (never contacted), `healthy`, `lagging` (any failed attempt since the last success, or the oldest waiting job is older than 5 minutes), `failing` (5 consecutive failed attempts, **or** a failure that retrying cannot fix such as a wrong key, a missing bucket or a rejected signature, **or** a blocked job, see below), `disabled`. `queued` counts waiting jobs. `lastError` is a fixed sentence written for the person (it names what to check, never the request or the response).
+* **`backup_run`** first pulls and reconciles from the source (§6.2), then drains one target (`id`) or all (`id` omitted or `null`; an unknown `id` is `not_found`), and returns the fresh `BackupTargetView[]`. A target with nothing queued that was failing (or has never succeeded) gets a cheap connection check instead, so fixing the cause and pressing "retry" turns it `healthy` without waiting for the next change. Everything about the outcome is in the returned health, not in an error; only `locked` and `not_found` are errors.
+* **What is sent and in what order.** Per target: the key bundle, then tombstones, version snapshots, latest item states, purges, then the shared-targets snapshot (`vault/meta/targets.enc`, master only). The master is served first on every pass. Every storage change (create, edit, trash, restore, archive, history restore, purge, password change) enqueues its jobs **in the same database transaction** as the change itself, so nothing is lost if the app is closed between the two. A permanent delete uploads the tombstone first and then removes the item and all its versions from every enabled target.
+* **The single-writer rule (no overwriting of newer remote data).** Before an existing remote item is replaced, its header is read: a remote copy with an equal version and the same bytes is adopted as already there; an **older** copy is overwritten (guarded by `If-Match` where the target enforces conditional writes, by read-then-write where it does not); a copy with a **newer** version, a different copy of the **same** version, an object that is not a Passman object, or a key bundle of **another vault** is never overwritten: that job stays queued as *blocked* with a fixed reason (`health.state` is `failing`, `lastError` explains, e.g. "This backup already holds a newer version of an item than this device has, so it was not overwritten..."), and is looked at again at the next trigger. Since R3a the pull of that trigger has normally merged the other copy by then; a newer or same-version remote copy this device has **already merged** (it is in the history as an other-device copy) is not an error either: the job completes without writing (see `STORAGE_AND_SYNC.md` §10). A changed key bundle of the *same* vault (after a password change) is replaced.
+* **The background worker** belongs to the unlocked vault. It sleeps until one of the three triggers wakes it (no timer, no polling, no backoff: R3a), and **stops on lock, profile switch and app exit** (it is joined, so no request outlives the keys). Network calls never happen while the vault's state lock is held, so a slow bucket cannot freeze the UI.
+* **`backup_reveal_secret`**: the argument check (`not_found` for an unknown id) comes before key derivation; then Argon2id runs on every call (`wrong_password`); the password is never cached. Returns the bare secret string.
+* **`profile_restore_from_backup(displayName, input)`** needs no account and no unlocked vault. Order: display-name rules and the unique-name check (`profile_name_taken`), then the target settings (`invalid_input`), **only then** the first request. It downloads the key bundle (it must exist and validate: `remote` otherwise), lists everything under `vault/`, then writes tombstones, items, version snapshots and the shared-targets snapshot into the new vault file in **one transaction**, using the same private-file helpers as `profile_import_file` (the vault file is owner-only from its first byte). Any failure (network, a damaged or misplaced object, more than 100 000 objects, a repeated listing token) removes the new folder completely, leaves the registry unchanged and leaves the currently open account open. Keys that do not look like Passman objects are ignored; keys that do but do not match their header (an item stored under another id, a version with a wrong number) stop the restore with a fixed message. Authentication of the downloaded content happens at the first unlock, as the key bundle is public by design. The new account is selected, **locked**, with a fresh device id; `network` is returned when the service cannot be reached, `remote` when it answers but cannot serve a restore. There is no progress callback yet; the call returns when the download is done (the lock of the account list is held meanwhile, so no other account change can run).
+* **`shareInMaster`.** Targets marked shared are sealed together into one snapshot that is replicated to the **master only**; a target that is not shared is never in it, and `strip_device_only_targets` removes it (with the queue, remote bookkeeping and health) from the copy written by `vault_export_file`, which keeps the shared ones. After `profile_restore_from_backup` and the first unlock, the shared targets reappear **with their credentials** and the restored master starts with a full verification pass (it re-checks every object once, because the restored device cannot know which of them the bucket already holds). A restored vault that has no snapshot simply has no targets.
+* **Not a contract change, but good to know:** a master that is demoted keeps the (now stale) snapshot object in its bucket until the next full upload overwrites it; a restore from a bucket reads whatever snapshot is there. The e2e shim uses the real S3 client like the app, so browser-driven tests point a target at `scripts/mock_s3.py` on loopback; its `--fast-backup` flag makes a queue read as `lagging` after one second instead of five minutes (there are no retry timers to shorten any more).
+
+### 6.2 Pull, reconcile and other-device copies (R3a, backend, verified by tests)
+
+Algorithm and storage: `STORAGE_AND_SYNC.md` §6 and §10. What the page sees:
+
+* **When it pulls.** On the worker right after `vault_unlock` (which never waits for it) and at the start of `backup_run`. The source is the master target, or the first enabled one when there is no master; other targets are written to and never read. While a pull is queued or running `VaultStatus.reconciling` is `true`.
+* **`VaultStatus.syncRevision`.** Increases by one for every pull that changed something stored. After an unlock the page should poll `vault_status` (for example every 2 seconds while `reconciling`, and on each focus) and re-read `item_list` / `trash_list` / an open item's `item_get` and `history_list` when `syncRevision` changed. An item the pull deletes (another device purged it) disappears from the next `item_list`; an open item then answers `not_found`.
+* **`VaultStatus.remoteDamaged`.** Objects the last pull could not authenticate (a bucket that was tampered with, or damaged storage). Nothing of them is used. Show a quiet warning when it is above 0.
+* **`ItemView.changedElsewhere` and `VersionEntry.otherDevice`.** When another device and this one changed the same item and neither line contains the other, the local state stays the head, and the other device's state is added to the history as an entry with `otherDevice: true` (its `version` is a local number above all own entries, so history numbers can have gaps and an other-device entry can be above the head; the latest own state is the first entry with `otherDevice: false`). The item shows `changedElsewhere: true` until the person acts. Viewing such an entry needs `history_get` (password re-prompt) like any other. **Restore this version** on it (`history_restore`) makes the merged state the new head, a descendant of both lines, which the other device then fast-forwards to; `item_review_other_device(id)` just dismisses the flag.
+* **Nothing is merged field by field and nothing is overwritten.** Both lines stay in the history on both devices.
+* **Errors.** A pull's problems are never errors of a command: they appear in the source target's `health` (a fixed sentence in `lastError`, never an endpoint, bucket or key name) and, for objects that failed authentication, in `remoteDamaged`.
+* **`sync_flush`** (table above) is the page's half of "app exit or backgrounding". On a phone the page calls it from `visibilitychange` when `document.visibilityState` becomes `hidden`; `BUILD_TARGETS.md` lists what Android does and does not guarantee. On the desktop the window-close hook does the same flush without the page.
+
+## 7. Disguise: app icon and name (Q2) [impl]
+
+Both commands are **app-level**: they need no account, no unlocked vault, and they never read or write vault state (a test snapshots every vault file before and after). The Stage 1 gate may therefore allow them while it is closed.
+
+```ts
+interface DisguiseInput { presetId: string | null; customName: string | null; lowercase: boolean }  // presetId null = the original icon
+interface DisguiseView extends DisguiseInput { appliedName: string; note: string | null }           // note: what the launcher could and could not do
+
+// disguise_get() -> DisguiseView
+// disguise_set(input: DisguiseInput) -> DisguiseView
+```
+
+* Wire format: camelCase. The JS call is `invoke("disguise_set", { input: { presetId, customName, lowercase } })`.
+* `presetId` must be one of the 11 ids in `assets/disguise/presets.json` (the core embeds the same file with `include_str!`): `tally, vellum, drizzle, trim, plinth, kerf, basalt, cairn, kovren, tivlo, orvyn`. Ids are matched exactly (no case folding, no trimming).
+* `customName`: control characters (newline, tab, escape, NUL, ...) are turned into one space each, then the name is trimmed; a name that is empty after that means "no custom name" (`customName: null` in the answer); 1 to 30 **characters** (not bytes) are allowed, counted after that clean-up. Zero-width, bidirectional-override, soft-hyphen and private-use characters are refused. Path separators, `%`, `;`, `=` and brackets are accepted (they are escaped wherever the name is written). The answer carries the cleaned name, so the UI should show the returned `customName`.
+* `appliedName` = the custom name when set, else the preset's name, else `Passman`; lower-cased when `lowercase` is true (so `lowercase` alone renames the original look to `passman`).
+* `disguise_get` before anything was saved returns `{ presetId: null, customName: null, lowercase: false, appliedName: "Passman", note: null }`.
+* Errors: `invalid_input` with one of three fixed sentences (no input echoed back): `That icon is not one of the choices.` (unknown preset id), `Use 1 to 30 characters for the name.` (over 30), `The name contains characters that cannot be shown.` (invisible formatting characters). The first problem found wins, in that order. Nothing is saved or applied when the input is refused. A storage failure while saving is `storage` with a fixed sentence.
+* `note` is a fixed sentence about what the launcher did, or `null`. Linux: `The window and your launcher entry now use this name and icon. Some desktops show the change only after a moment or a new login.` after a change; `The launcher entry was removed and the window shows the original name and icon.` after going back to the original look; a launcher problem (for example a foreign `.desktop` file in the way) is a sentence in the same field and **never** an error: the choice is saved first, then applied, and a failed apply leaves the choice saved. Other desktops: `Only the window title and icon change on this system; there is no launcher entry to rewrite.` Android: `On Android the launcher shows the icons and names from the list. A name of your own changes only the title inside the app and in the recent-apps list, and the lower-case option applies inside the app only. Some launchers need a moment to refresh.` The UI should show `note` as is (it may also keep its own static Android text). `disguise_get` returns the note of the last apply in this run, or the platform's standing note (Android) when nothing was applied yet.
+* Behaviour: the choice is saved to `<data dir>/disguise.json` (see STORAGE_AND_SYNC) **before** the launcher is asked to apply it. On start the saved choice is re-applied (window title and icon, Linux launcher entry) from the `setup` hook; a problem there is only a note.
+* What "apply" does: the main window's title and icon are set **from Rust** (`capabilities/default.json` still grants only `core:default`; a test keeps it that way, so the webview has no window permission). Linux: writes `<XDG_DATA_HOME or ~/.local/share>/applications/<app identifier>.desktop` and the icon `<data home>/<app identifier>/disguise/<id>.png`, then runs `update-desktop-database` on the applications folder (best effort). Android: enables one `<activity-alias>` and disables the others through a local Kotlin plugin (needs `scripts/android_patch_manifest.py`, see BUILD_TARGETS).
+* Hooks for the Q1 wipe: `AppCore::disguise_wipe()` overwrites (zeros) and unlinks `disguise.json`, then asks the launcher for the original look (removes the `.desktop` entry and the icon files on Linux; resets the window title and icon). Call it **before** the data directory is removed. A free function `disguise::remove_launcher_entry(data_home, identifier)` removes only our own entry and icons without a launcher object.
+* Frontend: no change needed against `src/backend/types.ts` as it stands (`DisguiseInput`, `DisguiseView`, `disguiseGet`, `disguiseSet`).
+
+## 8. Stage 1 gate, inactivity lock and wipe (Q1) [impl]
+
+**Implemented (Q1).** All names, arguments and shapes are exactly those of `src/backend/types.ts` / `tauri.ts`
+(camelCase arguments, snake_case Rust parameters).
+
+| Command | Arguments | Result | Notes |
+|---|---|---|---|
+| `gate_status` | none | `GateStatus` | `{enabled, open, mode, biometricAvailable, biometric, panicButton, equation, attemptsLeft, streak}`. Not configured means `enabled:false, open:true`. `equation` is `null` when open. `attemptsLeft` is `null` while the counter is 0, otherwise `15 - attempts`. |
+| `gate_submit` | `{ input: string }` | `GateOutcome` | 1 to 3 characters (after NFKC): decoy maths, `{kind:"math", correct, equation, streak}`, never a credential, never the counter. 4 or more: a security attempt, `{kind:"opened"}`, `{kind:"failed", attemptsLeft, equation}` or `{kind:"wiped"}`. With no gate configured (or already open) every input answers `{kind:"opened"}` and costs nothing. |
+| `gate_biometric` | none | `GateOutcome` | `{kind:"opened"}` on Android after a recognised fingerprint; `invalid_input` on desktop, when the switch is off, or when the sensor did not recognise the person. Never counts or resets an attempt. Opens Stage 1 only. |
+| `gate_panic` | none | `{kind:"wiped"}` | Only while "panic mark" is on and the gate is closed, else `invalid_input`. Same wipe as a panic credential. |
+| `gate_close` | none | `null` | Closes the gate (when on) **and locks the open vault** (keys zeroized, backup worker joined). With the gate off it is just a lock. |
+| `gate_configure` | `{ input: GateConfigInput }` | `GateStatus` | Needs an unlocked vault (`locked` otherwise) and that vault's master password (`wrong_password`; the re-prompt guard). `credential:null` keeps the stored one (error when none exists or the mode changes), `panicCode:null` keeps, `""` removes; `enabled:false` deletes `gate.json`. Returns `open:true` for this run. Rule failures are `invalid_input` with the messages of `src/lib/gateRules.ts`; they are reported before any Argon2id work. |
+| `app_reset` | `{ confirmedSteps: 3 }` | `null` | Anything but the number 3 is `invalid_input` (also a string, `-3`, `3.5`, `null`; a missing argument is a decoding error). Allowed with the gate closed. The same wipe as panic, reported normally; a second call is a no-op. |
+| `app_settings_get` | none | `{lockAfterMinutes}` | Default 15. |
+| `app_settings_set` | `{ input: {lockAfterMinutes} }` | `{lockAfterMinutes}` | Only 1, 5, 15 or 30 (no "never"), else `invalid_input`. Stored in `app-settings.json`. |
+| `activity_ping` | none | `null` | Restarts the inactivity timer. |
+
+**The gate is enforced in one place.** `commands::invoke_handler()` wraps the whole handler list in
+`commands::gate::guarded`, which asks `AppCore::before_command(name)` first. While the gate is enabled and
+closed, every command that is not on the allow-list answers `{code:"locked", message:"The vault is locked."}`
+before its code runs. The guard is deny-by-default: a command added later, and even a name that does not exist,
+is `locked` until it is added to `gate::ALLOWED_WHILE_CLOSED`. Allow-list while closed:
+`crypto_suite_info`, `suite_info`, `vault_status`, `gate_status`, `gate_submit`, `gate_biometric`, `gate_panic`,
+`app_reset`, `app_settings_get`, `activity_ping`, `sync_flush`, `disguise_get`, `screen_secure`
+(the last four are listed for the slices that add them; a listed name that is not registered never arrives).
+`gate_close`, `gate_configure` and `app_settings_set` need the gate open (they change what Stage 1 protects).
+
+**`vault_status` while closed** answers the neutral `{exists:false, unlocked:false, profile:null, damagedItems:0}`
+(no account name). The UI polls it (`syncAfterCoreLock`). `profile_list` is refused while closed; after Stage 1
+passes the real values return (a vault is still locked: **Stage 1 never unlocks anything**).
+
+**Removed (strict lock separation).** `VaultStatus.capabilities` (`quickUnlock`, `biometric`) and the Rust type
+`Capabilities` are gone: nothing in Rust wraps, caches or derives a `VaultRootKey` outside RAM, and there is no
+`quick_unlock_*` / session-blob / keystore code. Every vault open, and every re-open after the idle timer, needs
+the master password. The old "Planned for Phase 3: quick_unlock_*" paragraph of this document is obsolete.
+
+**Error codes.** `locked` is the existing code. No new code was added (`invalid_input`, `wrong_password`,
+`storage` cover the rest). Messages are fixed sentences: nothing typed (credential, master password, input) is
+ever echoed or logged.
+
+**Inactivity lock.** One watcher thread per `AppCore` waits on a condition variable until the deadline (no tick
+loop), holds no session lock while it sleeps, and runs the same lock the commands use (so it can never run inside
+a command's critical section). When the deadline passes it closes the gate (when on) and locks the vault (keys
+zeroized, backup worker joined). Every command except `vault_status` and `gate_status` restarts the deadline.
+The deadline is kept on the monotonic **and** the wall clock, and every command also checks it, so a laptop
+resumed from suspend is locked by the first command that arrives (the monotonic clock stops during suspend).
+There is no timer while nothing is open: `gate_close` disarms it.
+
+---
+
+## 9. Encrypted drive: files and attachments (Q3) [impl]
+
+```ts
+interface FileEntry { id: string; name: string; size: number; mime: string | null; itemId: string | null; addedAt: number }
+// ItemView.attachments: { id, name, mime, size }[]  (mime falls back to "application/octet-stream")
+```
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `file_list` | `itemId?: string \| null` | `FileEntry[]` | `null`/absent = the standalone Files section; an item id = that item's attachments (the item must be active: `in_trash`, `not_found`). Newest first. A file whose metadata fails authentication is left out |
+| `file_add` | `itemId?: string \| null` | `FileEntry[] \| null` | Rust opens the **native multi-file picker** (the webview never sends a path); `null` when cancelled. A request that cannot succeed (locked, item in the trash or missing) fails **before** the dialog opens. All sizes are checked before the first byte is written: one file over 52,428,800 bytes rejects the whole call with `invalid_input` `"<name> is larger than 50 MB."`. All or nothing: if a later file fails (vanished, disk full), the files this call already added are removed again. At most 100 files per call. Picked paths inside the app's own data folder are refused. Names come from the picked path: control, bidi and path characters become `_`, cut to 200 characters keeping a short extension |
+| `file_rename` | `id`, `name` | `FileEntry` | `invalid_input`: `"Use 1 to 200 characters for the file name."` / `"A file name cannot contain slashes or control characters."`; the name is trimmed; `not_found`; `in_trash` when the owner is in the trash. Optimistic: stale metadata is `version_conflict` |
+| `file_delete` | `id`, `password` | `void` | re-prompt (`wrong_password`); removes the row, the blob and queues the remote deletion |
+| `file_read` | `id` | **raw bytes** (`tauri::ipc::Response`, no JSON, no base64) | for the preview; the plaintext as an `ArrayBuffer`. Errors keep the normal `{code, message}` shape. Decryption runs without the vault lock held |
+| `file_save_copy` | `id`, `password` | `{ path: string } \| null` | re-prompt first (a wrong password never opens a dialog), then the native save dialog (pre-filled with the file name), then a streaming decryption to `<dest>.part` (0600) renamed over the destination only when the whole file authenticated; `null` when cancelled |
+| `screen_secure` | `on: boolean` | `void` | a no-op everywhere except Android, where it sets or clears `FLAG_SECURE` on the activity window (**UNVERIFIED**, see BUILD_TARGETS) |
+
+* Errors: `locked`, `not_found` ("That item no longer exists." for a missing file or owner), `in_trash`, `wrong_password`, `invalid_input` (limit, names, too many files, a file that cannot be read: `"That file could not be read. Check that it still exists."`, changed while encrypting: `"The file changed while it was being encrypted. Try again."`), `storage` (`"The encrypted file could not be written. Check the free disk space."`, `"The encrypted data of this file is missing on this device."`, and the one integrity sentence `"A stored file failed its integrity check: the data is damaged or was modified."` for any blob or metadata that fails authentication or structure checks; never a panic, never an internal detail).
+* Locking (or switching account) while a file is being added, read or saved cancels the transfer and removes the partial output; plaintext buffers are `Zeroizing`; saved copies and temp files are mode 0600.
+* Frontend: no change against `src/backend/types.ts` / `tauri.ts` for `file_*`. **Needed:** the real adapter must read `file_read` as binary (Tauri returns an `ArrayBuffer` for a raw response; the dev adapter must read the body as bytes when the reply carries `x-passman-binary: 1`, which the shim sets), and `screen_secure` has no wrapper yet: add `screenSecure(on: boolean)` calling `invoke("screen_secure", { on })` (a no-op on desktop). The Files section should call it with `true` while a decrypted preview is open and `false` when it closes.
+
+## 10. Importer and plaintext export (Q4) [impl]
+
+All seven commands need an **unlocked vault** (a locked or missing vault answers `locked`, except `import_cancel`, which is always harmless). They are not app-level commands, so the Stage 1 gate must keep them closed while the app is gated. The webview never names a path: the core opens the native dialog itself and hands back a random handle.
+
+```ts
+type ImportFormat = "keepass-kdbx" | "keepass-xml" | "bitwarden-json" | "bitwarden-csv" | "proton-json" | "proton-zip" | "proton-csv"
+  | "1password-1pux" | "1password-csv" | "lastpass-csv" | "dashlane-csv" | "dashlane-json" | "nordpass-csv" | "enpass-csv" | "enpass-json"
+  | "chrome-csv" | "firefox-csv" | "edge-csv" | "brave-csv" | "safari-csv" | "aegis-json" | "2fas-json" | "otpauth-list" | "google-migration" | "custom-csv";
+interface ImportPick { handle: string; fileName: string; size: number; format: ImportFormat | "unknown"; needsPassword: boolean; needsKeyfile: boolean }
+interface CsvMapping { title?: string; username?: string; password?: string; url?: string; totp?: string; notes?: string; folder?: string }  // header names
+type ImportMode = "skip_duplicates" | "append_version" | "import_all";
+interface ImportOptions { handle: string; format: ImportFormat; mode: ImportMode; password?: string; keyfileHandle?: string; mapping?: CsvMapping }
+interface ImportPreview { entries: number; totpSeeds: number; attachments: number; duplicates: number; skipped: number; warnings: string[]; titles: string[] }
+interface ImportOutcome { added: number; appended: number; skipped: number; failed: number; warnings: string[] }
+// import_pick() -> ImportPick | null                           native picker; null = cancelled
+// import_pick_keyfile() -> { handle: string; fileName: string } | null
+// inspect_csv_headers({ handle }) -> { delimiter: string; headers: string[]; sample: string[][] }
+// import_preview({ options }) -> ImportPreview                 changes nothing in the vault
+// import_commit({ options }) -> ImportOutcome                  one SQLite transaction
+// import_cancel({ handle }) -> void
+// export_plain({ format: "bitwarden-json" | "csv", password: string }) -> { path: string; warnings?: string[] } | null   warnings is absent when empty
+```
+
+* **Wire format:** camelCase arguments exactly as `src/backend/tauri.ts` already sends them (`invoke("import_preview", { options })`). `ImportFormat` and `ImportMode` are the strings above (`mode` is snake_case). `ImportOptions.password` is the file's password (KeePass, never the vault password). The ids were checked against `src/backend/types.ts` by a test.
+* **Handles.** 128 random bits as 32 hex characters. A handle lives 30 minutes after it was picked (not after last use), is wiped by **every lock, every account switch and quit** (the table sits inside the unlocked session), and by `import_cancel`. At most 16 picked files and 2 parsed previews are kept (the oldest goes first). A handle from `import_pick_keyfile` is only accepted as `keyfileHandle`, and a file handle never as one (a test pins the mix-up).
+* **Preview, then commit.** `import_preview` reads the file (no lock held, so a KeePass key derivation or a 200 MB file does not stall other commands), parses it and keeps the entries in core memory under the handle, zeroized on drop. `import_commit` imports **exactly what the preview showed**: a stored preview is reused only when handle, format, mapping, key file **and file password** are identical (any change re-parses). A commit works without a preview (it parses first). A commit consumes the stored entries; the file handle stays valid, so a second commit re-parses (and with `skip_duplicates` adds nothing).
+* **`ImportPreview`.** `entries` = records that will be imported; `skipped` = records of the file Passman cannot hold (an unknown item type, a passkey-only record, a trashed record, a counter-based code ...), each with a reason in `warnings`; `duplicates` = entries that match an item already in the vault (rule in STORAGE_AND_SYNC.md); `titles` = up to 50, no secrets; `warnings` = at most 100 fixed-format sentences (a record is named by its title, cut to 60 characters, never by a value).
+* **`ImportOutcome`.** `added` new items, `appended` new versions of existing items, `skipped` duplicates left alone (and, in `append_version`, identical records), `failed` records that did not validate (a field too long, a bad code; each with a sentence in `warnings`; the others are unaffected). **The parser-skipped records of the preview are not counted again in `outcome.skipped`.** `warnings` carries the file's own notes first, then the batch's notes, then the attachment note: `N attachments were not imported (the encrypted drive is not available yet).` (`1 attachment was ...`), or `N attachments were not saved.` when a sink failed. The frontend should show `warnings` after a commit (the UI shows `preview.warnings` today).
+* **Formats and sniffing.** `import_pick` guesses the format **from the content, never the file name**: KDBX magic; ZIP (then `export.data` = 1pux, a `data.json` member = Proton); JSON top-level keys (Bitwarden, Proton, Aegis, 2FAS, Dashlane, Enpass; the encrypted shapes are recognised too, so they get the refusal below); a `KeePassFile` XML root; `otpauth://` / `otpauth-migration://` lines; CSV by each vendor's header set. Any other table is `custom-csv`; bytes with control characters, an empty file and everything else are `"unknown"`. Chrome, Edge and Brave write the same file and always come back as `chrome-csv`; the UI may re-label by what the person picked. Parsing a file as another format than it is gives `That file is not in the format you chose...`. `needsPassword` / `needsKeyfile` are true for `keepass-kdbx` only.
+* **Encrypted exports are refused** (Bitwarden encrypted JSON, Aegis and 2FAS encrypted backups, Proton's PGP export) with `unsupported_file` and exactly: `This export is encrypted. Export it unencrypted from the app, import it, then delete the file.`
+* **Errors.** `locked` (no unlocked vault), `invalid_input` (bad mapping, unknown export format, a destination inside the app's data folder, a wrong KeePass password/key file is `invalid_input` too), `unsupported_file` (damaged, too large, too deep, not in this format, encrypted export; **fixed sentences, never any file content**), `wrong_password` (`export_plain` only, and the dialog does not open), `not_found` for an unknown, expired or locked-away handle. **Frontend note:** the `not_found` message text is the generic `That item no longer exists.`; for a file handle the UI should show its own sentence ("That file is no longer open. Choose it again.") when it sees `not_found` from these commands.
+* **Limits** (each is a test): file 256 MiB, key file 64 MiB; a zip member 128 MiB, all members 512 MiB, and a member over 1 MiB may not be compressed more than 200:1; at most 200,000 records; JSON and XML nesting 128; KeePass key derivation is read from the header first and refused above 1 GiB of memory or 64 GiB-passes of work (the `keepass` crate does not bound it); XML with a DOCTYPE is refused (no entity is ever defined or expanded); a zip member is read in memory by name and never written to disk or used as a path; one value is cut at 1 MiB (Passman itself accepts 64 KiB, so a longer value is reported as not importable instead of losing its tail silently). A parser panic inside a third-party crate is caught and becomes `That file is damaged or incomplete...`.
+* **`inspect_csv_headers`** takes the picker `handle`, not a path (deviation from the spec text kept from FEATURE_QUEUE.md: a compromised webview cannot make the core read an arbitrary file). The sample is the first 5 rows with every cell cut to 80 characters; it can contain secrets (it is the person's own file), so it is never logged.
+* **`export_plain` writes PLAINTEXT.** Anyone who gets the file can read every password, card number and one-time-code secret in it. Order: format check (`invalid_input`) -> master-password re-prompt (`wrong_password`, no dialog yet) -> native save dialog (`<account>-<date>-plaintext.json|csv`; `null` when cancelled) -> refusal of a destination inside the app's own data folder -> decrypt every **non-trashed** item (archived items are included) in RAM -> write to a new file with mode **0600** through a temp file, fsync, rename, fsync of the folder. The buffers wipe themselves. An item that cannot be decrypted is left out and `warnings` says `N items could not be read and are not in the file.` The native encrypted archive `vault_export_file` is untouched.
+* **Bitwarden JSON export shape.** `encrypted: false`, `folders`, `items` of type 1 login / 2 secure note / 3 card / 4 identity / 5 SSH key; the TOTP is `login.totp`; custom fields keep their `hidden` flag (field type 1). Passman has things Bitwarden has no place for: tags and standalone `totp` items. They are written as custom fields named `Passman tags` and `Passman item type` (`totp`), and Passman's importer turns them back, so **the JSON export read by Passman again is lossless for logins, cards, identities, notes, SSH keys and standalone codes** (round-trip tests, field by field); another app shows those two as ordinary extra fields. **One lossy case:** a `media` item is written as a secure note (its description as the note) and comes back as a note. **The CSV is lossier** (it is Bitwarden's column set): logins and notes round-trip, but cards, identities and SSH keys are flattened into a note that lists every value, and the hidden flag of custom fields is lost. Say so in the export screen if it offers both.
+* **UI text mismatch to fix in `ImportView.tsx`:** the `skip_duplicates` card says "An entry with the same name, username and password is left alone." The rule does not compare passwords. Suggested text: "An entry with the same name, username and website is left alone." (The `append_version` card, "Same name and username ...", is right; it also compares the website.) The mock backend (`mock.ts`) compares passwords; it should follow the Rust rule.

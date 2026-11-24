@@ -1,17 +1,32 @@
 import { motion } from "motion/react";
+import { disguiseTile } from "../../lib/disguise";
+import { brand } from "../../state/brand";
+import { useStore } from "../../state/store";
 
 /**
  * The Passman mark: a brass ring with a keyhole. The ring has a gap while locked; `open` completes it
  * (the unlock moment, UI_DESIGN_SYSTEM.md §6) and turns it a quarter.
+ * With a disguise icon chosen, the mark is that icon instead, so the keyhole never shows on a renamed app.
  */
 export function VaultMark({ size = 64, open = false, busy = false }: { size?: number; open?: boolean; busy?: boolean }) {
+  const { name, presetId } = useStore(brand, (b) => b);
+  const tile = presetId ? disguiseTile(presetId) : undefined;
+  if (tile) {
+    return (
+      <motion.img
+        src={tile} width={size} height={size} alt={name} draggable={false}
+        animate={{ scale: open ? 1.06 : 1 }} transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
+        className={busy ? "animate-pulse" : ""}
+      />
+    );
+  }
   return (
     <motion.svg
       width={size}
       height={size}
       viewBox="0 0 64 64"
       role="img"
-      aria-label="Passman"
+      aria-label={name}
       animate={{ rotate: open ? 90 : 0 }}
       transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
     >

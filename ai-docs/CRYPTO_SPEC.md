@@ -190,3 +190,49 @@ See `CHANGELOG_AND_STATE.md` for the latest run and the list of what is *not* ve
 * **Format regression**: `kat::bundle_v1_fixture_still_unlocks` opens the stored v1 bundle and item with the current code. If it ever fails, the on-disk format changed: bump the suite/version instead of editing the fixture. (`kat::regenerate_bundle_fixture` is `#[ignore]` and only for intentional format changes.)
 * **Property/negative tests** in every module: tampered header/nonce/ciphertext, swapped objects (wrong `itemId`/version), wrong password, root-key substitution (keyring commitment), non-contributory X25519 points, bad Argon2 parameters, redacted `Debug`, wiped buffers.
 * **Not covered:** no third-party audit, no side-channel testing beyond using constant-time primitives and `subtle` comparisons, no fuzzing yet (candidate for Phase 5: envelope and URI parsers).
+
+## Stage 1 gate credentials and counter MAC (Q1)
+
+Gate credentials: NFKC-normalised text, cut at 256 characters, Argon2id v1.3 with a 16-byte OS-CSPRNG salt and a
+32-byte output at `m = min(vault m, 32 MiB)`, `t = min(vault t, 3)`, `p = 1`; PHC string
+`$argon2id$v=19$m=..,t=..,p=..$<salt b64>$<hash b64>`; parsed strictly and cost-bounded (a tampered file cannot
+force a huge allocation). Verification compares in constant time (`subtle`) and always runs three Argon2id
+computations (the credential, its reverse, the custom panic code; a missing hash is computed against a fixed
+dummy at the same cost) before anything is decided. Counter MAC: HMAC-SHA-256 over `"v1" || attempts_le32 ||
+epoch_le64`, key = HKDF-SHA-256(salt `passman/gate/v1`, info `counter-mac`, IKM = per-install random key).
+This is **not** a key-derivation for any vault key and protects no secret.
+
+## Files (v1): chunked blob encryption (Q3)
+
+Files and attachments are not envelopes (the envelope is one-shot AEAD). They use a **chunked blob** (`src-tauri/src/crypto/stream.rs`) plus a **sealed metadata envelope** next to it.
+
+**Keys.** One key per file, never shared:
+
+```
+file_key = derive_subkey(VaultRootKey, Attachment, <file uuid>)            (section 5, label "attachment")
+         = HKDF-SHA512(salt = "passman/v1/hkdf", ikm = root, info = "passman/v1" 0x00 "attachment" 0x00 <uuid>)
+meta_key = derive_subkey(VaultRootKey, Meta, "file-<uuid>")                 (the envelope object id is "file-<uuid>")
+```
+
+*Deviation from the brief:* the brief asked for HKDF-SHA256 with `info = "passman/file/v1" || uuid`. The `attachment` label already exists in section 5 (and in the KAT harness), so the file key uses the one existing derivation instead of adding a second KDF construction. Same properties: per-file key, domain separated from items, versions and metadata.
+
+**Blob format (PMDF v1).**
+
+```
+blob   = header(31) | chunk_0 | chunk_1 | ... | chunk_{n-1}
+header = "PMDF" | version u8 (1) | suite u8 (1 = XChaCha20-Poly1305) | file uuid (16 raw bytes)
+         | chunk size log2 u8 (20) | total chunks u64 BE
+chunk  = nonce (24, fresh random) | ciphertext (up to 1 MiB) | tag (16)
+AAD    = suite u8 | file uuid (16) | chunk index u64 BE | total chunks u64 BE | last-chunk flag u8      (34 bytes)
+```
+
+* `total chunks = max(1, ceil(size / 1 MiB))`, known up front. An empty file is one empty chunk. Every chunk but the last carries exactly 1 MiB of plaintext.
+* **Nonces:** 24 random bytes per chunk from the OS CSPRNG, written in front of the chunk. With one key per file and at most 50 chunks a collision is out of reach (192-bit nonces).
+* **What the AAD buys:** reordering, dropping, duplicating, truncating, appending and moving chunks to another file (or another position) all fail authentication. The plain header fields are validated strictly (magic, version, suite, chunk size must be exactly format 1; the chunk count must be 1..=50), so a flipped bit anywhere in a blob is rejected.
+* **Failure behaviour:** every decrypt failure is the one opaque `Authentication` error. Plaintext reaches the writer only after its chunk authenticated; if a later chunk fails, the caller deletes what it wrote (nothing here can un-write bytes).
+* **Limit:** 52,428,800 bytes (50 MB) per file = 50 chunks; largest blob `31 + 52,428,800 + 50 * 40 = 52,430,831` bytes. Enforced from the file size up front (`"<name> is larger than 50 MB."`) and again while streaming (a source that grows or shrinks while being read aborts the add and removes the partial output).
+* **Memory:** encryption and decryption use one fixed chunk buffer (about two chunks resident). Only `file_read` (the in-app preview) holds a whole plaintext, in `Zeroizing<Vec<u8>>`.
+* **Metadata envelope:** `file-<uuid>` sealed with the `meta` sub-key, envelope header version = a per-file counter starting at 1 (every rename is the next number), header timestamp = the time of that change. Plaintext inside (JSON, `deny_unknown_fields`): `v` (1), `name`, `size` (plaintext bytes), `mime` (or null), `itemId` (or null), `addedAt`, `updatedAt`. The blob and its metadata check each other at open time: `blob_len == 31 + size + 40 * chunks`, the owner in the sealed metadata must equal the owner column.
+
+**What an attacker with the bucket or the disk learns** (no key): how many files exist, each blob's length (so the **exact plaintext size**: there is no padding), the number of chunks, the upload time (service log / object time) and the time of each rename (metadata envelope header), that blob and metadata belong together (same uuid). From the local database only, additionally: which item a file belongs to (`files.item_id` is a plaintext column, like item ids). **Never:** names, types, content, or the owner inside the bucket (the owner lives only in the sealed metadata; a test scans the bucket for the item id).
+**What an attacker who can write to the bucket can do:** delete or replace objects (denial of service, never a silent content change: a replaced blob fails authentication; a blob moved under another uuid fails structure or authentication; a metadata envelope for another file fails its object id check). The same trust model as items.
