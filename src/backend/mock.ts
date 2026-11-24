@@ -26,11 +26,13 @@ import {
   type ImportOutcome,
   type ImportPick,
   type ImportPreview,
+  type GeneratorPrefs,
   type ItemDraft,
   type PlainExportFormat,
   type ItemSummary,
   type ItemType,
   type ItemView,
+  type PrefsView,
   type ProfileInfo,
   type TotpNow,
   type VersionEntry,
@@ -72,6 +74,8 @@ interface MockProfile {
   store: Map<string, Stored>;
   targets: MockTarget[];
   files: Map<string, { entry: FileEntry; bytes: Uint8Array }>;
+  /** The generator's last settings (the core keeps them sealed in the vault and syncs them). */
+  generator?: GeneratorPrefs;
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -844,6 +848,18 @@ export const previewBackend: Backend = {
     const ranOut = leaveDeadline !== 0 && Date.now() >= leaveDeadline;
     leaveDeadline = 0;
     if (ranOut) lockForAway();
+  },
+  // ---- the vault's preferences: the same limits as the core (storage/backup/prefs.rs) ----
+  async prefsGet(): Promise<PrefsView> {
+    const g = requireUnlocked().generator;
+    return { generator: g ? { ...g } : null };
+  },
+  async prefsSetGenerator(g): Promise<PrefsView> {
+    const p = requireUnlocked();
+    if (!Number.isInteger(g.length) || g.length < 4 || g.length > 128) err("invalid_input", "The password length must be between 4 and 128.");
+    if (!(g.lower || g.upper || g.digits || g.symbols)) err("invalid_input", "Select at least one character type.");
+    p.generator = { length: g.length, lower: g.lower, upper: g.upper, digits: g.digits, symbols: g.symbols, avoidAmbiguous: g.avoidAmbiguous };
+    return { generator: { ...p.generator } };
   },
   // ---- device settings, the clock and the demo vault ----
   async deviceGet() { return { ...device }; },

@@ -11,6 +11,7 @@
 //! always verified, flagged item or not. The password is never stored. The Argon2id run happens **without** the
 //! session lock held, so other commands (and the UI) are not blocked behind it.
 
+use super::backup::prefs::{GeneratorPrefs, PrefsView};
 use super::backup::{probe_config, BackupRuntime, BackupTargetInput, BackupTargetView, VaultLink};
 use super::db::Store;
 use super::error::{Result, StorageError};
@@ -430,6 +431,17 @@ impl Session {
 
     pub fn item_list(&self) -> Result<Vec<ItemSummary>> {
         self.with_unlocked(|u| Ok(u.vault.list_active()))
+    }
+
+    /// The vault's saved preferences (the generator's last settings), the same on every device.
+    pub fn prefs_get(&self) -> Result<PrefsView> {
+        self.with_unlocked(|u| Ok(u.vault.prefs().into()))
+    }
+
+    /// Remember the generator's settings; they are sealed, stored in the vault database and sent
+    /// to the backup targets like the vault's other data.
+    pub fn prefs_set_generator(&self, generator: GeneratorPrefs) -> Result<PrefsView> {
+        self.with_unlocked(|u| u.vault.set_generator_prefs(generator).map(Into::into))
     }
 
     pub fn item_get(&self, id: &str) -> Result<ItemView> {

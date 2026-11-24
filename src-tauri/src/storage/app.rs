@@ -9,6 +9,7 @@
 //! * Every item command acts on the selected profile's [`Session`]; with nothing selected they
 //!   answer `locked` (and `vault_unlock` answers `no_vault`).
 
+use super::backup::prefs::{GeneratorPrefs, PrefsView};
 use super::backup::{
     probe_config, restore, BackupRuntime, BackupTargetInput, BackupTargetView, BackupTestResult,
     TargetConfig,
@@ -662,6 +663,14 @@ impl AppCore {
 
     pub fn item_list(&self) -> Result<Vec<ItemSummary>> {
         self.session()?.item_list()
+    }
+
+    pub fn prefs_get(&self) -> Result<PrefsView> {
+        self.session()?.prefs_get()
+    }
+
+    pub fn prefs_set_generator(&self, generator: GeneratorPrefs) -> Result<PrefsView> {
+        self.session()?.prefs_set_generator(generator)
     }
 
     pub fn item_get(&self, id: &str) -> Result<ItemView> {

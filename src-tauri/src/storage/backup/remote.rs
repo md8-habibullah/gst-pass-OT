@@ -264,6 +264,7 @@ impl StoreFactory for S3Factory {
 pub mod keys {
     pub const BUNDLE: &str = "vault/meta/keybundle.json";
     pub const TARGETS: &str = "vault/meta/targets.enc";
+    pub const PREFS: &str = "vault/meta/prefs.enc";
     pub const ITEMS_PREFIX: &str = "vault/items/";
     pub const VERSIONS_PREFIX: &str = "vault/versions/";
     pub const TOMBSTONES_PREFIX: &str = "vault/tombstones/";

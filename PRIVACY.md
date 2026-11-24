@@ -9,6 +9,8 @@ library, which Google documents as able to send technical usage metrics (see "An
 
 * **Your vault** is a file on your device. Every item is encrypted on the device before it is written; the master
   password and keys exist only in memory while the vault is unlocked.
+* **Your last password generator settings** (the length and which character types) are kept inside the encrypted vault, so they
+  are in your backups and follow the vault to your other devices. The generated passwords themselves are never stored.
 * **Not encrypted, next to the vaults:** the list of account names, the app lock's settings and hashes, the icon and name you chose
   for the disguise, and `device.json` (your time zone, whether the first-run welcome was seen, the time-check switch and the id of the
   demo vault). None of them holds an item, a key or a password. Erasing everything removes all of them except `device.json`'s zone and

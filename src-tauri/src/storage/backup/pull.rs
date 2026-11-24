@@ -43,6 +43,7 @@
 //! Nothing here sleeps, retries or polls. An unreachable source is recorded in that target's
 //! health by the caller; the push side carries on regardless.
 
+use super::prefs::PrefsVerdict;
 use super::pull_apply::{Applied, Head, Plan, Snap, Verdict};
 use super::remote::{keys, ListEntry, ObjectStore, RemoteError, MAX_META_BYTES, MAX_OBJECT_BYTES};
 use super::replicator::RuntimeTarget;
@@ -96,11 +97,14 @@ pub struct PullReport {
     pub rolled_back: usize,
     /// Items the person edited while the pull was deciding; left for the next pass.
     pub raced: usize,
+    /// The vault preferences (generator settings) of another device were taken over.
+    pub prefs_adopted: bool,
 }
 
 impl PullReport {
     pub fn changed(&self) -> bool {
         self.new_items + self.fast_forwarded + self.other_device + self.deleted > 0
+            || self.prefs_adopted
     }
 }
 
@@ -339,6 +343,48 @@ impl Pass<'_> {
         Ok(dead)
     }
 
+    /// The vault preferences (`vault/meta/prefs.enc`, see [`super::prefs`]): one `HEAD`, and a
+    /// download only when the ETag is not the one already dealt with, so an unchanged bucket
+    /// costs one small request here. The newest copy wins; a copy that does not authenticate is
+    /// counted and remembered (so it is not downloaded again) but never applied.
+    fn prefs(&mut self) -> PullResult<()> {
+        if self.stopped() {
+            return Err(PullError::Stopped);
+        }
+        let Some(head) = self.remote.head(keys::PREFS)? else {
+            return Ok(());
+        };
+        if self.is_unchanged(keys::PREFS, head.etag.as_deref()) {
+            return Ok(());
+        }
+        let Some(obj) = self.remote.get(keys::PREFS, MAX_META_BYTES)? else {
+            return Ok(());
+        };
+        let etag = obj.etag.or(head.etag);
+        let version = envelope::peek_header(&obj.bytes).map_or(0, |h| h.version);
+        let source = self.source.to_string();
+        let verdict =
+            visit(self.link, |v| v.pull_prefs(&source, &obj.bytes)).ok_or(PullError::Stopped)?;
+        match verdict {
+            PrefsVerdict::Adopted => {
+                self.report.prefs_adopted = true;
+                self.record_main(keys::PREFS, etag.as_deref(), version);
+            }
+            PrefsVerdict::Same | PrefsVerdict::LocalAhead => {
+                self.record_main(keys::PREFS, etag.as_deref(), version);
+            }
+            // Not authentic: counted, and remembered as the object to overwrite, so the copy this
+            // device queued replaces it (`If-Match` on this ETag).
+            PrefsVerdict::Damaged => {
+                self.report.damaged += 1;
+                self.record_main(keys::PREFS, etag.as_deref(), 0);
+            }
+            // Written by a newer app: kept apart, never overwritten by this build.
+            PrefsVerdict::Unreadable => self.record_merged(keys::PREFS, etag.as_deref(), version),
+        }
+        Ok(())
+    }
+
     fn items(&mut self, dead: &HashSet<String>) -> PullResult<()> {
         for entry in list_all(self.remote, keys::ITEMS_PREFIX)? {
             if self.stopped() {
@@ -521,7 +567,10 @@ pub fn reconcile(
         stop,
         report: PullReport::default(),
     };
-    let result = pass.tombstones().and_then(|dead| pass.items(&dead));
+    let result = pass
+        .tombstones()
+        .and_then(|dead| pass.items(&dead))
+        .and_then(|()| pass.prefs());
     let damaged = pass.report.damaged;
     // Whatever happened, the vault learns how many objects were refused (and the page, through
     // the status, that something changed).

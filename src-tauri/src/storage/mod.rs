@@ -40,6 +40,7 @@ mod drive_tests;
 mod tests;
 
 pub use app::{AppCore, ExportedFile, SyncFlush, EXIT_FLUSH};
+pub use backup::prefs::{GeneratorPrefs, PrefsView};
 pub use backup::{BackupRuntime, BackupTargetInput, BackupTargetView, BackupTestResult, Timing};
 pub use drive::FileEntry;
 pub use error::{Result, StorageError};

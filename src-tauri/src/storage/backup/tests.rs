@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+mod prefs_tests;
 mod pull_tests;
 
 pub(super) const PW: &str = "correct horse battery staple";

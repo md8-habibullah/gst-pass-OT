@@ -1,5 +1,6 @@
 import { getBackend, type Backend, type BackupTargetInput, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type TrashEntry, type VaultStatus } from "../backend";
 import { setDisplayZone } from "../lib/format";
+import { canGenerate, DEFAULT_GEN, savedOrDefault, type GenOptions } from "../lib/password";
 import { setBrand } from "./brand";
 import { createStore } from "./store";
 import { setLockIntent, type LockFlow } from "./ui";
@@ -54,6 +55,11 @@ export interface AppState {
   justUnlocked: boolean;
   toasts: Toast[];
   clipboardClear: ClipboardClear;
+  /**
+   * The password generator's settings, the same in every place that shows the generator. Remembered in the vault (and
+   * synced with it); the defaults until the open vault answered.
+   */
+  generator: GenOptions;
   /** Last value of the core's pull counter. When it moves, a pull from the backup changed local data and the lists reload. */
   syncRevision: number;
 }
@@ -86,6 +92,7 @@ export const app = createStore<AppState>({
   justUnlocked: false,
   toasts: [],
   syncRevision: 0,
+  generator: { ...DEFAULT_GEN },
   ...loadPrefs(),
 });
 
@@ -103,7 +110,7 @@ export function be(): Backend {
   return backend;
 }
 
-const EMPTY_VAULT: Partial<AppState> = { items: [], trash: [], selectedId: null, query: "", filter: "all", toasts: [], justUnlocked: false };
+const EMPTY_VAULT: Partial<AppState> = { items: [], trash: [], selectedId: null, query: "", filter: "all", toasts: [], justUnlocked: false, generator: { ...DEFAULT_GEN } };
 
 /** Re-reads the account list and decides which lock-screen view to start from. No vault at all: make the built-in one. */
 async function settle(status: VaultStatus): Promise<void> {
@@ -170,13 +177,52 @@ export async function refreshProfiles(): Promise<void> {
 
 export async function refresh(): Promise<void> {
   const b = be();
-  const [items, trash] = await Promise.all([b.listItems(), b.listTrash()]);
+  // The remembered generator settings ride along; they must never get in the way of showing the vault.
+  const [items, trash, prefs] = await Promise.all([b.listItems(), b.listTrash(), b.prefsGet().catch(() => null)]);
   app.set((s) => ({
     ...s,
     items,
     trash,
+    // A change made a moment ago and not yet saved is newer than what the vault answers.
+    generator: prefs && !genPending && genSaving === 0 ? savedOrDefault(prefs.generator) : s.generator,
     selectedId: s.selectedId && (items.some((i) => i.id === s.selectedId) || trash.some((t) => t.id === s.selectedId)) ? s.selectedId : null,
   }));
+}
+
+// ---- the generator's remembered settings ----
+
+/** The latest change that has not reached the vault yet, and how many saves are on their way. */
+let genPending: GenOptions | null = null;
+let genSaving = 0;
+let genTimer: ReturnType<typeof setTimeout> | undefined;
+const GEN_SAVE_DELAY_MS = 600;
+
+/**
+ * The generator's settings changed. Every place that shows the generator has them at once; the vault gets them a moment
+ * later, so dragging the slider is one save and not fifty. Settings the generator cannot use (no character type) are not kept.
+ */
+export function rememberGenerator(next: GenOptions): void {
+  if (!canGenerate(next)) return;
+  genPending = next;
+  patch({ generator: next });
+  clearTimeout(genTimer);
+  genTimer = setTimeout(() => void flushGenerator(), GEN_SAVE_DELAY_MS);
+}
+
+/** Saves a change that is still waiting (when the generator closes, or before the vault locks). Never throws: a missed save only means the next change tries again. */
+export async function flushGenerator(): Promise<void> {
+  clearTimeout(genTimer);
+  const g = genPending;
+  if (!g) return;
+  genPending = null;
+  genSaving += 1;
+  try {
+    await be().prefsSetGenerator(g);
+  } catch {
+    /* locked, or the core refused: the settings stay on screen and the next change saves again */
+  } finally {
+    genSaving -= 1;
+  }
 }
 
 /** Loads the vault contents after a successful unlock but stays on the lock screen so it can play its exit. */
@@ -433,6 +479,7 @@ export async function syncAfterCoreLock(): Promise<boolean> {
 
 /** Locks the open vault and returns to its password prompt. */
 export async function lockVault(): Promise<void> {
+  await flushGenerator();
   await be().lock();
   patch({ ...EMPTY_VAULT, phase: "locked" });
 }

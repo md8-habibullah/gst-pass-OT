@@ -170,6 +170,86 @@ step("deletion on A reaches B", async (p) => {
   check("B answers not_found for it", r.err?.code === "not_found", JSON.stringify(r).slice(0, 200));
 });
 
+// ---- the password generator's last settings: kept in the vault, shown in every place, synced between devices ----
+const genLength = (p) => p.eval(`document.querySelector('#gen-length')?.value ?? null`);
+const genSwitch = (p, label) => p.eval(`document.querySelector('[role=switch][aria-label=${JSON.stringify(label)}]')?.getAttribute('aria-checked') ?? null`);
+const setGenLength = (p, n) => p.eval(`(()=>{const el=document.querySelector('#gen-length'); if(!el) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, ${n}); el.dispatchEvent(new Event('input',{bubbles:true})); return true;})()`);
+const savedGen = async (core) => (await ok(core, "prefs_get")).generator;
+const prefsObjects = () => walkFiles(S3_DATA).filter((f) => keyOf(f).endsWith("vault/meta/prefs.enc"));
+async function waitGen(core, want, label, ms = 20000) {
+  const t0 = Date.now(); let g = null;
+  while (Date.now() - t0 < ms) { g = await savedGen(core); if (g && Object.entries(want).every(([k, v]) => g[k] === v)) return true; await sleep(250); }
+  check(label, false, JSON.stringify(g)); return false;
+}
+
+step("generator: nothing is saved at first, the page offers 20, and a change is kept in the vault", async (p) => {
+  check("the vault holds no generator settings yet", (await savedGen(B)) === null);
+  check("nothing was sent for them either", prefsObjects().length === 0);
+  await nav(p, "Generator"); await p.waitFor(`!!document.querySelector('#gen-length')`, { timeout: 10000, label: "the generator" });
+  check("the length starts at 20", (await genLength(p)) === "20", await genLength(p));
+  await setGenLength(p, 30);
+  await p.click('[role=switch][aria-label="Symbols"]');
+  await waitGen(B, { length: 30, symbols: false, lower: true, upper: true, digits: true, avoidAmbiguous: true }, "the core holds 30 characters without symbols a moment after the change");
+  check("the slider shows 30", (await genLength(p)) === "30", await genLength(p));
+});
+
+step("generator: the item editor opens with the same settings, and so does the next unlock", async (p) => {
+  await nav(p, "All items"); await btn(p, "New");
+  await waitText(p, "What would you like to store?"); await p.click("[role=dialog] button", "Login");
+  await p.waitFor(`!!document.querySelector('[role=dialog] input')`);
+  await p.click("[role=dialog] button[aria-expanded]", "Generate");
+  await p.waitFor(`!!document.querySelector('#gen-length')`, { timeout: 5000, label: "the editor's generator" });
+  check("the editor's slider starts at 30, not 20", (await genLength(p)) === "30", await genLength(p));
+  check("and symbols are still off", (await genSwitch(p, "Symbols")) === "false" && (await genSwitch(p, "Lowercase letters")) === "true");
+  const sample = await p.eval(`document.querySelector('[role=dialog] [aria-live=polite]')?.innerText ?? ''`);
+  check("the sample password is 30 characters with no symbol", sample.replace(/\s/g, "").length === 30 && /^[A-Za-z0-9]+$/.test(sample.replace(/\s/g, "")), JSON.stringify(sample));
+  await p.press("Escape"); await p.waitFor(`!document.querySelector('[role=dialog]')`, { timeout: 8000, label: "editor closed" }).catch(() => undefined);
+
+  await ok(B, "vault_lock");
+  await waitText(p, "Master password", 20000);
+  await unlockUi(p, PW);
+  await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 20000 });
+  await quiet(B, "B");
+  await nav(p, "Generator"); await p.waitFor(`!!document.querySelector('#gen-length')`, { timeout: 10000 });
+  check("after locking and unlocking the page still shows 30 without symbols", (await genLength(p)) === "30" && (await genSwitch(p, "Symbols")) === "false", `${await genLength(p)} / ${await genSwitch(p, "Symbols")}`);
+});
+
+step("generator: settings the core cannot use are refused and change nothing", async () => {
+  const base = { length: 30, lower: true, upper: true, digits: true, symbols: false, avoidAmbiguous: true };
+  for (const [what, generator] of [["3 characters", { ...base, length: 3 }], ["129 characters", { ...base, length: 129 }], ["no character type", { ...base, lower: false, upper: false, digits: false, symbols: false }]]) {
+    const r = await B.ipc("prefs_set_generator", { generator });
+    check(`${what}: refused`, r.err?.code === "invalid_input", JSON.stringify(r).slice(0, 200));
+  }
+  const g = await savedGen(B);
+  check("the saved settings are untouched", g?.length === 30 && g.symbols === false, JSON.stringify(g));
+});
+
+step("generator: the settings go to the bucket sealed and reach the other device", async () => {
+  await settled(B, "B");
+  const objs = prefsObjects();
+  check("the bucket holds the settings as vault/meta/prefs.enc", objs.length === 1, bucketItemFiles().map(keyOf).join(", "));
+  if (objs.length) {
+    const raw = readFileSync(objs[0]);
+    check("the object is sealed: no setting name or value is readable in it", !["length", "generator", "symbols", "avoidAmbiguous", "lower"].some((w) => raw.includes(Buffer.from(w))), raw.subarray(0, 80).toString("hex"));
+  }
+  await ok(A, "backup_run");
+  check("device A took them over on its next pull", await waitGen(A, { length: 30, symbols: false }, "device A shows 30 characters without symbols"));
+});
+
+step("generator: a newer change on the other device reaches this one, even while its page is open", async (p) => {
+  await ok(A, "prefs_set_generator", { generator: { length: 45, lower: true, upper: true, digits: true, symbols: true, avoidAmbiguous: false } });
+  await settled(A, "A");
+  await nav(p, "Generator"); await p.waitFor(`document.querySelector('#gen-length')?.value === '30'`, { timeout: 5000 });
+  await ok(B, "backup_run");
+  await p.waitFor(`document.querySelector('#gen-length')?.value === '45'`, { timeout: 20000, label: "the open generator page follows the pull" }).catch(() => undefined);
+  check("the open page now shows 45", (await genLength(p)) === "45", await genLength(p));
+  check("with symbols back on and look-alikes allowed", (await genSwitch(p, "Symbols")) === "true" && (await genSwitch(p, "Avoid look-alike characters (0 O 1 l I)")) === "false");
+  const g = await savedGen(B);
+  check("device B's vault holds the same", g?.length === 45 && g.symbols === true && g.avoidAmbiguous === false, JSON.stringify(g));
+  const hits = (await ok(B, "backup_list"))[0]?.health;
+  check("the pull left nothing waiting to send back", hits?.queued === 0, JSON.stringify(hits));
+});
+
 step("an object that fails authentication is ignored and counted", async (p) => {
   const idA = await idOf(A, "Cloudflare A-side");
   await edit(A, idA, { top: { title: "Cloudflare TAMPERED" } }); await settled(A, "A");

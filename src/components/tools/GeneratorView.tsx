@@ -7,7 +7,7 @@ import { PageBody, PageHeader } from "../shell/PageHeader";
 export function GeneratorView() {
   return (
     <PageBody>
-      <PageHeader title="Generator" subtitle="Random passwords made on this device from your system's secure random source. Nothing is saved or sent anywhere." />
+      <PageHeader title="Generator" subtitle="Random passwords made on this device from your system's secure random source. A password is never saved. Your last settings are, inside your encrypted vault, and follow it to every device you sync." />
       <PasswordGenerator
         actionLabel="Copy password"
         onUse={async (pw) => {

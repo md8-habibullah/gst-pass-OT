@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { DEFAULT_GEN, generatePassword, type GenOptions } from "../../lib/password";
+import { canGenerate, GEN_LENGTH_MAX, GEN_LENGTH_MIN, generatePassword, type GenOptions } from "../../lib/password";
+import { flushGenerator, rememberGenerator, app } from "../../state/app";
+import { useStore } from "../../state/store";
 import { Button, IconButton } from "../ui/Button";
 import { Switch } from "../ui/Inputs";
 import { PasswordText } from "./FieldRows";
@@ -13,9 +15,16 @@ const TOGGLES: { key: keyof Pick<GenOptions, "lower" | "upper" | "digits" | "sym
   { key: "avoidAmbiguous", label: "Avoid look-alike characters (0 O 1 l I)" },
 ];
 
-/** Inline generator. Randomness: crypto.getRandomValues with rejection sampling (lib/password.ts). */
+/**
+ * Inline generator. Randomness: crypto.getRandomValues with rejection sampling (lib/password.ts).
+ * The settings are the vault's: every place that shows the generator starts from what was chosen last (the length and the
+ * character types), and a change is remembered in the vault and synced with it.
+ */
 export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: { onUse: (pw: string) => void; actionLabel?: string }) {
-  const [opts, setOpts] = useState<GenOptions>(DEFAULT_GEN);
+  const remembered = useStore(app, (s) => s.generator);
+  // With every character type switched off there is nothing to generate and nothing worth remembering: it is only shown.
+  const [unusable, setUnusable] = useState<GenOptions | null>(null);
+  const opts = unusable ?? remembered;
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +38,18 @@ export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: 
     }
   }, []);
   useEffect(() => roll(opts), [opts, roll]);
+  // A change still waiting for its save goes to the vault when this closes.
+  useEffect(() => () => void flushGenerator(), []);
+
+  const change = (what: Partial<GenOptions>) => {
+    const next = { ...opts, ...what };
+    if (canGenerate(next)) {
+      setUnusable(null);
+      rememberGenerator(next);
+    } else {
+      setUnusable(next);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4 rounded-lg bg-pane/80 p-4 shadow-e1">
@@ -48,10 +69,10 @@ export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: 
         <input
           id="gen-length"
           type="range"
-          min={8}
-          max={64}
+          min={GEN_LENGTH_MIN}
+          max={GEN_LENGTH_MAX}
           value={opts.length}
-          onChange={(e) => setOpts((o) => ({ ...o, length: Number(e.target.value) }))}
+          onChange={(e) => change({ length: Number(e.target.value) })}
           className="mt-2 h-6 w-full accent-[var(--color-brass)] pointer-coarse:h-9"
         />
       </div>
@@ -59,7 +80,7 @@ export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: 
         {TOGGLES.map((t) => (
           <li key={t.key} className="flex min-h-9 items-center justify-between gap-4 pointer-coarse:min-h-12">
             <span className="text-[0.93em]">{t.label}</span>
-            <Switch label={t.label} checked={opts[t.key]} onChange={(v) => setOpts((o) => ({ ...o, [t.key]: v }))} />
+            <Switch label={t.label} checked={opts[t.key]} onChange={(v) => change({ [t.key]: v })} />
           </li>
         ))}
       </ul>

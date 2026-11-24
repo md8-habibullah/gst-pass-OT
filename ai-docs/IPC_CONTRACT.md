@@ -482,3 +482,14 @@ Changes to earlier shapes:
 
 **Network.** `clock_*` and the background check are the only requests the core makes besides S3: three `HEAD` requests (about 20 s apart at most, at most once in 6 hours after a good check) to `google.com/generate_204`, `cloudflare.com/cdn-cgi/trace` and `aws.amazon.com`, reading only the `Date` header. No vault data, identifier or cookie is sent. They are skipped while the check is switched off.
 
+
+## 12. Vault preferences: the generator's last settings [impl]
+
+Stored sealed in the vault, copied to every backup target and picked up by the person's other devices (`STORAGE_AND_SYNC.md` §10, "Preferences that follow the vault"; decision D31). Both commands need an open vault (`locked` otherwise) and are closed while the gate is closed.
+
+| Command | Arguments | Result | Notes |
+|---|---|---|---|
+| `prefs_get` | none | `PrefsView` | `{generator: GeneratorPrefs \| null}`. `null` until something was saved (the page then offers its defaults: 20 characters, every type on, look-alikes avoided). A stored setting this build cannot use is shown as `null`. |
+| `prefs_set_generator` | `{ generator: GeneratorPrefs }` | `PrefsView` | `GeneratorPrefs` is `{length, lower, upper, digits, symbols, avoidAmbiguous}`. `invalid_input` (fixed sentences, no input echoed) when `length` is not 4 to 128 ("The password length must be between 4 and 128.") or no character type is on ("Select at least one character type."); nothing changes then. Saving the settings that are already saved writes and sends nothing. Otherwise the change is saved and queued for every enabled target. |
+
+Front end: the slider offers 8 to 64; a saved length outside it is shown at the nearest end. The Generator page and the item editor share one set of settings (`app.generator` in `state/app.ts`): a change shows in both at once, is saved about 0.6 s after the last change (and when the generator closes or the vault locks), and is re-read after every unlock and whenever a pull from the backup changed something (`syncRevision`). With every character type switched off the page says so and saves nothing. A failed read or save never blocks the vault: the settings on screen stay and the next change saves again.

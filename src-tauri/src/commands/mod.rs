@@ -12,8 +12,9 @@
 use crate::crypto;
 use crate::storage::{
     AppCore, BackupTargetInput, BackupTargetView, BackupTestResult, BeginEdit, ExportedFile,
-    FilePicker, ItemDraft, ItemSummary, ItemView, ProfileInfo, ProfileList, SessionConfig,
-    StorageError, SyncFlush, TotpNow, TrashEntry, UrlOpener, VaultStatus, VersionEntry, EXIT_FLUSH,
+    FilePicker, GeneratorPrefs, ItemDraft, ItemSummary, ItemView, PrefsView, ProfileInfo,
+    ProfileList, SessionConfig, StorageError, SyncFlush, TotpNow, TrashEntry, UrlOpener,
+    VaultStatus, VersionEntry, EXIT_FLUSH,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -398,6 +399,24 @@ pub async fn item_list(state: State<'_, AppState>) -> CmdResult<Vec<ItemSummary>
     run(&state, |c| c.item_list()).await
 }
 
+// ------------------------------------------------------------------ vault preferences
+
+/// The vault's saved preferences (the generator's last settings). The same on every device.
+#[tauri::command]
+pub async fn prefs_get(state: State<'_, AppState>) -> CmdResult<PrefsView> {
+    run(&state, |c| c.prefs_get()).await
+}
+
+/// Remember the generator's settings (length and character types). Saving what is already saved
+/// changes nothing; a setting the generator cannot use is refused.
+#[tauri::command]
+pub async fn prefs_set_generator(
+    state: State<'_, AppState>,
+    generator: GeneratorPrefs,
+) -> CmdResult<PrefsView> {
+    run(&state, move |c| c.prefs_set_generator(generator)).await
+}
+
 #[tauri::command]
 pub async fn item_get(state: State<'_, AppState>, id: String) -> CmdResult<ItemView> {
     run(&state, move |c| c.item_get(&id)).await
@@ -635,6 +654,8 @@ pub fn invoke_handler<R: tauri::Runtime>(
         vault_lock,
         vault_change_password,
         item_list,
+        prefs_get,
+        prefs_set_generator,
         item_get,
         item_reveal,
         item_begin_edit,

@@ -89,7 +89,8 @@ pub struct Job {
     pub seq: i64,
     pub gen: i64,
     pub kind: JobKind,
-    /// Item id (empty for `bundle` and `targets`).
+    /// Item id (empty for `bundle` and for the shared-targets snapshot of kind `targets`; the
+    /// vault preferences are the other `targets` job and use the ref `prefs`).
     pub target_ref: String,
     pub version: u64,
     pub ts: u64,
@@ -271,6 +272,14 @@ pub fn seed_target(conn: &Connection, target_id: &str, now: u64) -> Result<()> {
     )?;
     conn.execute(
         &format!("{head} SELECT ?1, 'item', id, 0, 0, 3, ?2 FROM items"),
+        params![target_id, now],
+    )?;
+    // The vault preferences (when the person has saved any) go to a new target like everything else.
+    conn.execute(
+        &format!(
+            "{head} SELECT ?1, 'targets', 'prefs', 0, 0, {}, ?2 WHERE EXISTS (SELECT 1 FROM meta WHERE key = 'prefs')",
+            JobKind::Targets.rank()
+        ),
         params![target_id, now],
     )?;
     crate::storage::drive::seed_files(conn, target_id, now)?;

@@ -16,7 +16,7 @@ node e2e/real-drive.mjs                             # encrypted drive, 50 MB lim
 node e2e/real-import.mjs                            # import preview and commit, plaintext export, round trip
 node e2e/real-disguise.mjs                          # app name and icon (writes a launcher entry in a temp XDG folder)
 node e2e/real-backup.mjs                            # backup targets against scripts/mock_s3.py
-node e2e/real-sync.mjs                              # two devices, pull and reconcile, no idle traffic
+node e2e/real-sync.mjs                              # two devices, pull and reconcile, the generator settings, no idle traffic
 node e2e/real-multi-s3.mjs                          # one primary and two secondary buckets on real S3-compatible servers (needs Docker)
 ```
 

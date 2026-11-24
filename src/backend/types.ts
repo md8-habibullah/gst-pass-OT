@@ -303,6 +303,23 @@ export interface GateConfigInput {
 export const LOCK_AFTER_MINUTES = [1, 5, 15, 30, 60, 240] as const;
 /** The "after leaving the app" choices, in seconds (0 = at once). */
 export const LOCK_AFTER_LEAVE_SECONDS = [0, 15, 30, 60, 300, 900, 1800, 3600, 14400] as const;
+/**
+ * The password generator's last settings. Kept sealed in the vault, copied to every backup target and picked up by the
+ * person's other devices, so the Generator page and the item editor open with what was chosen last.
+ */
+export interface GeneratorPrefs {
+  /** 4 to 128 (the slider offers 8 to 64). */
+  length: number;
+  lower: boolean;
+  upper: boolean;
+  digits: boolean;
+  symbols: boolean;
+  avoidAmbiguous: boolean;
+}
+/** What the vault remembers for the person. `generator` is `null` until something was saved. */
+export interface PrefsView {
+  generator: GeneratorPrefs | null;
+}
 export interface AppSettings {
   lockAfterMinutes: (typeof LOCK_AFTER_MINUTES)[number];
   /** Phones and tablets: how long the app may stay open after the person leaves it. */
@@ -453,6 +470,11 @@ export interface Backend {
   fileSaveCopy(id: string, password: string): Promise<{ path: string } | null>;
   disguiseGet(): Promise<DisguiseView>;
   disguiseSet(input: DisguiseInput): Promise<DisguiseView>;
+
+  /** The vault's own preferences (needs an open vault). */
+  prefsGet(): Promise<PrefsView>;
+  /** Remembers the generator's settings (4 to 128 characters, at least one character type) and queues them for every backup target. Saving what is already saved changes nothing. */
+  prefsSetGenerator(generator: GeneratorPrefs): Promise<PrefsView>;
 
   // device settings, the trusted clock and the demo vault
   deviceGet(): Promise<DeviceInfo>;

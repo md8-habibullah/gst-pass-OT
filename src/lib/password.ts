@@ -12,6 +12,23 @@ export interface GenOptions {
 
 export const DEFAULT_GEN: GenOptions = { length: 20, lower: true, upper: true, digits: true, symbols: true, avoidAmbiguous: true };
 
+/** The range the length slider offers. The core accepts 4 to 128; a saved value outside the slider's range is pulled into it. */
+export const GEN_LENGTH_MIN = 8;
+export const GEN_LENGTH_MAX = 64;
+
+/** At least one character type is on, which is what both the generator and the vault need before they accept the settings. */
+export const canGenerate = (o: Pick<GenOptions, "lower" | "upper" | "digits" | "symbols">): boolean => o.lower || o.upper || o.digits || o.symbols;
+
+/**
+ * The settings to show for what the vault remembered. Nothing saved, or something this app cannot use, means the defaults;
+ * a length outside the slider is moved to its nearest end so what is shown is what is generated.
+ */
+export function savedOrDefault(saved: GenOptions | null | undefined): GenOptions {
+  if (!saved || !canGenerate(saved)) return { ...DEFAULT_GEN };
+  const length = Number.isFinite(saved.length) ? Math.min(GEN_LENGTH_MAX, Math.max(GEN_LENGTH_MIN, Math.round(saved.length))) : DEFAULT_GEN.length;
+  return { length, lower: saved.lower, upper: saved.upper, digits: saved.digits, symbols: saved.symbols, avoidAmbiguous: saved.avoidAmbiguous };
+}
+
 const SETS = {
   lower: "abcdefghijklmnopqrstuvwxyz",
   upper: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",

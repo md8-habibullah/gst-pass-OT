@@ -2,6 +2,22 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-24, later still): the generator remembers its last settings
+
+**The request:** the generator always opened at 20 characters. A length the person chose (30, say) must show in every place next time, be stored in the database and sync.
+
+**Before:** `PasswordGenerator` started from `useState(DEFAULT_GEN)` on every mount, so the Generator page and the item editor both reset to 20 characters with every type on. Confirmed in the code, not guessed.
+
+**Built (uncommitted; the owner commits):** decision D31, contract `IPC_CONTRACT.md` §12, storage `STORAGE_AND_SYNC.md` §10 "Preferences that follow the vault".
+
+* Core: `storage/backup/prefs.rs` (new). One sealed document in the vault's `meta` table, replicated as `vault/meta/prefs.enc` through the existing `targets` outbox kind with the ref `prefs` (no migration), pulled with one `HEAD` per pass and a download only when the ETag changed, restored with the vault, newest write wins, unknown fields carried through, a copy that fails authentication never applied and replaced by this device's own, a copy a newer app wrote in an unreadable shape left alone. Commands `prefs_get` and `prefs_set_generator` (length 4 to 128, at least one character type; both need an open vault and are closed while the gate is closed).
+* Front end: `app.generator` in `state/app.ts` is the one set of settings; `PasswordGenerator` reads it, so the Generator page and the editor always agree (also while one is open and a pull changes it). A change is shown at once and saved 0.6 s after the last one, when the generator closes, and before a lock. Everything is reset when the vault closes or another account opens. All character types off is shown (as before) but not saved. The page text no longer says "Nothing is saved": a password is never saved, the settings are.
+* `PRIVACY.md` and the changelog say so.
+
+**Verified:** Rust library suite 861 passed, 0 failed, 2 ignored (863 in all; 20 of them are new, in `backup/tests/prefs_tests.rs`), `cargo fmt --check` and `clippy --all-targets -D warnings` clean; vitest 110 (new: `savedOrDefault`, `canGenerate`, the preview backend's rules); `tsc` and `npm run build` clean. End to end against the real core: `real-sync` 45/45 (new steps: starts at 20 and nothing sent; 30 characters without symbols kept a moment after the change; the editor opens at 30 with symbols off and a 30-character sample without symbols; the same after lock and unlock; unusable settings refused; `prefs.enc` in the bucket and sealed; device A takes them over; a newer change on A reaches the open page on B), `real-backup` 13/13, `run` 88/88.
+
+**Not verified:** a real S3 server or hosted provider with this object (the in-memory buckets cover strong, ignoring and header-refusing services; the mock S3 service covers the wire); a real phone or desktop window; two devices changing the setting in the same millisecond (the later stamp wins, the loser's change is simply replaced). `e2e/real-multi-s3.mjs` was not extended or re-run.
+
 ## Update (2026-11-24, later): releases publish themselves
 
 **Decision (the owner's):** no manual tagging and no draft to review. Raising the version on `main` is the release. `ci.yml` changed as follows; the details are in `BUILD_TARGETS.md` section 9 and `CONTRIBUTING.md` "Releases".

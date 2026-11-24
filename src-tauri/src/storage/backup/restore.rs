@@ -16,11 +16,12 @@
 //! a failure leaves nothing usable behind (the caller deletes the folder).
 
 use super::dbops;
+use super::prefs::PREFS_ID;
 use super::remote::{keys, ObjectStore, MAX_META_BYTES, MAX_OBJECT_BYTES};
 use super::replicator::BackupRuntime;
 use super::types::TargetConfig;
 use super::vault_ext::tombstone_envelope_id;
-use super::PENDING_TARGETS_META;
+use super::{PENDING_TARGETS_META, PREFS_META};
 use crate::crypto::{envelope, now_millis, VaultKeyBundle};
 use crate::storage::db::Store;
 use crate::storage::error::{Result, StorageError};
@@ -62,6 +63,7 @@ struct Listing {
     items: Vec<String>,
     versions: Vec<(String, u64, u64)>,
     has_targets: bool,
+    has_prefs: bool,
 }
 
 fn list_all(remote: &dyn ObjectStore) -> Result<Listing> {
@@ -70,6 +72,7 @@ fn list_all(remote: &dyn ObjectStore) -> Result<Listing> {
         items: Vec::new(),
         versions: Vec::new(),
         has_targets: false,
+        has_prefs: false,
     };
     let mut seen = 0usize;
     let mut token: Option<String> = None;
@@ -88,6 +91,8 @@ fn list_all(remote: &dyn ObjectStore) -> Result<Listing> {
                 out.versions.push((id.to_string(), n, ts));
             } else if e.key == keys::TARGETS {
                 out.has_targets = true;
+            } else if e.key == keys::PREFS {
+                out.has_prefs = true;
             }
         }
         match page.next_token {
@@ -181,6 +186,18 @@ pub fn restore_into(
                 if envelope::peek_header(&obj.bytes).is_ok_and(|h| h.item_id == "shared-targets") {
                     dbops::set_meta(&db.conn, PENDING_TARGETS_META, &B64.encode(&obj.bytes))?;
                     counts.shared_targets = true;
+                }
+            }
+        }
+
+        // The vault's preferences (generator settings). Kept as the sealed blob: it is opened, and
+        // authenticated, the first time the vault reads it, so a damaged copy only means defaults.
+        if listing.has_prefs {
+            if let Some(obj) = remote.get(keys::PREFS, MAX_META_BYTES)? {
+                if envelope::peek_header(&obj.bytes)
+                    .is_ok_and(|h| h.item_id == PREFS_ID && h.version > 0)
+                {
+                    dbops::set_meta(&db.conn, PREFS_META, &B64.encode(&obj.bytes))?;
                 }
             }
         }

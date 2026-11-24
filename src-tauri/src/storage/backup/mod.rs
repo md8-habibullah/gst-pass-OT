@@ -16,6 +16,7 @@
 
 pub mod dbops;
 pub mod files_sync;
+pub mod prefs;
 pub mod probe;
 pub mod pull;
 pub mod pull_apply;
@@ -37,6 +38,8 @@ mod tests;
 pub const SHARED_TARGETS_META: &str = "shared_targets";
 /// `meta` key: a snapshot downloaded by a restore, imported at the next unlock (base64).
 pub const PENDING_TARGETS_META: &str = "pending_targets";
+/// `meta` key: the sealed vault preferences this device holds (base64), see [`prefs`].
+pub const PREFS_META: &str = "prefs";
 
 pub use probe::{probe_config, ProbeReport};
 pub use pull::VaultLink;

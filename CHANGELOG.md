@@ -8,6 +8,10 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+### Added
+
+* **The password generator remembers your last settings.** Choose 30 characters (or switch symbols off) once; the Generator page and the item editor both open with that next time. The settings are kept inside your encrypted vault, copied to every backup target and picked up by your other devices on their next sync. The newest change wins. The generated passwords are still never stored.
+
 ## [0.2.0] - 2026-11-24
 
 Trusted time, a time zone chosen on the first page, a built-in demo vault, keyboard shortcuts, settings in pages and a calmer look, on top of the phone-QA fixes below.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { charClass, DEFAULT_GEN, estimateStrength, generatePassword, randomBelow, type Rng } from "./password";
+import { canGenerate, charClass, DEFAULT_GEN, estimateStrength, GEN_LENGTH_MAX, GEN_LENGTH_MIN, generatePassword, randomBelow, savedOrDefault, type Rng } from "./password";
 
 /** Deterministic rng that replays a fixed list of 32-bit values. */
 function replay(values: number[]) {
@@ -81,5 +81,38 @@ describe("charClass", () => {
     expect(charClass("é")).toBe("letter");
     expect(charClass("7")).toBe("digit");
     expect(charClass("#")).toBe("symbol");
+  });
+});
+
+describe("savedOrDefault", () => {
+  it("shows the defaults when nothing is saved", () => {
+    expect(savedOrDefault(null)).toEqual(DEFAULT_GEN);
+    expect(savedOrDefault(undefined)).toEqual(DEFAULT_GEN);
+    expect(DEFAULT_GEN.length).toBe(20);
+  });
+  it("shows what was saved, such as a length of 30", () => {
+    const saved = { length: 30, lower: true, upper: false, digits: true, symbols: false, avoidAmbiguous: false };
+    expect(savedOrDefault(saved)).toEqual(saved);
+  });
+  it("hands out a copy, never the object it was given", () => {
+    const saved = { ...DEFAULT_GEN, length: 30 };
+    expect(savedOrDefault(saved)).not.toBe(saved);
+    expect(savedOrDefault(null)).not.toBe(DEFAULT_GEN);
+  });
+  it("moves a length outside the slider to its nearest end", () => {
+    expect(savedOrDefault({ ...DEFAULT_GEN, length: 4 }).length).toBe(GEN_LENGTH_MIN);
+    expect(savedOrDefault({ ...DEFAULT_GEN, length: 128 }).length).toBe(GEN_LENGTH_MAX);
+    expect(savedOrDefault({ ...DEFAULT_GEN, length: Number.NaN }).length).toBe(DEFAULT_GEN.length);
+  });
+  it("falls back to the defaults when no character type is left on", () => {
+    expect(savedOrDefault({ ...DEFAULT_GEN, length: 30, lower: false, upper: false, digits: false, symbols: false })).toEqual(DEFAULT_GEN);
+  });
+});
+
+describe("canGenerate", () => {
+  it("needs at least one character type", () => {
+    expect(canGenerate(DEFAULT_GEN)).toBe(true);
+    expect(canGenerate({ lower: false, upper: false, digits: false, symbols: true })).toBe(true);
+    expect(canGenerate({ lower: false, upper: false, digits: false, symbols: false })).toBe(false);
   });
 });

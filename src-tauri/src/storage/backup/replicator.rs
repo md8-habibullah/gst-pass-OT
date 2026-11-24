@@ -324,17 +324,33 @@ fn execute(db: &Store, remote: &dyn ObjectStore, t: &RuntimeTarget, job: &Job) -
             Err(e) => local(e),
         },
         JobKind::Purge => purge_remote(db, remote, t, &job.target_ref),
-        JobKind::Targets => match db.meta(super::SHARED_TARGETS_META) {
-            Ok(Some(b64)) => match B64.decode(b64) {
-                Ok(blob) => {
-                    let version = envelope::peek_header(&blob).map_or(1, |h| h.version);
-                    push_envelope(db, remote, t, keys::TARGETS, &blob, version)
-                }
-                Err(_) => JobResult::Obsolete,
-            },
-            Ok(None) => JobResult::Obsolete,
-            Err(e) => local(e),
-        },
+        // The kind `targets` carries the vault's sealed meta objects: the shared-targets snapshot
+        // (empty ref, master only) and the preferences (ref `prefs`, every enabled target).
+        JobKind::Targets => {
+            let prefs = job.target_ref == super::prefs::PREFS_REF;
+            let (meta, key) = if prefs {
+                (super::PREFS_META, keys::PREFS)
+            } else {
+                (super::SHARED_TARGETS_META, keys::TARGETS)
+            };
+            match db.meta(meta) {
+                Ok(Some(b64)) => match B64.decode(b64) {
+                    Ok(blob) => {
+                        let version = envelope::peek_header(&blob).map_or(1, |h| h.version);
+                        let result = push_envelope(db, remote, t, key, &blob, version);
+                        // A preference is not worth an alarm: when the bucket holds a newer or
+                        // different copy, the pull adopts the newer one; nothing to merge by hand.
+                        match result {
+                            JobResult::Blocked(_) if prefs => JobResult::Obsolete,
+                            other => other,
+                        }
+                    }
+                    Err(_) => JobResult::Obsolete,
+                },
+                Ok(None) => JobResult::Obsolete,
+                Err(e) => local(e),
+            }
+        }
         JobKind::FileBlob | JobKind::FileMeta | JobKind::FilePurge => {
             super::files_sync::execute(db, remote, t, job)
         }
