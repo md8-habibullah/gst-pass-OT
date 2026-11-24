@@ -26,7 +26,13 @@ SITE_PORT=${SITE_PORT:-$(free_port)}; FILES_PORT=${FILES_PORT:-$(free_port)}
 
 WORK=$(mktemp -d)
 PIDS=()
-cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done; docker run --rm -v "$WORK:/w" ubuntu:22.04 chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+cleanup() {
+    for p in "${PIDS[@]:-}"; do
+        if [ -n "$p" ]; then kill "$p" 2>/dev/null || true; fi
+    done
+    docker run --rm -v "$WORK:/w" ubuntu:22.04 chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1 || true
+    rm -rf "$WORK"
+}
 trap cleanup EXIT
 
 # the release folder the "download" paths read: files + SHA256SUMS
