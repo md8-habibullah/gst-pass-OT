@@ -85,11 +85,26 @@ step("device B: restore from the bucket", async (p) => {
   check("vault_status carries the sync fields", typeof st.syncRevision === "number" && typeof st.reconciling === "boolean", JSON.stringify(st));
 });
 
+/** Waits until a device's own pull-on-unlock has finished (it runs on a worker thread after the unlock returns). */
+async function quiet(core, label, ms = 20000) {
+  const t0 = Date.now();
+  let still = 0;
+  while (Date.now() - t0 < ms) {
+    still = (await ok(core, "vault_status")).reconciling ? 0 : still + 1;
+    if (still >= 3) return;
+    await sleep(150);
+  }
+  check(`${label}: its own pull after the unlock finished`, false, JSON.stringify(await ok(core, "vault_status")));
+}
+
 step("fast-forward: A edits, B pulls on 'Back up now' and the list updates by itself", async (p) => {
+  // B's own pull-on-unlock must be over before A edits. On a slow machine it can still be running, find A's edit in the
+  // bucket and apply it by itself, so the counter has already moved when this step reads it (seen on a CI runner: 1 -> 1).
+  await quiet(B, "B");
+  const before = (await ok(B, "vault_status")).syncRevision;
   const id = await idOf(A, "GitHub");
   await edit(A, id, { top: { title: "GitHub (work)" }, fields: { password: "new-pass-after-edit-1" } });
   await settled(A, "A");
-  const before = (await ok(B, "vault_status")).syncRevision;
   await pullNow(p);
   await waitText(p, "GitHub (work)", 25000);
   check("B shows A's new title without a reload", true);
