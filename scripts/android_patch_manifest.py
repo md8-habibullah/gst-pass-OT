@@ -286,12 +286,50 @@ def find_main_activity_sources(project: Path) -> list[Path]:
     return out
 
 
+def resource_value(raw: str) -> str:
+    """What aapt makes of the text of a `<string>` resource, so that a copy of it shows the same words.
+
+    A double quote that is not escaped is a quoting mark, not part of the text: Tauri writes its app name as `"Hexis"`,
+    and the phone shows `Hexis`. Inside the quotes white space is kept; outside it is trimmed and runs collapse to one space.
+    A backslash escapes the next character (`\\n`, `\\t`, `\\'`, `\\"`, `\\@`, `\\?`, `\\\\`, `\\uXXXX`).
+    """
+    out: list[str] = []
+    quoted = False
+    gap = False  # white space outside quotes was seen: one space is owed before the next character
+    i = 0
+    while i < len(raw):
+        c = raw[i]
+        if c == "\\" and i + 1 < len(raw):
+            n = raw[i + 1]
+            if n == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", raw[i + 2 : i + 6]):
+                ch, i = chr(int(raw[i + 2 : i + 6], 16)), i + 6
+            else:
+                ch, i = {"n": "\n", "t": "\t"}.get(n, n), i + 2
+        elif c == '"':
+            quoted = not quoted
+            i += 1
+            continue
+        elif c.isspace() and not quoted:
+            gap = True
+            i += 1
+            continue
+        else:
+            ch, i = c, i + 1
+        if gap and out:
+            out.append(" ")
+        gap = False
+        out.append(ch)
+    return "".join(out)
+
+
 def app_label(layout: Layout) -> str:
     f = layout.res / "values" / "strings.xml"
     try:
         for s in ET.parse(f).getroot().iter("string"):
-            if s.get("name") == "app_name" and (s.text or "").strip():
-                return (s.text or "").strip().replace("\\'", "'").replace('\\"', '"')
+            if s.get("name") == "app_name":
+                value = resource_value(s.text or "")
+                if value.strip():
+                    return value
     except (OSError, ET.ParseError):
         pass
     return "Hexis"

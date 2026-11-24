@@ -8,6 +8,12 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
+Light and dark themes, the next one-time code, a clean uninstall that leaves nothing behind, and a password generator that remembers its settings.
+
+**Upgrading from 0.2.0:** `device.json` (next to the vaults) gains `theme` and `clipboardClear`, which older builds ignore. How long a copied secret stays on the clipboard starts at 30 seconds once, because it used to live in the window's own storage; set it again in Settings, Security. The cache files an older version let the window write into the data folder are removed when this version first starts. Vault files and S3 backups are unchanged. On Android, automatic backup is switched off for Hexis.
+
 ### Added
 
 * **The next one-time code.** Under the live code of a TOTP field, and on each tile of the Codes page, Hexis now shows the code that comes next (with a copy button), and on the item itself the one that just ended. Handy when a code is about to run out.
@@ -21,6 +27,10 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 * **The window keeps no cache, cookies or stored page data.** It runs without a persistent profile, and the two settings it used to keep (how long a copied secret stays on the clipboard, and the theme) are now in the app's own `device.json`. Files an older version let the window write into the data folder are removed when this version starts and when you erase. **Upgrading:** the clipboard time starts at 30 seconds once, because the old value lived in the window's storage.
 * **Android does not back up Hexis** (`allowBackup` off, no cloud backup, no device transfer), so a vault cannot be restored behind your back after a reinstall.
 * Erasing everything also removes the window's leftovers, and the erase and the removal share the same wipe.
+
+### Fixed
+
+* **The Android launcher showed the app name inside quotation marks** (`"Hexis"`). Tauri writes its app name with quoting marks that Android removes when it reads the file; the build that makes the icon-and-name choices copied them as text. The name is now copied the way Android reads it. Also fixed in the shell tests: an uninstall check that failed on Debian and Ubuntu, and a test that could fail by chance.
 
 ## [0.2.0] - 2026-11-24
 

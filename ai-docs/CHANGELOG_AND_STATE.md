@@ -12,7 +12,11 @@ Update this file after every major milestone. Newest entries first.
 
 (A fourth red job, the openSUSE Tumbleweed installer, was the openSUSE mirror being out of sync for a while; it passed on a re-run.)
 
-**Rules now written down** (`CONTRIBUTING.md`, "Before you push: what CI checks that your machine may not"): use CI's tool versions, not the newest local ones; run shell tests under dash and bash; never assert the absence of a short string in generated text; say exactly what was run, and run a cheap check instead of listing it as a gap.
+**A fifth problem, found by the owner on a phone: the launcher name had quotation marks.** `scripts/android_patch_manifest.py` copies the app's `app_name` into `app_label_original`. Tauri writes that name as `"Hexis"` (quoting marks, which aapt removes), the script copied the marks as text and then escaped them, so the launcher label read `"Hexis"` with quotes. The test fixture had the name without marks, so nothing failed. `resource_value()` now reads a string resource the way aapt does (unescaped quotes are quoting marks, white space outside them collapses, backslash escapes); four new tests, including one with Tauri's real form, and the script was run on a copy of the real generated project (`app_label_original` is now `Hexis`).
+
+**Why the new build was not on the Releases page as "Latest":** the version was still 0.2.0 and `v0.2.0` already had a tag, so CI built everything and replaced the rolling `Nightly (main, <sha>)` pre-release but, correctly, published no release. The version is now 0.3.0 (all files, `CHANGELOG.md` has a `[0.3.0]` section), so the next push of it tags and publishes `v0.3.0`.
+
+**Rules now written down** (`CONTRIBUTING.md`, "Before you push: what CI checks that your machine may not"): use CI's tool versions, not the newest local ones; run shell tests under dash and bash; never assert the absence of a short string in generated text; take test fixtures from what the real tool writes; say exactly what was run, and run a cheap check instead of listing it as a gap.
 
 **Changed to enforce them.** `scripts/verify_all.sh` runs `shellcheck` a second time in an `ubuntu:22.04` container (CI's version). New `scripts/check_installer_in_containers.sh` runs the installer and its container test in Debian 12, Ubuntu 22.04 and Fedora against the packages of the newest green CI run (tried: Debian 12 passes end to end). Verified after the fixes: Debian 12 and openSUSE Tumbleweed container runs pass with the real CI packages.
 

@@ -68,7 +68,10 @@ all avoidable, so each is now a rule:
    id, a UUID, a millisecond timestamp, a hash or base64 fails by chance, about once in fifty runs (`clone_is_password_gated_and_never_returns_secrets`
    did, on CI). Assert the structure instead (exact keys, exact values), and use `contains` only for strings long enough that a chance match is
    impossible (a full card number, a marker such as `SECRET-BANK-REF`).
-4. **Say exactly what was run.** "Verified" means it ran with CI's versions and shells. A tool that was newer than CI's, or a container that was not
+4. **A test fixture is a copy of what the real tool writes.** The Android label test used `<string name="app_name">Hexis</string>`, but Tauri
+   writes `"Hexis"` (with quoting marks that aapt removes), so the build copied the marks as text and the launcher showed `"Hexis"` with quotes
+   until a phone showed it. Take fixtures from a real generated project (`src-tauri/gen/android/...`), not from what you expect it to look like.
+5. **Say exactly what was run.** "Verified" means it ran with CI's versions and shells. A tool that was newer than CI's, or a container that was not
    started, is reported as "not run", and a cheap check is run instead of being listed as a gap. After a push, read the CI result (`gh run view`)
    and fix a red job before moving on.
 
@@ -127,14 +130,18 @@ A release is made by raising the version on `main`. Nobody tags or publishes by 
    with a suffix such as `0.3.0-rc1` is published as a pre-release.
 3. CI stops early, before building anything, if the versions in the three files differ or `CHANGELOG.md` has no section for
    the version. A push that does not raise the version is an ordinary build (it only refreshes the rolling `nightly`).
-4. To hold a release back, do not raise the version on `main`. To redo a release that was published by mistake and that nobody
+4. **Where the newest build is.** Every push to `main` builds every variant; when all jobs pass, the rolling **`Nightly (main, <sha>)`**
+   pre-release on the Releases page is replaced with that build (Linux packages and the Android APK). The release marked **Latest** is a
+   different thing: it moves only when the version is raised. If you pushed and *Latest* did not change, the version was not raised;
+   the new build is the nightly, and its commit is in its title.
+5. To hold a release back, do not raise the version on `main`. To redo a release that was published by mistake and that nobody
    has installed yet: `gh release delete vX.Y.Z --cleanup-tag --yes`, then `gh workflow run CI` (it publishes again from `main`).
    This rewrites a public release, so keep it for mistakes.
-5. The bundle identifier `dev.habibullah.hexis` is final (decision D9 in `ARCHITECTURE.md`): an Android `applicationId`
+6. The bundle identifier `dev.habibullah.hexis` is final (decision D9 in `ARCHITECTURE.md`): an Android `applicationId`
    cannot change once the app has been distributed, and the desktop data folder is named after it.
-6. The release description (install commands, downloads table with checksums, the changelog section) is written by
+7. The release description (install commands, downloads table with checksums, the changelog section) is written by
    `scripts/release_notes.py` from the `## [X.Y.Z] - date` section of `CHANGELOG.md`.
-7. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
+8. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
 
 ### Who can build and release an Android app
 

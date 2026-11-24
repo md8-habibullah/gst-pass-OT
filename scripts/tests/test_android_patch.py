@@ -378,6 +378,49 @@ class ResourceTests(Base):
         self.assertIn('<string name="app_label_at">\\@work</string>', text, "a leading @ would be a resource reference")
         ET.fromstring(text)  # well-formed
 
+    def test_the_label_is_what_the_phone_shows_not_the_quoting_marks_around_it(self):
+        # Tauri writes its app name as "Hexis" (with quoting marks, which aapt removes); copying them as text put quote
+        # marks around the name under the launcher icon.
+        write(self.res / "values" / "strings.xml", '<resources>\n    <string name="app_name">"Hexis"</string>\n    <string name="main_activity_title">"Hexis"</string>\n</resources>\n')
+        self.apply()
+        text = (self.res / "values" / "disguise_strings.xml").read_text(encoding="utf-8")
+        self.assertIn('<string name="app_label_original">Hexis</string>', text)
+        self.assertNotIn('\\"Hexis\\"', text)
+
+    def test_resource_value_follows_the_aapt_rules(self):
+        cases = {
+            '"Hexis"': "Hexis",
+            "Hexis": "Hexis",
+            '  Hexis  ': "Hexis",
+            '"My Vault"': "My Vault",
+            '"Hexis" Vault': "Hexis Vault",
+            'My   Vault': "My Vault",
+            '" padded "': " padded ",
+            '\\"Hexis\\"': '"Hexis"',
+            "It\\'s": "It's",
+            "Tom\\'s \\\"Tab\\\"": 'Tom\'s "Tab"',
+            "\\@home": "@home",
+            "a\\nb": "a\nb",
+            "caf\\u00e9": "caf\u00e9",
+            "back\\\\slash": "back\\slash",
+            '""': "",
+        }
+        for raw, want in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(apm.resource_value(raw), want)
+
+    def test_an_escaped_quote_in_the_app_name_stays_a_quote(self):
+        write(self.res / "values" / "strings.xml", '<resources><string name="app_name">\\"Hexis\\"</string></resources>')
+        self.apply()
+        text = (self.res / "values" / "disguise_strings.xml").read_text(encoding="utf-8")
+        self.assertIn('<string name="app_label_original">\\"Hexis\\"</string>', text, "a quote the author escaped is meant")
+
+    def test_an_empty_quoted_app_name_falls_back_to_the_product_name(self):
+        write(self.res / "values" / "strings.xml", '<resources><string name="app_name">""</string></resources>')
+        self.apply()
+        text = (self.res / "values" / "disguise_strings.xml").read_text(encoding="utf-8")
+        self.assertIn('<string name="app_label_original">Hexis</string>', text)
+
     def test_the_original_label_is_the_app_name(self):
         write(self.res / "values" / "strings.xml", '<resources><string name="app_name">My Vault &amp; Co</string></resources>')
         self.apply()
