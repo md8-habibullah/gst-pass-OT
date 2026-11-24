@@ -11,10 +11,12 @@ import { GeneratorView } from "../tools/GeneratorView";
 import { ImportView } from "../tools/ImportView";
 import { TrashDetail, TrashList } from "../trash/TrashPane";
 import { app, consumeUnlockMoment, select } from "../../state/app";
+import { useBackHandler } from "../../state/back";
 import { useStore } from "../../state/store";
 import { useLayout } from "../../lib/layout";
 import { FilesView } from "../files/FilesView";
 import { BottomNav, Fab, Rail, Sidebar } from "./Navigation";
+import { installShortcuts } from "./shortcuts";
 import { FILTER_TYPE, ITEM_FILTERS, WIDE_VIEWS } from "./nav";
 import type { Filter } from "../../state/app";
 
@@ -65,6 +67,8 @@ export function Shell() {
     return () => clearTimeout(t);
   }, [justUnlocked]);
 
+  useEffect(() => installShortcuts(), []);
+
   // Android back: the detail page is a history entry, so the system back gesture returns to the list.
   const pushed = useRef(false);
   useEffect(() => {
@@ -78,6 +82,7 @@ export function Shell() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const back = () => { if (pushed.current) history.back(); else select(null); };
+  useBackHandler(layout === "compact" && hasDetailPage, back);
 
   if (layout === "compact") {
     return (
@@ -91,11 +96,12 @@ export function Shell() {
           {hasDetailPage && (
             <motion.div
               key="detail-page"
+              data-compact-detail
               className="absolute inset-0 z-20 overflow-y-auto overscroll-contain bg-pane pt-[var(--safe-top)]"
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              transition={{ type: "spring", stiffness: 420, damping: 40 }}
+              transition={{ duration: 0.16, ease: [0.2, 0.8, 0.2, 1] }}
             >
               {trashMode ? <TrashDetail id={selectedId!} onBack={back} /> : <ItemDetail id={selectedId!} onBack={back} />}
             </motion.div>

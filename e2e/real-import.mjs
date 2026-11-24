@@ -1,7 +1,7 @@
 // Import and plaintext export against the REAL core, through the real Import and Export pages (native-picker seam).
 // With REAL_BW / REAL_ENTE set it also imports real vendor exports (read only, never copied into the project).
 import { readFileSync, existsSync, statSync, writeFileSync } from "node:fs";
-import { Core, SP, check, finish, freshDir, walkFiles, scanFor, modeOf, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, reprompt, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, scanFor, modeOf, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, reprompt, runSteps } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const DATA = freshDir("i-data"), SRC = freshDir("i-src"), OUT = freshDir("i-out");
 const core = new Core({ bin: BIN, data: DATA, port: 1447 });
@@ -29,7 +29,7 @@ async function chooseAndCheck(p, path, looksLike, ready) {
 }
 
 step("account, then the Import page is empty", async (p) => {
-  await p.goto(core.ui); await waitText(p, "Welcome to");
+  await p.goto(core.ui); await firstStart(p);
   await createAccount(p, "Marlowe", PW);
   await nav(p, "Import"); await waitText(p, "No file chosen");
   check("no file is chosen at first", true);

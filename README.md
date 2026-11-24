@@ -5,9 +5,10 @@
 **A zero-knowledge, post-quantum password manager that syncs to your own S3 storage: one bucket, or several at once.**
 Passwords, one-time codes, secure notes and an encrypted file drive live in a vault on your device. Add any
 S3-compatible storage (more than one if you like) and Hexis keeps sealed copies on all of them, so a lost phone or a
-lost provider loses nothing. No account, no server of ours, no telemetry of ours: every byte that leaves your device is
-ciphertext. (The one exception to "no telemetry" is Google's ML Kit inside the optional Android QR scanner; see
-[PRIVACY.md](PRIVACY.md).)
+lost provider loses nothing. No account, no server of ours, no telemetry of ours: every byte of your data that leaves
+your device is ciphertext. (Two things to know: the optional Android QR scanner uses Google's ML Kit, and the app can
+ask three large websites for the real time so a changed device clock cannot shorten a lock wait; you can switch that
+off. Both are in [PRIVACY.md](PRIVACY.md).)
 
 [Website](https://md8-habibullah.github.io/post-quantum-passman-gst/) · [CI runs](../../actions/workflows/ci.yml) · [MIT licensed](LICENSE) · [Privacy](PRIVACY.md) · [Security policy](SECURITY.md)
 
@@ -29,7 +30,8 @@ The webview never sees a key, a seed or a master-password hash.
   through **Argon2id** (64 MiB x 4 passes by default, configurable); items use **XChaCha20-Poly1305** with per-object HKDF sub-keys.
   Details and wire formats: [`CRYPTO_SPEC.md`](ai-docs/CRYPTO_SPEC.md).
 * **Offline first.** Everything works without a network and without any bucket; sync is something you add, not
-  something you need.
+  something you need. A first start opens a ready-made demo vault (its password is on the screen), so there is nothing
+  to set up before you look around.
 * **Quiet by design.** Sync runs on three triggers only: unlock, a saved change, and leaving the app. No timers, no
   background services, no notifications, no telemetry in Hexis's own code.
 * **Honest about limits.** The threat model says what is and is not protected. The optional Stage 1 gate is a privacy
@@ -44,7 +46,9 @@ The webview never sees a key, a seed or a master-password hash.
 | Accounts | Several independent vaults per device, each with its own master password and its own backup targets |
 | Encrypted drive | Files up to 50 MB, chunked and authenticated, attachable to items; screen capture blocked while one is open on Android |
 | Sync and backup | Several S3-compatible targets at once (a master plus mirrors) over HTTPS, single-writer replication, pull-and-reconcile at unlock, per-target health, restore into a new vault |
-| Gate and panic | Optional Stage 1 gate (PIN, password or number grid) behind a decoy maths screen, a panic credential, an attempt limit with wipe, idle lock |
+| Time | Every time is stored in UTC and shown in the time zone you pick on the first page (changeable in Settings). Lock waits are measured on a clock the device date cannot move, and, when the online check is on, on UTC read from public HTTPS servers |
+| Keyboard | About 30 shortcuts (`?` lists them): search, new item, go-to chords such as `g` then `c`, copy, edit, archive, trash. Settings is a list of pages on phones and a two-column layout on tablets and desktops |
+| Gate and panic | Optional Stage 1 gate (PIN, password or number grid) behind a decoy maths screen, a panic credential, 16 attempts with growing waits (1.5 minutes up to 3 days) and then a wipe, idle lock and lock after leaving the app |
 | Disguise | Rename and re-icon the app (11 presets plus your own title), including the launcher icon on Android |
 | Import | About 25 formats recognised by content, with a preview, duplicate handling and one all-or-nothing transaction (see below) |
 | Export | Encrypted archive, or a readable Bitwarden-compatible JSON/CSV copy after a master-password re-prompt |
@@ -147,8 +151,8 @@ npm run tauri android build -- --apk --target aarch64   # Android; see ai-docs/B
 ## Security in one page
 
 **Protects against:** theft of a locked device, a copied data folder, a copied or hostile S3 bucket, a "harvest now,
-decrypt later" quantum adversary, shoulder-surfing (the re-prompt guard hides secrets even while unlocked), and a
-forgotten unlocked app (idle lock).
+decrypt later" quantum adversary, shoulder-surfing (secrets stay hidden until you reveal them and hide again after 20 seconds; items you flag ask for the master
+password every time), and a forgotten unlocked app (idle lock, and on phones a lock after you leave the app).
 
 **Does not protect against:** malware or a debugger on an *unlocked* device, a weak master password, a provider that
 rolls objects back to older valid versions (partly mitigated), and traffic-pattern analysis.

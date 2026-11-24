@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldName, formatBytes, groupDigits, hueFor, monogram, plural, recencyGroup, relativeTime } from "./format";
+import { clockTime, exactTime, fieldName, formatBytes, formatCountdown, groupDigits, hueFor, idleLabel, leaveLabel, monogram, plural, recencyGroup, relativeTime, setDisplayZone, startOfDay, untilLabel } from "./format";
 import { ringFraction, ringTone, secondsLeft } from "./totp";
 
 const NOW = new Date("2026-06-15T12:00:00").getTime();
@@ -25,6 +25,49 @@ describe("recencyGroup", () => {
     expect(recencyGroup(NOW - 3 * DAY, NOW)).toBe("Last 7 days");
     expect(recencyGroup(NOW - 20 * DAY, NOW)).toBe("Last 30 days");
     expect(recencyGroup(NOW - 90 * DAY, NOW)).toBe("Older");
+  });
+});
+
+describe("display zone (stored times are UTC; the zone only changes how they are written)", () => {
+  const utc = Date.UTC(2026, 10, 24, 20, 30); // 2026-11-24 20:30 UTC
+  it("writes the same instant in the chosen zone", () => {
+    setDisplayZone("Asia/Dhaka"); // UTC+6, no daylight saving
+    expect(clockTime(utc)).toBe("02:30");
+    expect(exactTime(utc)).toContain("Nov 25, 2026");
+    setDisplayZone("America/New_York"); // UTC-5 in November
+    expect(clockTime(utc)).toBe("15:30");
+    expect(exactTime(utc)).toContain("Nov 24, 2026");
+    setDisplayZone("UTC");
+    expect(clockTime(utc)).toBe("20:30");
+    setDisplayZone(null);
+  });
+  it("starts a day at midnight in that zone, also across a daylight-saving change", () => {
+    setDisplayZone("Asia/Dhaka");
+    expect(startOfDay(utc)).toBe(Date.UTC(2026, 10, 24, 18, 0)); // Nov 25 00:00 in Dhaka
+    setDisplayZone("America/New_York");
+    expect(startOfDay(Date.UTC(2026, 2, 8, 20, 0))).toBe(Date.UTC(2026, 2, 8, 5, 0)); // the day the clocks go forward: midnight is still UTC-5
+    setDisplayZone(null);
+  });
+  it("buckets Today by the zone's calendar day", () => {
+    setDisplayZone("Asia/Dhaka");
+    // 19:00 UTC is already the next day in Dhaka (01:00), so 17:00 UTC the same day is "yesterday-ish" by the calendar
+    const now = Date.UTC(2026, 10, 24, 19, 0);
+    expect(recencyGroup(Date.UTC(2026, 10, 24, 17, 0), now)).toBe("Last 7 days");
+    expect(recencyGroup(Date.UTC(2026, 10, 24, 18, 30), now)).toBe("Today");
+    setDisplayZone(null);
+  });
+  it("says when a wait ends: the time today, the date and time later", () => {
+    setDisplayZone("UTC");
+    const now = Date.UTC(2026, 10, 24, 10, 0);
+    expect(untilLabel(Date.UTC(2026, 10, 24, 14, 35), now)).toBe("14:35");
+    expect(untilLabel(Date.UTC(2026, 10, 27, 14, 35), now)).toBe("Nov 27, 14:35");
+    setDisplayZone(null);
+  });
+  it("keeps the old zone when given a name it cannot use", () => {
+    setDisplayZone("UTC");
+    setDisplayZone("Not/AZone");
+    expect(clockTime(utc)).toBe("20:30");
+    setDisplayZone(null);
   });
 });
 
@@ -56,6 +99,36 @@ describe("small helpers", () => {
     expect(fieldName("totp")).toBe("One-time code");
     expect(fieldName("title")).toBe("Title");
     expect(fieldName("mystery")).toBe("mystery");
+  });
+});
+
+describe("lock countdown and labels", () => {
+  it("counts down in the shortest readable form and rounds up", () => {
+    expect(formatCountdown(90_000)).toBe("1:30");
+    expect(formatCountdown(89_001)).toBe("1:30");
+    expect(formatCountdown(1)).toBe("0:01");
+    expect(formatCountdown(59_000)).toBe("0:59");
+    expect(formatCountdown(45 * 60_000)).toBe("45:00");
+    expect(formatCountdown(8 * 3_600_000)).toBe("8:00:00");
+    expect(formatCountdown(3 * 86_400_000)).toBe("3 days 0:00:00");
+    expect(formatCountdown(86_400_000 + 3_661_000)).toBe("1 day 1:01:01");
+  });
+  it("is empty when there is nothing to wait for", () => {
+    expect(formatCountdown(0)).toBe("");
+    expect(formatCountdown(-5)).toBe("");
+    expect(formatCountdown(Number.NaN)).toBe("");
+  });
+  it("labels the lock choices in plain words", () => {
+    expect(leaveLabel(0)).toBe("Right away");
+    expect(leaveLabel(15)).toBe("15 seconds");
+    expect(leaveLabel(60)).toBe("1 minute");
+    expect(leaveLabel(900)).toBe("15 minutes");
+    expect(leaveLabel(3600)).toBe("1 hour");
+    expect(leaveLabel(14_400)).toBe("4 hours");
+    expect(idleLabel(1)).toBe("1 minute");
+    expect(idleLabel(30)).toBe("30 minutes");
+    expect(idleLabel(60)).toBe("1 hour");
+    expect(idleLabel(240)).toBe("4 hours");
   });
 });
 

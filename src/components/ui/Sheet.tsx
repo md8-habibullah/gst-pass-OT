@@ -2,7 +2,10 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { X } from "lucide-react";
+import { useKeyboardInset } from "../../lib/keyboard";
 import { useLayout } from "../../lib/layout";
+import { useBackHandler } from "../../state/back";
+import { DUR, tween } from "../../lib/motion";
 import { IconButton } from "./Button";
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -49,7 +52,7 @@ export interface SheetProps {
 }
 
 const WIDTH = { sm: "w-[min(26rem,100vw)]", md: "w-[min(32rem,100vw)]", lg: "w-[min(42rem,100vw)]" } as const;
-const SPRING = { type: "spring", stiffness: 420, damping: 38 } as const;
+const SLIDE = tween(DUR.slow);
 
 export function Sheet({ open, onClose, title, children, footer, variant = "form", size = "md", level = 1, dismissible = true, titleIcon }: SheetProps) {
   const layout = useLayout();
@@ -58,6 +61,10 @@ export function Sheet({ open, onClose, title, children, footer, variant = "form"
   const panel = useRef<HTMLDivElement>(null);
   const drag = useDragControls();
   useFocusTrap(panel, open);
+  // The Android Back button closes the sheet (unless it cannot be dismissed right now, in which case Back does nothing).
+  useBackHandler(open, () => { if (dismissible) onClose(); });
+  // A bottom sheet sits above the keyboard, never behind it, and never reaches up under the status bar.
+  const keyboard = useKeyboardInset();
 
   useEffect(() => {
     if (!open || !dismissible) return;
@@ -71,28 +78,33 @@ export function Sheet({ open, onClose, title, children, footer, variant = "form"
 
   const shell =
     place === "bottom"
-      ? "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-xl pb-[var(--safe-bottom)]"
+      ? "inset-x-0 bottom-0 rounded-t-xl pb-[var(--safe-bottom)]"
       : place === "right"
         ? `inset-y-0 right-0 ${WIDTH[size]} rounded-l-xl pt-[var(--safe-top)]`
         : `left-1/2 top-1/2 max-h-[86dvh] ${WIDTH[size]} rounded-xl`;
+
+  const bottomStyle =
+    place === "bottom"
+      ? { bottom: keyboard, maxHeight: `calc(100dvh - var(--safe-top) - 0.75rem - ${keyboard}px)` }
+      : undefined;
 
   const motionProps =
     place === "bottom"
       ? { initial: { y: "100%" }, animate: { y: 0 }, exit: { y: "100%" } }
       : place === "right"
         ? { initial: { x: "100%" }, animate: { x: 0 }, exit: { x: "100%" } }
-        : { initial: { opacity: 0, scale: 0.96, x: "-50%", y: "-46%" }, animate: { opacity: 1, scale: 1, x: "-50%", y: "-50%" }, exit: { opacity: 0, scale: 0.97, x: "-50%", y: "-48%" } };
+        : { initial: { opacity: 0, x: "-50%", y: "-48%" }, animate: { opacity: 1, x: "-50%", y: "-50%" }, exit: { opacity: 0, x: "-50%", y: "-50%" } };
 
   return createPortal(
     <AnimatePresence>
       {open && (
         <div className={`fixed inset-0 ${z}`}>
           <motion.div
-            className="absolute inset-0 bg-marine/70 backdrop-blur-[3px]"
+            className="absolute inset-0 bg-marine/70"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={tween(DUR.base)}
             onClick={dismissible ? onClose : undefined}
             aria-hidden
           />
@@ -102,9 +114,10 @@ export function Sheet({ open, onClose, title, children, footer, variant = "form"
             aria-modal="true"
             aria-labelledby={titleId}
             tabIndex={-1}
-            className={`glass-strong absolute flex flex-col overflow-hidden ${shell}`}
+            className={`surface-float absolute flex flex-col overflow-hidden ${shell}`}
+            style={bottomStyle}
             {...motionProps}
-            transition={place === "center" ? { duration: 0.2, ease: [0.2, 0.8, 0.2, 1] } : SPRING}
+            transition={place === "center" ? tween(DUR.base) : SLIDE}
             {...(place === "bottom" && dismissible
               ? {
                   drag: "y" as const,

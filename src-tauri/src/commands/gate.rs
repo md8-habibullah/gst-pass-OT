@@ -78,13 +78,24 @@ pub async fn gate_configure(
     run(&state, move |c| c.gate_configure(input)).await
 }
 
+/// A long sum for the last confirmation of "erase everything". The answer stays in the core.
+#[tauri::command]
+pub async fn app_reset_challenge(state: State<'_, AppState>) -> CmdResult<String> {
+    run(&state, |c| Ok(c.app_reset_challenge())).await
+}
+
 /// The manual "erase this device". `confirmed_steps` is the number of confirmations the person
 /// went through; anything but exactly 3 is refused. Taken as a loose JSON value so that every
 /// wrong value (a string, a negative number, a fraction) is `invalid_input`, not a decoding error.
+/// `answer` is the answer to the sum from `app_reset_challenge`; a wrong one is `wrong_answer`.
 #[tauri::command]
-pub async fn app_reset(state: State<'_, AppState>, confirmed_steps: Value) -> CmdResult<()> {
+pub async fn app_reset(
+    state: State<'_, AppState>,
+    confirmed_steps: Value,
+    answer: Option<String>,
+) -> CmdResult<()> {
     run(&state, move |c| match confirmed_steps.as_u64() {
-        Some(n) => c.app_reset(n),
+        Some(n) => c.app_reset(n, answer.as_deref().unwrap_or("")),
         None => Err(StorageError::invalid(
             "Confirm all three steps to erase this device.",
         )),
@@ -110,6 +121,26 @@ pub async fn app_settings_set(
 pub async fn activity_ping(state: State<'_, AppState>) -> CmdResult<()> {
     run(&state, |c| {
         c.activity_ping();
+        Ok(())
+    })
+    .await
+}
+
+/// The app went to the background (phones and tablets). See `GateCore::app_leave`.
+#[tauri::command]
+pub async fn app_leave(state: State<'_, AppState>) -> CmdResult<()> {
+    run(&state, |c| {
+        c.app_leave();
+        Ok(())
+    })
+    .await
+}
+
+/// The app is back on screen. See `GateCore::app_return`.
+#[tauri::command]
+pub async fn app_return(state: State<'_, AppState>) -> CmdResult<()> {
+    run(&state, |c| {
+        c.app_return();
         Ok(())
     })
     .await

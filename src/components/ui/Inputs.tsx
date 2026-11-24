@@ -1,4 +1,4 @@
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { motion } from "motion/react";
 
 const base =
@@ -55,6 +55,15 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
   },
 );
 
+/** A native drop-down (on a phone it opens the system picker). Same look as the text field, as wide as its longest choice. */
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className = "", children, ...rest }, ref) {
+  return (
+    <select ref={ref} className={`${base} w-auto min-w-40 cursor-pointer border-hairline pr-8 ${className}`} {...rest}>
+      {children}
+    </select>
+  );
+});
+
 export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement> & { mono?: boolean }>(
   function TextArea({ className = "", mono, ...rest }, ref) {
     return (
@@ -79,7 +88,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
       className={`relative h-6 w-10 shrink-0 rounded-full border transition-colors pointer-coarse:h-7 pointer-coarse:w-12 ${checked ? "border-brass/60 bg-brass/25" : "border-hairline bg-raised"}`}
     >
       <span
-        className={`absolute top-1/2 left-0.5 size-4.5 -translate-y-1/2 rounded-full shadow-e2 transition-[translate,background-color] duration-200 ease-out pointer-coarse:size-5.5 ${checked ? "translate-x-4.5 bg-brass pointer-coarse:translate-x-5.5" : "translate-x-0 bg-mist"}`}
+        className={`absolute top-1/2 left-0.5 size-4.5 -translate-y-1/2 rounded-full shadow-e2 transition-[translate,background-color] duration-100 ease-out pointer-coarse:size-5.5 ${checked ? "translate-x-4.5 bg-brass pointer-coarse:translate-x-5.5" : "translate-x-0 bg-mist"}`}
       />
     </button>
   );
@@ -108,7 +117,7 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(o.value)}
             className={`relative z-10 min-h-8 rounded-[6px] px-3.5 text-[0.93em] font-medium transition-colors pointer-coarse:min-h-11 ${on ? "text-frost" : "text-mist hover:text-frost"}`}
           >
-            {on && <motion.span layoutId={`seg-${group}`} className="absolute inset-0 -z-10 rounded-[6px] bg-hover shadow-e2" transition={{ type: "spring", stiffness: 520, damping: 40 }} />}
+            {on && <motion.span layoutId={`seg-${group}`} className="absolute inset-0 -z-10 rounded-[6px] bg-hover" transition={{ duration: 0.12, ease: [0.2, 0.8, 0.2, 1] }} />}
             {o.label}
           </button>
         );

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
+import { DUR, tween } from "../../lib/motion";
 import { ArrowLeft, ChevronRight, CloudDownload, Eye, EyeOff, FileLock2, Plus, ShieldPlus, UsersRound } from "lucide-react";
 import { BackendError } from "../../backend";
 import { relativeTime } from "../../lib/format";
-import { app, be, enterApp, selectProfile, showPicker, unlock } from "../../state/app";
+import { app, be, enterApp, isLabelledDemo, openDemo, selectProfile, showPicker, unlock } from "../../state/app";
 import { brand } from "../../state/brand";
 import { useStore } from "../../state/store";
 import { setLockIntent, ui, type LockFlow } from "../../state/ui";
@@ -12,6 +13,7 @@ import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { CreateFlow } from "./CreateFlow";
 import { ImportFlow, RestoreFlow } from "./JoinFlows";
+import { Door, DoorCard } from "./Door";
 import { VaultMark } from "./VaultMark";
 
 type Flow = LockFlow | null;
@@ -27,8 +29,8 @@ function AddChoices({ onChoose, first }: { onChoose: (f: LockFlow) => void; firs
   return (
     <div className="flex flex-col gap-2.5">
       {rows.map((r, i) => (
-        <button key={r.flow} type="button" onClick={() => onChoose(r.flow)} className={`pressable group flex items-center gap-4 rounded-lg border px-4 py-3.5 text-left shadow-e1 pointer-coarse:py-4 ${first && i === 0 ? "border-brass/40 bg-brass/10 hover:bg-brass/15" : "border-hairline bg-raised hover:bg-hover"}`}>
-          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane text-brass shadow-e1">{r.icon}</span>
+        <button key={r.flow} type="button" onClick={() => onChoose(r.flow)} className={`pressable group flex items-center gap-4 rounded-lg border px-4 py-3.5 text-left pointer-coarse:py-4 ${first && i === 0 ? "border-hairline-strong bg-raised hover:bg-hover" : "border-hairline bg-pane hover:bg-raised"}`}>
+          <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-marine text-brass">{r.icon}</span>
           <span className="min-w-0 flex-1">
             <span className="block font-semibold">{r.title}</span>
             <span className="block text-[0.93em] text-mist">{r.text}</span>
@@ -42,16 +44,17 @@ function AddChoices({ onChoose, first }: { onChoose: (f: LockFlow) => void; firs
 
 function Picker({ onAdd }: { onAdd: () => void }) {
   const profiles = useStore(app, (s) => s.profiles);
+  const device = useStore(app, (s) => s.device);
   return (
     <div className="flex flex-col gap-3">
       <ul className="flex flex-col gap-1.5" aria-label="Accounts">
         {profiles.map((p) => (
           <li key={p.id}>
-            <button type="button" onClick={() => void selectProfile(p.id)} className="pressable flex min-h-16 w-full items-center gap-3.5 rounded-lg border border-hairline bg-raised px-3.5 text-left shadow-e1 hover:bg-hover">
+            <button type="button" onClick={() => void selectProfile(p.id)} className="pressable flex min-h-16 w-full items-center gap-3.5 rounded-lg border border-hairline bg-raised px-3.5 text-left hover:bg-hover">
               <Avatar title={p.displayName} size={42} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{p.displayName}</span>
-                <span className="block text-[0.86em] text-mist">{p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</span>
+                <span className="block text-[0.86em] text-mist">{isLabelledDemo(device, p) ? "Demo vault. Opens without a password." : p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</span>
               </span>
               <ChevronRight className="size-4 shrink-0 text-fog" aria-hidden />
             </button>
@@ -118,7 +121,19 @@ function UnlockForm({ busyExternal, onUnlocked }: { busyExternal: boolean; onUnl
   );
 }
 
-/** The lock screen: first run, account chooser, unlock, and the flows that add an account. Plays the unlock moment. */
+/** Opens the built-in vault: no password is asked, because the vault holds nothing real. A failure shows the normal form. */
+function DemoOpening({ onOpened, onFail }: { onOpened: () => void; onFail: () => void }) {
+  const profile = useStore(app, (s) => s.profile);
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    openDemo().then(onOpened, onFail);
+  }, [onOpened, onFail]);
+  return <p className="py-4 text-center text-mist" role="status">Opening {profile?.displayName ?? "your vault"}</p>;
+}
+
+/** The lock screen: accounts, unlock, and the flows that add an account. Plays the unlock moment. */
 export function LockScreen() {
   const brandName = useStore(brand, (b) => b.name);
   const phase = useStore(app, (s) => s.phase);
@@ -127,6 +142,7 @@ export function LockScreen() {
   const [flow, setFlow] = useState<Flow>(() => { const i = ui.get().lockIntent; return i === "choose" ? null : i; });
   const [adding, setAdding] = useState(() => ui.get().lockIntent === "choose");
   const [opening, setOpening] = useState(false);
+  const [demoFailed, setDemoFailed] = useState(false);
 
   // "Add account" elsewhere in the app asks the lock screen to start a flow.
   useEffect(() => {
@@ -138,73 +154,76 @@ export function LockScreen() {
   useEffect(() => {
     if (phase === "locked") { setFlow(null); setAdding(false); }
   }, [phase, profile?.id]);
+  useEffect(() => setDemoFailed(false), [profile?.id]);
 
-  /** The unlock moment: the ring completes, the card recedes, then the app rises in. */
-  function finish() {
+  /** The unlock moment: the mark closes, the card fades, then the app is there. */
+  const finish = useCallback(() => {
     setOpening(true);
-    window.setTimeout(enterApp, 430);
-  }
+    window.setTimeout(enterApp, 200);
+  }, []);
+  const failDemo = useCallback(() => setDemoFailed(true), []);
 
+  const demoUnlock = phase === "locked" && !flow && profile?.demo === true && !demoFailed;
   const heading =
     flow === "create" ? { title: "Create your vault", text: "Your master password protects everything. It never leaves this device and cannot be recovered." }
     : flow === "import" || flow === "restore" ? null
-    : phase === "welcome" ? { title: `Welcome to ${brandName}`, text: "Your passwords, codes and notes, encrypted on this device. Start with a new vault, or bring an existing one." }
+    : phase === "welcome" ? { title: "Add a vault", text: `Start with a new vault, or bring one you already have into ${brandName}.` }
     : phase === "picker" && adding ? { title: "Add an account", text: "Each account is its own vault with its own master password." }
     : phase === "picker" ? { title: "Choose an account", text: "Each account is its own vault with its own master password." }
+    : demoUnlock ? { title: profile?.displayName ?? brandName, text: "" }
     : { title: profile?.displayName ?? brandName, text: "Your vault is locked." };
   const wide = flow === "restore";
   const unlockView = phase === "locked" && !flow;
 
   return (
-    <main className="h-dvh overflow-y-auto overscroll-contain">
-      <div className="grid min-h-full place-items-center px-4 pt-[calc(1.5rem+var(--safe-top))] pb-[calc(1.5rem+var(--safe-bottom))]">
-        <motion.div
-          className={`w-full ${wide ? "max-w-[34rem]" : "max-w-[26rem]"}`}
-          initial={{ opacity: 0, y: 14 }}
-          animate={opening ? { opacity: 0, scale: 0.97, y: 0, transition: { delay: 0.24, duration: 0.2 } } : { opacity: 1, scale: 1, y: 0, transition: { duration: 0.34, ease: [0.2, 0.8, 0.2, 1] } }}
-        >
-          <div className="glass-strong rounded-xl px-6 pt-8 pb-7 pointer-coarse:px-7">
-            <div className="mb-6 flex flex-col items-center gap-4 text-center">
-              {unlockView && profile ? (
-                <div className="relative">
-                  <Avatar title={profile.displayName} size={68} />
-                  <span className="absolute -right-2 -bottom-2 rounded-full bg-marine p-1"><VaultMark size={26} open={opening} /></span>
-                </div>
-              ) : (
-                <VaultMark size={68} open={opening} />
-              )}
-              {heading && (
-                <div>
-                  <h1 className="font-display text-[2rem] leading-[1.12] font-semibold tracking-[-0.01em] break-words">{heading.title}</h1>
-                  <p className="mx-auto mt-2 max-w-[22rem] text-mist">{heading.text}</p>
-                </div>
-              )}
-            </div>
-
-            {flow === "create" ? (
-              <CreateFlow onBack={() => setFlow(null)} onCreated={() => undefined} onFinish={finish} />
-            ) : flow === "import" ? (
-              <ImportFlow onBack={() => setFlow(null)} onDone={() => setFlow(null)} />
-            ) : flow === "restore" ? (
-              <RestoreFlow onBack={() => setFlow(null)} onDone={() => setFlow(null)} />
-            ) : phase === "welcome" ? (
-              <AddChoices first onChoose={setFlow} />
-            ) : phase === "picker" && adding ? (
-              <div className="flex flex-col gap-3">
-                <AddChoices first={false} onChoose={setFlow} />
-                <Button variant="ghost" icon={<ArrowLeft className="size-4" />} onClick={() => setAdding(false)}>Back to accounts</Button>
+    <Door wide={wide}>
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={opening ? { opacity: 0, transition: tween(DUR.base) } : { opacity: 1, y: 0, transition: tween(DUR.slow) }}
+      >
+        <DoorCard>
+          <div className="mb-6 flex flex-col items-center gap-4 text-center">
+            {unlockView && profile ? (
+              <div className="relative">
+                <Avatar title={profile.displayName} size={68} />
+                <span className="absolute -right-2 -bottom-2 rounded-full bg-marine p-1"><VaultMark size={26} open={opening} /></span>
               </div>
-            ) : phase === "picker" ? (
-              <Picker onAdd={() => setAdding(true)} />
             ) : (
-              <UnlockForm busyExternal={opening} onUnlocked={finish} />
+              <VaultMark size={64} open={opening} />
+            )}
+            {heading && (
+              <div>
+                <h1 className="font-display text-[1.9rem] leading-[1.15] font-medium tracking-[-0.01em] break-words">{heading.title}</h1>
+                {heading.text && <p className="mx-auto mt-2 max-w-[22rem] text-mist">{heading.text}</p>}
+              </div>
             )}
           </div>
-          {import.meta.env.DEV && be().kind === "preview" && (
-            <p className="mt-4 text-center text-[0.8em] text-fog">Preview backend: in-memory demo data, not secure. Password: preview-vault-1.</p>
+
+          {flow === "create" ? (
+            <CreateFlow onBack={() => setFlow(null)} onCreated={() => undefined} onFinish={finish} />
+          ) : flow === "import" ? (
+            <ImportFlow onBack={() => setFlow(null)} onDone={() => setFlow(null)} />
+          ) : flow === "restore" ? (
+            <RestoreFlow onBack={() => setFlow(null)} onDone={() => setFlow(null)} />
+          ) : phase === "welcome" ? (
+            <AddChoices first onChoose={setFlow} />
+          ) : phase === "picker" && adding ? (
+            <div className="flex flex-col gap-3">
+              <AddChoices first={false} onChoose={setFlow} />
+              <Button variant="ghost" icon={<ArrowLeft className="size-4" />} onClick={() => setAdding(false)}>Back to accounts</Button>
+            </div>
+          ) : phase === "picker" ? (
+            <Picker onAdd={() => setAdding(true)} />
+          ) : demoUnlock ? (
+            <DemoOpening onOpened={finish} onFail={failDemo} />
+          ) : (
+            <UnlockForm busyExternal={opening} onUnlocked={finish} />
           )}
-        </motion.div>
-      </div>
-    </main>
+        </DoorCard>
+        {import.meta.env.DEV && be().kind === "preview" && (
+          <p className="mt-4 text-center text-[0.8em] text-fog">Preview backend: in-memory demo data, not secure. Password: preview-vault-1.</p>
+        )}
+      </motion.div>
+    </Door>
   );
 }

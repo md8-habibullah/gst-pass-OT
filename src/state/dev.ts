@@ -1,7 +1,7 @@
 // DEV-ONLY deep links for design review and screenshots. Active only with the in-memory preview backend
 // in a development browser; the whole module is dropped from production builds (see App.tsx).
 import { PREVIEW_PASSWORD, gate, seedPreview, simulateOtherDeviceEdit } from "../backend/mock";
-import { app, be, enterApp, refreshGate, refreshProfiles, select, selectProfile, setFilter, showPicker, syncAfterCoreLock, unlock, visibleItems, type Filter } from "./app";
+import { app, be, enterApp, refreshDevice, refreshGate, refreshProfiles, select, selectProfile, setFilter, showPicker, syncAfterCoreLock, unlock, visibleItems, type Filter } from "./app";
 import { setBrand } from "./brand";
 import { reprompt } from "../components/reprompt/Reprompt";
 import { openEditor, openNewItem } from "./ui";
@@ -15,6 +15,7 @@ export async function devBootstrap(): Promise<void> {
   const mode = q.get("vault");
   if (!mode) return;
   await seedPreview();
+  await refreshDevice(); // the seed marks the device as set up, which boot() had not seen yet
   await refreshProfiles();
   const disguiseId = q.get("disguise");
   if (disguiseId) setBrand(await be().disguiseSet({ presetId: disguiseId, customName: null, lowercase: q.get("lower") === "1" }));

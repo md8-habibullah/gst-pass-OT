@@ -58,7 +58,7 @@ export function PinPad({
     <div className="flex flex-col items-center gap-6">
       <div key={shake} className={`flex gap-3.5 ${shake > 0 ? "animate-shake" : ""}`} role="img" aria-label={`${pin.length} of ${LENGTH} digits entered`}>
         {Array.from({ length: LENGTH }, (_, i) => (
-          <span key={i} className={`size-3 rounded-full border transition-all duration-150 ${i < pin.length ? "scale-110 border-brass bg-brass" : "border-mist/50"}`} />
+          <span key={i} className={`size-3 rounded-full border transition-colors duration-100 ${i < pin.length ? "scale-110 border-brass bg-brass" : "border-mist/50"}`} />
         ))}
       </div>
       <p role="alert" className="h-5 text-[0.9em] text-ember">{error}</p>

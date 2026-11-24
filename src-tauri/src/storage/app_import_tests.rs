@@ -188,6 +188,7 @@ fn draft(item_type: ItemType, title: &str, fields: &[(&str, &str)]) -> ItemDraft
         item_type,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: fields
@@ -413,7 +414,7 @@ fn a_preview_changes_nothing_and_a_commit_adds_everything_with_history() {
     let h = fx.app.history_list(&id).unwrap();
     assert_eq!(h.len(), 1);
     assert_eq!(h[0].event, ItemEvent::Created);
-    let d = fx.app.item_reveal(&id, PW.into()).unwrap();
+    let d = fx.app.item_reveal(&id, Some(PW.into())).unwrap();
     assert_eq!(d.fields["password"], "pw-one");
     assert_eq!(d.fields["notes"], "two\nlines");
     assert_eq!(d.fields["url"], "https://github.com/login");
@@ -522,13 +523,13 @@ fn append_version_adds_a_version_only_when_the_content_differs() {
     assert_eq!(h[0].event, ItemEvent::Edited);
     assert_eq!(h[0].changed_fields, vec!["password"]);
     assert_eq!(fx.app.history_list(&news).unwrap().len(), 1);
-    let now = fx.app.item_reveal(&github, PW.into()).unwrap();
+    let now = fx.app.item_reveal(&github, Some(PW.into())).unwrap();
     assert_eq!(now.fields["password"], "pw-two");
     assert_eq!(
         now.fields["notes"], "two\nlines",
         "what the file lacks is kept"
     );
-    let old = fx.app.history_get(&github, 1, PW.into()).unwrap();
+    let old = fx.app.history_get(&github, 1, Some(PW.into())).unwrap();
     assert_eq!(old.fields["password"], "pw-one");
     assert_eq!(
         fx.queued(),
@@ -1299,7 +1300,9 @@ fn export_from_one_account_imports_into_another_unchanged() {
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let mut got = Vec::new();
     for s in fx.app.item_list().unwrap() {
-        got.push(canonical(fx.app.item_reveal(&s.id, PW2.into()).unwrap()));
+        got.push(canonical(
+            fx.app.item_reveal(&s.id, Some(PW2.into())).unwrap(),
+        ));
     }
     let mut want: Vec<ItemDraft> = all_types().into_iter().map(canonical).collect();
     got.sort_by(|a, b| a.title.cmp(&b.title));

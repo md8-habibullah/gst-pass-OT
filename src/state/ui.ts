@@ -10,12 +10,21 @@ export type EditorRequest =
 export type LockFlow = "create" | "import" | "restore";
 export type LockIntent = LockFlow | "choose";
 
+/** The pages of Settings. `null` is the list of categories (a phone) or the first page (a wide screen). */
+export type SettingsPageId = "security" | "applock" | "accounts" | "time" | "appearance" | "data" | "help" | "about";
+
 export interface UiState {
   editor: EditorRequest | null;
   lockIntent: LockIntent | null;
+  /** The keyboard shortcut overlay ("?"). */
+  shortcutsOpen: boolean;
+  settingsPage: SettingsPageId | null;
 }
 
-export const ui = createStore<UiState>({ editor: null, lockIntent: null });
+export const ui = createStore<UiState>({ editor: null, lockIntent: null, shortcutsOpen: false, settingsPage: null });
+
+export const setShortcutsOpen = (shortcutsOpen: boolean) => ui.set((s) => ({ ...s, shortcutsOpen }));
+export const setSettingsPage = (settingsPage: SettingsPageId | null) => ui.set((s) => ({ ...s, settingsPage }));
 
 export const setLockIntent = (lockIntent: LockIntent | null) => ui.set((s) => ({ ...s, lockIntent }));
 

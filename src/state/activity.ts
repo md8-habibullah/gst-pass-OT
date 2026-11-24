@@ -1,5 +1,6 @@
 import { nativeUiOpen } from "../lib/nativeUi";
-import { app, be, lockApp, lockVault, syncAfterCoreLock } from "./app";
+import { isMobileShell } from "../lib/platform";
+import { be, syncAfterCoreLock } from "./app";
 
 const PING_EVERY_MS = 10_000;
 const WATCH_EVERY_MS = 8_000;
@@ -32,28 +33,29 @@ export function watchActivity(): () => void {
   timer = window.setTimeout(() => { void look(); }, RECONCILE_WATCH_MS); // the pull starts at unlock: look soon
   const onFocus = () => { void look(); };
   window.addEventListener("focus", onFocus);
-  // Phones: when the app goes to the background, (1) ask the core to send whatever is still queued (one of the three
-  // sync triggers; bounded to a few seconds, and the queue is durable, so nothing is lost if the system stops us) and
-  // (2) lock: the keys are zeroized and the next visit needs the master password again. A native picker or the camera
-  // on top of the app is not "leaving", so it is excluded.
-  const onHide = () => {
-    if (document.visibilityState !== "hidden" || nativeUiOpen()) return;
-    void (async () => {
-      await be().syncFlush().catch(() => undefined);
-      if (document.visibilityState !== "hidden" || nativeUiOpen()) return;
-      const phase = app.get().phase;
-      const gateOn = app.get().gate?.enabled === true;
-      // Stage 1 closes too, also from the account list or the password prompt (no vault open there).
-      if (phase === "ready") await (gateOn ? lockApp() : lockVault()).catch(() => undefined);
-      else if (gateOn && (phase === "picker" || phase === "locked" || phase === "welcome")) await lockApp().catch(() => undefined);
-    })();
+  // Phones: when the app goes to the background the core starts its own "after leaving the app" timer (Settings, App
+  // lock; 5 minutes unless changed). When it runs out the core wipes the keys and closes Stage 1, whether or not this
+  // page is still running by then. "Right away" does that at once. The first call goes out before anything else, so
+  // nothing depends on the page staying alive. Then whatever is still queued for the backups is sent (one of the sync
+  // triggers; bounded to a few seconds, and the queue is durable, so nothing is lost if the system stops us).
+  // When the app comes back, the core locks now if the time ran out, and the screen follows. A native picker or the
+  // camera on top of the app is not "leaving", so it is excluded (see lib/nativeUi.ts).
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") {
+      if (nativeUiOpen()) return;
+      void be().appLeave().catch(() => undefined).then(() => syncAfterCoreLock()).catch(() => undefined);
+      void be().syncFlush().catch(() => undefined);
+    } else {
+      void be().appReturn().catch(() => undefined).then(() => syncAfterCoreLock()).catch(() => undefined);
+      ping();
+    }
   };
-  const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
-  if (mobile) document.addEventListener("visibilitychange", onHide);
+  const mobile = isMobileShell();
+  if (mobile) document.addEventListener("visibilitychange", onVisibility);
   ping();
   return () => {
     for (const e of events) window.removeEventListener(e, ping);
-    if (mobile) document.removeEventListener("visibilitychange", onHide);
+    if (mobile) document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("focus", onFocus);
     stopped = true;
     window.clearTimeout(timer);

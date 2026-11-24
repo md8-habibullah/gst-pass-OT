@@ -322,10 +322,11 @@ It leaks: that a gate exists, which mode it uses, which switches are on, whether
 how many failed attempts have happened (and, from the PHC strings, the hash cost), and the hashes themselves,
 which are offline-guessable for short secrets (see the limits above). Removed when the gate is turned off.
 
-**`app-settings.json`** (same folder, 0600, atomic): `{"lockAfterMinutes": 1|5|15|30}`. It leaks only the lock
-timeout. A missing, unreadable or out-of-range file is the default (15) and never an error.
+**`app-settings.json`** (same folder, 0600, atomic): `{"lockAfterMinutes": 1|5|15|30|60|240, "lockAfterLeaveSeconds": 0|15|30|60|300|900|1800|3600|14400}`. It leaks only the lock
+timeouts. A missing, unreadable or out-of-range file is the default (15 minutes; 300 seconds after leaving the app) and never an error.
+**`gate.json`** also carries the wait after wrong passcodes under the same MAC as the attempt counter: `lockUntil` (checked UTC milliseconds, 0 = not known), `lockBoot` (a deadline on the boot clock, milliseconds) and `lockBootId` (which boot it belongs to). Both deadlines must pass; changing the device date moves neither (D27). The record's MAC version is `v3` with the boot fields, `v2` with only `lockUntil`; records written before the waits existed read as "no wait".
 
-**Wipe** (`secure_wipe_all_local_data`, also `app_reset`, panic credential, panic mark and the 15th failure).
+**Wipe** (`secure_wipe_all_local_data`, also `app_reset`, panic credential, panic mark and the 16th failure).
 Order: (1) the open session is dropped (keys zeroized, backup worker joined); (2) **cryptographic erase first**:
 for every vault file the `meta.bundle` row is overwritten with `zeroblob`, the WAL is checkpointed with
 `TRUNCATE`, the file is fsynced (from here the vault cannot be opened with any password even if the process
@@ -409,3 +410,23 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 **Memory hygiene.** Everything parsed is `ImportedEntry` (`Zeroize + ZeroizeOnDrop`, hand-written `Debug` that prints kinds and counts only). Files are read into pre-sized `Zeroizing` buffers (no reallocation, so no unwiped copy), parsed with no lock held, and dropped before the commit. Stored previews and handles die with the session on lock, account switch and quit.
 
 **Tests:** `app_import_tests.rs` runs the commands against a real temp vault, with an in-memory backup target to count outbox jobs.
+
+## 13. Device settings and the demo vault (Q5) [impl]
+
+**`device.json`** (data folder, owner-only 0600, atomic replace; read at start, never an error: a missing, unreadable, oversized (over 4 KiB) or damaged file is the defaults). Plaintext JSON:
+
+```json
+{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "demoProfile": "<uuid>"}
+```
+
+* `timeZone`: the IANA name from the first page, only used to *show* UTC times and to read times the person types. Absent until chosen.
+* `setupDone`: the first-run welcome was seen.
+* `timeCheck`: the online time check (on by default).
+* `demoProfile`: the id of the demo vault while one exists. It stays inside the core; `DeviceInfo` (what the screen reads) has no such field.
+
+It leaks a place name, two switches and a random id; no name, item or key. **It survives the erase on purpose** (D30): the wipe only knows its fixed list of files, and `forget_demo_if_any` clears just the demo id. A reset therefore opens straight into a fresh demo vault with no zone page.
+
+**The demo vault** is an ordinary vault in `vaults/<id>/vault.db` named "Hexis123" with the master password "Hexis123" (public on purpose: it holds nothing real). `AppCore::demo_spawn` runs only when the registry is empty: `profile_create`, then `Session::seed_items` with the 15 to 25 items from `storage/demo.rs` (one invented person, Hexis Alden: logins for Google, Microsoft, GitHub, Amazon and others, with random passwords and one-time-code secrets made at spawn time; cards that are the published test numbers; an identity, a secure note, an SSH key; created at back-dated times so the list shows groups from "Last 7 days" to "Older"), then the id is written to `device.json`. A failure after the vault exists removes it again. `demo_open` selects it and unlocks it with the public password, and only for the id in `device.json`. Deleting it (Settings, Accounts, with its password and `CONFIRM`) forgets the id; the app then makes a new one if no vault is left.
+
+**Time.** Every time written to a vault, a backup object, a file's metadata or `profiles.json` is UTC milliseconds since 1970 (`crypto::now_millis`, which reads `TrustedClock::now_ms`: checked UTC when there is one, the device clock otherwise). Nothing stored depends on the zone.
+

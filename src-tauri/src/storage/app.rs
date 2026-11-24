@@ -14,6 +14,7 @@ use super::backup::{
     TargetConfig,
 };
 use super::db::Store;
+use super::device::DeviceSettings;
 use super::error::{Result, StorageError};
 use super::files::{self, FilePicker};
 use super::links::{self, NoOpener, UrlOpener};
@@ -37,6 +38,10 @@ use std::time::Duration;
 pub const EXIT_FLUSH: Duration = Duration::from_secs(8);
 
 mod gate_api;
+
+// The demo vault and the device settings (time zone, time check). A child module, like the two above.
+#[path = "app_demo.rs"]
+mod demo_commands;
 
 // The importer / exporter commands (slice Q4). A child module, so it can reach the private
 // helpers (`session`, `active_session`, `reg`) like the methods above.
@@ -83,6 +88,8 @@ pub struct AppCore {
     /// Stage 1 (the optional app gate), the attempt counter, the idle timer and the wipe's
     /// in-memory half (`crate::gate`, glued in `app/gate_api.rs`).
     gate: GateCore,
+    /// `device.json`: time zone, first-run flag, time check, demo vault id. Survives the erase (`device.rs`).
+    device: Mutex<DeviceSettings>,
 }
 
 fn relock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -114,6 +121,10 @@ impl AppCore {
         let registry = Registry::load(dir)?;
         let active = Arc::new(Mutex::new(None));
         let gate = gate_api::open_gate(dir, &cfg, &active)?;
+        // From here on every timestamp is checked UTC when there is such a time (see `crate::clock`).
+        crate::crypto::install_time_source(|| crate::clock::TrustedClock::global().now_ms());
+        let device = super::device::load(dir);
+        crate::clock::TrustedClock::global().set_enabled(device.time_check);
         Ok(Self {
             dir: dir.to_path_buf(),
             cfg,
@@ -125,6 +136,7 @@ impl AppCore {
             registry: Mutex::new(registry),
             active,
             gate,
+            device: Mutex::new(device),
         })
     }
 
@@ -189,7 +201,12 @@ impl AppCore {
 
     pub fn profile_list(&self) -> Result<ProfileList> {
         let selected = self.active_session().map(|(id, _)| id);
-        Ok(self.reg().list(selected.as_deref()))
+        let mut list = self.reg().list(selected.as_deref());
+        let demo = relock(&self.device).demo_profile.clone();
+        for p in &mut list.profiles {
+            p.demo = demo.as_deref() == Some(p.id.as_str());
+        }
+        Ok(list)
     }
 
     /// Create a new account with its own vault and master password, select it and leave it
@@ -264,7 +281,7 @@ impl AppCore {
             Some((active_id, s)) if active_id == id && s.status()?.unlocked => {}
             _ => return Err(StorageError::Locked),
         }
-        self.reg().rename(id, &name)
+        self.reg().rename(id, &name).map(|p| self.marked(p))
     }
 
     /// Delete an account from this device: its master password (verified with Argon2id even if it
@@ -300,6 +317,7 @@ impl AppCore {
         }
         self.delete_profile_files(&entry)?;
         self.reg().remove(id)?;
+        self.forget_demo_if(id);
         Ok(())
     }
 
@@ -617,7 +635,7 @@ impl AppCore {
             }),
             Some((id, session)) => {
                 let mut st = session.status()?;
-                st.profile = self.reg().get(&id).map(Entry::info);
+                st.profile = self.reg().get(&id).map(Entry::info).map(|p| self.marked(p));
                 Ok(st)
             }
         }
@@ -650,11 +668,11 @@ impl AppCore {
         self.session()?.item_get(id)
     }
 
-    pub fn item_reveal(&self, id: &str, password: String) -> Result<ItemDraft> {
+    pub fn item_reveal(&self, id: &str, password: Option<String>) -> Result<ItemDraft> {
         self.session()?.item_reveal(id, password)
     }
 
-    pub fn item_begin_edit(&self, id: &str, password: String) -> Result<BeginEdit> {
+    pub fn item_begin_edit(&self, id: &str, password: Option<String>) -> Result<BeginEdit> {
         self.session()?.item_begin_edit(id, password)
     }
 
@@ -694,7 +712,7 @@ impl AppCore {
         self.session()?.item_unarchive(id)
     }
 
-    pub fn item_clone(&self, id: &str, password: String) -> Result<ItemSummary> {
+    pub fn item_clone(&self, id: &str, password: Option<String>) -> Result<ItemSummary> {
         self.session()?.item_clone(id, password)
     }
 
@@ -710,16 +728,26 @@ impl AppCore {
         self.session()?.history_list(id)
     }
 
-    pub fn history_get(&self, id: &str, version: u64, password: String) -> Result<ItemDraft> {
+    pub fn history_get(
+        &self,
+        id: &str,
+        version: u64,
+        password: Option<String>,
+    ) -> Result<ItemDraft> {
         self.session()?.history_get(id, version, password)
     }
 
-    pub fn history_restore(&self, id: &str, version: u64, password: String) -> Result<ItemSummary> {
+    pub fn history_restore(
+        &self,
+        id: &str,
+        version: u64,
+        password: Option<String>,
+    ) -> Result<ItemSummary> {
         self.session()?.history_restore(id, version, password)
     }
 
-    pub fn totp_now(&self, id: &str) -> Result<TotpNow> {
-        self.session()?.totp_now(id)
+    pub fn totp_now(&self, id: &str, password: Option<String>) -> Result<TotpNow> {
+        self.session()?.totp_now(id, password)
     }
 }
 

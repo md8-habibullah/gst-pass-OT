@@ -37,6 +37,9 @@ pub struct ProfileInfo {
     pub display_name: String,
     pub created_at: u64,
     pub last_used_at: Option<u64>,
+    /// The built-in demo vault (`storage/demo.rs`). Absent from the JSON for every other account.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub demo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,6 +116,7 @@ impl Entry {
             display_name: self.display_name.clone(),
             created_at: self.created_at,
             last_used_at: self.last_used_at,
+            demo: false,
         }
     }
 

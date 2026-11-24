@@ -67,6 +67,9 @@ pub struct ImportedEntry {
     pub attachments: Vec<ImportedAttachment>,
     #[zeroize(skip)]
     pub favorite: bool,
+    /// The source asked for the master password again before this item is shown (Bitwarden's "reprompt").
+    #[zeroize(skip)]
+    pub reprompt: bool,
     pub source_id: Option<String>,
     /// Creation and last-change time in the source (Unix milliseconds).
     #[zeroize(skip)]
@@ -418,6 +421,7 @@ impl ImportedEntry {
                 item_type,
                 title,
                 favorite: self.favorite,
+                reprompt: self.reprompt,
                 tags,
                 folder,
                 fields,

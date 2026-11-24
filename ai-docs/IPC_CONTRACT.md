@@ -6,14 +6,33 @@ Conventions: JSON over Tauri IPC; **camelCase** on the wire (`#[serde(rename_all
 
 Error codes: `locked` · `no_vault` · `vault_exists` · `wrong_password` · `not_found` · `in_trash` · `not_in_trash` · `version_conflict` · `invalid_input` · `confirmation_mismatch` · `token_invalid` · `storage` · `crypto` · `profile_name_taken` · `unsupported_file` · `network` · `remote`.
 
-## 1. Re-prompt rule (from the spec, enforced in Rust)
+## 1. Re-prompt rule (enforced in Rust)
 
-Editing any entry, revealing a password/secret, viewing or restoring history snapshots, permanent deletion and exporting **always** require the master password, even while unlocked. Rust verifies it with Argon2id (`verify_password`) on every such call and **never caches the password**.
+**Changed 2026-11-24.** The master password was asked for every reveal, copy, edit and clone. Now the vault being open is
+enough, as in Bitwarden, and an item asks again only when its own flag says so. Rust verifies a password with Argon2id
+(`verify_password`) on every call that carries one and **never caches it**.
 
-* One-shot operations take `password` in the same command (`item_reveal`, `history_get`, `history_restore`, `item_purge`, `vault_change_password`).
-* Editing spans two calls, so `item_begin_edit(id, password)` returns a random single-use **edit token** (256-bit, bound to item id + version, expires after 10 minutes, invalidated by lock). `item_update` must present it. The token carries no secret.
-* Creating, trashing and restoring-from-trash do **not** require the password (spec lists neither); history *listing* shows only event, time and changed field names, so it does not either.
-* TOTP codes are shown without a prompt (they rotate every period); the TOTP **secret** is never returned by any command except inside `item_reveal` / `item_begin_edit` / `history_get` (all password-gated).
+* **Per-item flag `reprompt`** (`ItemDraft`, `ItemSummary`, `ItemView`; set in the editor with "Ask for the master password
+  again"). It is part of the sealed payload, so the server-side copies learn nothing. A normal edit changes it (history lists
+  "reprompt" among the changed fields). Items without the flag seal exactly as before (the field is omitted when false).
+* **Optional password on the item commands.** `item_reveal`, `item_begin_edit`, `item_clone`, `history_get`,
+  `history_restore` and `totp_now` take `password: string | null`.
+  * **No password sent:** the core checks, in one visit under the session lock, that the item exists and is not in the
+    trash, then whether it is flagged. Unflagged: the operation runs. Flagged: `password_required` (nothing ran, no Argon2id
+    run was spent). The UI then opens the password sheet and calls again with the password (`withItemPassword` in
+    `Reprompt.tsx`). `totp_now` on a flagged item answers `password_required` too, so the live codes of a flagged item never
+    reach the list or the Codes view; the person taps "Show code" and the code shows for its own window.
+  * **A password is sent:** it is always verified (`wrong_password` when wrong), flagged item or not.
+* **Always password-gated, flag or no flag:** `item_purge`, `vault_change_password`, the plaintext and encrypted exports,
+  `file_delete`, `file_save_copy`, the backup secret, `gate_configure` and `confirm_password`. These take a required
+  `password`.
+* Editing spans two calls, so `item_begin_edit` returns a random single-use **edit token** (256-bit, bound to item id +
+  version, expires after 10 minutes, invalidated by lock). `item_update` must present it. The token carries no secret.
+* Creating, trashing, archiving and restoring-from-trash never need the password; history *listing* shows only event, time and
+  changed field names.
+* The TOTP **secret** is never returned by any command except inside `item_reveal` / `item_begin_edit` / `history_get`.
+* **Compatibility.** A build older than this change reads a payload that has `"reprompt": true` as damaged (its payload type
+  rejects unknown fields). Unflagged items are byte-identical and unaffected.
 
 ## 2. Types
 
@@ -116,8 +135,8 @@ Light validation only (never blocks legitimate data): `card.number` digits, spac
 | `vault_change_password` | `oldPassword`, `newPassword` | `void` | re-seals the keyring only (`change_password`) |
 | `item_list` | – | `ItemSummary[]` | active items only, newest first, from the in-memory index |
 | `item_get` | `id` | `ItemView` | `in_trash` for trashed items (trash policy lives here, not in the UI) |
-| `item_reveal` | `id`, `password` | `ItemDraft` | password-gated; `in_trash` refused |
-| `item_begin_edit` | `id`, `password` | `{ token: string; draft: ItemDraft; version: number }` | password-gated |
+| `item_reveal` | `id`, `password?` | `ItemDraft` | password only for a flagged item (`password_required`), else see §1; `in_trash` refused |
+| `item_begin_edit` | `id`, `password?` | `{ token: string; draft: ItemDraft; version: number }` | same rule |
 | `item_create` | `draft` | `ItemSummary` | version 1 |
 | `item_update` | `id`, `token`, `expectedVersion`, `draft` | `ItemSummary` | consumes the token; `version_conflict` if `expectedVersion` ≠ stored; `changedFields` computed in Rust |
 | `item_trash` | `id` | `void` | new version, `deleted=true` |
@@ -125,10 +144,10 @@ Light validation only (never blocks legitimate data): `card.number` digits, spac
 | `trash_list` | – | `TrashEntry[]` | **only** id, title, deletedAt |
 | `item_purge` | `id`, `password`, `confirmation` | `void` | must be in trash (`not_in_trash`); `confirmation` must equal the item title (trimmed) or the literal `CONFIRM` (`confirmation_mismatch`); writes tombstone, removes items/versions/attachments/conflicts rows |
 | `history_list` | `id` | `VersionEntry[]` | newest first by number; refused for trashed items. Entries with `otherDevice: true` come from another device (§6.2) |
-| `history_get` | `id`, `version`, `password` | `ItemDraft` | password-gated |
-| `history_restore` | `id`, `version`, `password` | `ItemSummary` | new snapshot (next free number), `event = restoredFromVersion`; restoring an other-device copy makes the new head a descendant of both lines and clears `changedElsewhere` (§6.2) |
+| `history_get` | `id`, `version`, `password?` | `ItemDraft` | same rule as `item_reveal` |
+| `history_restore` | `id`, `version`, `password?` | `ItemSummary` | new snapshot (next free number), `event = restoredFromVersion`; restoring an other-device copy makes the new head a descendant of both lines and clears `changedElsewhere` (§6.2) |
 | `item_review_other_device` | `id` | `void` | R3a: "got it", marks the item's other-device copies as seen without restoring anything, which clears `changedElsewhere`; idempotent; `not_found` / `in_trash` / `locked` as for the other item commands |
-| `totp_now` | `id` | `TotpNow` | active items with a `totp` field only |
+| `totp_now` | `id`, `password?` | `TotpNow` | active items with a `totp` field only; a flagged item needs the password (`password_required`), see §1 |
 
 Nothing returns keys, seeds, hashes or the master password.
 
@@ -184,7 +203,7 @@ interface VaultStatus {                // extended: describes the *selected* pro
 |---------|------|---------|-------|
 | `item_archive` | `id` | `ItemSummary` | `in_trash` refused; no password |
 | `item_unarchive` | `id` | `ItemSummary` | no password |
-| `item_clone` | `id`, `password` | `ItemSummary` | password-gated |
+| `item_clone` | `id`, `password?` | `ItemSummary` | same rule as `item_reveal` |
 
 ### 5.3 As built: where Phase 2b is more specific than §5 (backend, verified by tests)
 
@@ -321,16 +340,19 @@ interface DisguiseView extends DisguiseInput { appliedName: string; note: string
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `gate_status` | none | `GateStatus` | `{enabled, open, mode, biometricAvailable, biometric, panicButton, equation, attemptsLeft, streak}`. Not configured means `enabled:false, open:true`. `equation` is `null` when open. `attemptsLeft` is `null` while the counter is 0, otherwise `15 - attempts`. |
-| `gate_submit` | `{ input: string }` | `GateOutcome` | 1 to 3 characters (after NFKC): decoy maths, `{kind:"math", correct, equation, streak}`, never a credential, never the counter. 4 or more: a security attempt, `{kind:"opened"}`, `{kind:"failed", attemptsLeft, equation}` or `{kind:"wiped"}`. With no gate configured (or already open) every input answers `{kind:"opened"}` and costs nothing. |
+| `gate_status` | none | `GateStatus` | `{enabled, open, mode, biometricAvailable, biometric, panicButton, equation, attemptsLeft, lockedForMs, finalAttempt, streak}`. Not configured means `enabled:false, open:true`. `equation` is `null` when open. `attemptsLeft` is `null` while the counter is 0, otherwise `16 - attempts`. `lockedForMs` is the time left of a wait after wrong passcodes (`null` when none runs; never an absolute time). `finalAttempt` is true when the next wrong passcode erases the device (attempt 16). |
+| `gate_submit` | `{ input: string }` | `GateOutcome` | 1 to 3 characters (after NFKC): decoy maths, `{kind:"math", correct, equation, streak}`, never a credential, never the counter. 4 or more: a security attempt, `{kind:"opened"}`, `{kind:"failed", attemptsLeft, equation, lockedForMs}` (`lockedForMs` is set when this attempt started a wait), `{kind:"locked", retryAfterMs}` (a wait is running: the input was neither counted nor looked at, not even the right passcode or a panic code) or `{kind:"wiped"}`. With no gate configured (or already open) every input answers `{kind:"opened"}` and costs nothing. |
 | `gate_biometric` | none | `GateOutcome` | `{kind:"opened"}` on Android after a recognised fingerprint; `invalid_input` on desktop, when the switch is off, or when the sensor did not recognise the person. Never counts or resets an attempt. Opens Stage 1 only. |
 | `gate_panic` | none | `{kind:"wiped"}` | Only while "panic mark" is on and the gate is closed, else `invalid_input`. Same wipe as a panic credential. |
 | `gate_close` | none | `null` | Closes the gate (when on) **and locks the open vault** (keys zeroized, backup worker joined). With the gate off it is just a lock. |
 | `gate_configure` | `{ input: GateConfigInput }` | `GateStatus` | Needs an unlocked vault (`locked` otherwise) and that vault's master password (`wrong_password`; the re-prompt guard). `credential:null` keeps the stored one (error when none exists or the mode changes), `panicCode:null` keeps, `""` removes; `enabled:false` deletes `gate.json`. Returns `open:true` for this run. Rule failures are `invalid_input` with the messages of `src/lib/gateRules.ts`; they are reported before any Argon2id work. |
-| `app_reset` | `{ confirmedSteps: 3 }` | `null` | Anything but the number 3 is `invalid_input` (also a string, `-3`, `3.5`, `null`; a missing argument is a decoding error). Allowed with the gate closed. The same wipe as panic, reported normally; a second call is a no-op. |
-| `app_settings_get` | none | `{lockAfterMinutes}` | Default 15. |
-| `app_settings_set` | `{ input: {lockAfterMinutes} }` | `{lockAfterMinutes}` | Only 1, 5, 15 or 30 (no "never"), else `invalid_input`. Stored in `app-settings.json`. |
+| `app_reset_challenge` | none | `string` | The long sum for the last reset step (two ordinary sums joined by `+`, `-` or `*`, answer 100 to 99,999). The core keeps only this one sum; the answer never leaves it. Allowed with the gate closed. |
+| `app_reset` | `{ confirmedSteps: 3, answer: string }` | `null` | `confirmedSteps` other than the number 3 is `invalid_input` (also a string, `-3`, `3.5`, `null`; a missing argument is a decoding error). `answer` is checked against the sum from `app_reset_challenge`, which is **used up by any answer**: a wrong answer, or no sum asked for first, is `wrong_answer` and erases nothing; ask again for a new sum. A right answer does the same wipe as panic, reported normally; a second call is `wrong_answer`. Allowed with the gate closed. |
+| `app_settings_get` | none | `{lockAfterMinutes, lockAfterLeaveSeconds}` | Defaults 15 minutes and 300 seconds. |
+| `app_settings_set` | `{ input: {lockAfterMinutes, lockAfterLeaveSeconds?} }` | same | `lockAfterMinutes`: 1, 5, 15, 30, 60 or 240 (no "never"). `lockAfterLeaveSeconds`: 0 (right away), 15, 30, 60, 300, 900, 1800, 3600 or 14400 (default 300 when missing). Anything else is `invalid_input`. Stored in `app-settings.json`. |
 | `activity_ping` | none | `null` | Restarts the inactivity timer. |
+| `app_leave` | none | `null` | The app went to the background (phones). Stops the inactivity timer and starts the leave timer for `lockAfterLeaveSeconds`; at 0 it locks now. When it runs out the core closes the gate (when on) and locks the vault, whether or not the webview is still running. A native picker or the camera on top of the app is not "leaving" (the UI does not call this then). Not activity. Allowed with the gate closed. |
+| `app_return` | none | `null` | The app is back. If the leave time ran out the core locks now; otherwise the leave timer stops and the inactivity timer restarts. Not activity. Allowed with the gate closed. |
 
 **The gate is enforced in one place.** `commands::invoke_handler()` wraps the whole handler list in
 `commands::gate::guarded`, which asks `AppCore::before_command(name)` first. While the gate is enabled and
@@ -338,7 +360,7 @@ closed, every command that is not on the allow-list answers `{code:"locked", mes
 before its code runs. The guard is deny-by-default: a command added later, and even a name that does not exist,
 is `locked` until it is added to `gate::ALLOWED_WHILE_CLOSED`. Allow-list while closed:
 `crypto_suite_info`, `suite_info`, `vault_status`, `gate_status`, `gate_submit`, `gate_biometric`, `gate_panic`,
-`app_reset`, `app_settings_get`, `activity_ping`, `sync_flush`, `disguise_get`, `screen_secure`
+`app_reset_challenge`, `app_reset`, `app_settings_get`, `activity_ping`, `app_leave`, `app_return`, `sync_flush`, `disguise_get`, `screen_secure`
 (the last four are listed for the slices that add them; a listed name that is not registered never arrives).
 `gate_close`, `gate_configure` and `app_settings_set` need the gate open (they change what Stage 1 protects).
 
@@ -351,9 +373,20 @@ passes the real values return (a vault is still locked: **Stage 1 never unlocks 
 `quick_unlock_*` / session-blob / keystore code. Every vault open, and every re-open after the idle timer, needs
 the master password. The old "Planned for Phase 3: quick_unlock_*" paragraph of this document is obsolete.
 
-**Error codes.** `locked` is the existing code. No new code was added (`invalid_input`, `wrong_password`,
-`storage` cover the rest). Messages are fixed sentences: nothing typed (credential, master password, input) is
+**Error codes.** `locked` is the existing code. Two were added: `password_required` (a flagged item was asked for without a
+password; see §1) and `wrong_answer` (the answer to the reset sum was wrong or no sum was asked for). `invalid_input`,
+`wrong_password` and `storage` cover the rest. Messages are fixed sentences: nothing typed (credential, master password, input) is
 ever echoed or logged.
+
+**Waits after wrong passcodes.** 16 security attempts in all; the 16th wrong one erases the device. After the 3rd, 6th, 9th,
+12th and 15th wrong attempt a wait starts (1.5 minutes, 5 minutes, 45 minutes, 8 hours, 3 days). The wait is stored as a wall-clock
+end time under the same MAC as the counter and written ahead together with it, so force-closing or restarting the app dodges neither the count nor the wait. While a wait runs, `gate_submit` with 4 or more
+characters answers `{kind:"locked", retryAfterMs}` and nothing else happens. Changing the device clock or editing the files can
+shorten a wait at the price of one more counted attempt; the 16-attempt wipe still applies. Fingerprint is not an attempt and still
+opens Stage 1 during a wait.
+
+**Leave timer.** A second timer thread, driven by `app_leave` / `app_return`, with the same wall-clock safeguards as the
+inactivity timer.
 
 **Inactivity lock.** One watcher thread per `AppCore` waits on a condition variable until the deadline (no tick
 loop), holds no session lock while it sleeps, and runs the same lock the commands use (so it can never run inside
@@ -422,3 +455,30 @@ interface ImportOutcome { added: number; appended: number; skipped: number; fail
 * **`export_plain` writes PLAINTEXT.** Anyone who gets the file can read every password, card number and one-time-code secret in it. Order: format check (`invalid_input`) -> master-password re-prompt (`wrong_password`, no dialog yet) -> native save dialog (`<account>-<date>-plaintext.json|csv`; `null` when cancelled) -> refusal of a destination inside the app's own data folder -> decrypt every **non-trashed** item (archived items are included) in RAM -> write to a new file with mode **0600** through a temp file, fsync, rename, fsync of the folder. The buffers wipe themselves. An item that cannot be decrypted is left out and `warnings` says `N items could not be read and are not in the file.` The native encrypted archive `vault_export_file` is untouched.
 * **Bitwarden JSON export shape.** `encrypted: false`, `folders`, `items` of type 1 login / 2 secure note / 3 card / 4 identity / 5 SSH key; the TOTP is `login.totp`; custom fields keep their `hidden` flag (field type 1). Hexis has things Bitwarden has no place for: tags and standalone `totp` items. They are written as custom fields named `Hexis tags` and `Hexis item type` (`totp`), and Hexis's importer turns them back, so **the JSON export read by Hexis again is lossless for logins, cards, identities, notes, SSH keys and standalone codes** (round-trip tests, field by field); another app shows those two as ordinary extra fields. **One lossy case:** a `media` item is written as a secure note (its description as the note) and comes back as a note. **The CSV is lossier** (it is Bitwarden's column set): logins and notes round-trip, but cards, identities and SSH keys are flattened into a note that lists every value, and the hidden flag of custom fields is lost. Say so in the export screen if it offers both.
 * **UI text mismatch to fix in `ImportView.tsx`:** the `skip_duplicates` card says "An entry with the same name, username and password is left alone." The rule does not compare passwords. Suggested text: "An entry with the same name, username and website is left alone." (The `append_version` card, "Same name and username ...", is right; it also compares the website.) The mock backend (`mock.ts`) compares passwords; it should follow the Rust rule.
+
+## 11. Device settings, trusted time and the demo vault (Q5) [impl]
+
+Shapes are exactly those of `src/backend/types.ts` / `tauri.ts` (camelCase arguments, snake_case Rust parameters). The decisions are D27 to D30 in `ARCHITECTURE.md`.
+
+| Command | Arguments | Result | Notes |
+|---|---|---|---|
+| `device_get` | none | `DeviceInfo` | `{timeZone: string \| null, setupDone: boolean, timeCheck: boolean}`. `timeZone` is `null` until the first page is answered. Never carries the demo vault's id. **Allowed while the gate is closed** (the gate screen writes times in the zone). |
+| `device_set_time_zone` | `{ zone: string }` | `DeviceInfo` | An IANA name such as `Asia/Dhaka`. The core checks the **shape** only (1 to 64 characters, letters, digits, `_ + - /`, no empty, dotted or leading-dash part); `invalid_input` otherwise. The webview's own time library decides whether the name is a real zone before it sends it. |
+| `device_finish_setup` | none | `DeviceInfo` | The first-run welcome was seen: `setupDone` becomes `true`. |
+| `device_set_time_check` | `{ on: boolean }` | `DeviceInfo` | Switches the online time check. Off, the core makes no request at all. On, a check starts in the background. |
+| `clock_status` | none | `ClockStatus` | `{verified, enabled, skewMs, checkedAgoMs, sources, problem, nowMs}`. `skewMs` is checked UTC minus this device's clock (positive: the device is behind). Starts a background check when one is due. A polling command: it does not count as activity. **Allowed while the gate is closed.** |
+| `clock_sync` | none | `ClockStatus` | Checks now and waits for the answer (about ten seconds at most). `invalid_input` when the check is switched off. A failed check is **not** an error: `problem` says what went wrong. **Allowed while the gate is closed.** |
+| `demo_spawn` | none | `ProfileInfo` | Makes the vault "Hexis123" (15 to 25 items) **only when the app holds no vault** (`invalid_input` otherwise); selects and unlocks it. `demo: true` in the result. |
+| `demo_open` | none | `void` | Selects and unlocks the demo vault without a typed password. `not_found` when there is no demo vault. Never works for another vault. |
+
+`device_set_time_zone`, `device_finish_setup`, `device_set_time_check`, `demo_spawn` and `demo_open` are **closed** while the gate is closed (deny by default, D19).
+
+Changes to earlier shapes:
+
+* `ProfileInfo` gains `demo?: boolean` (present and `true` only for the demo vault; set by `profile_list`, `vault_status` and `profile_rename`).
+* `GateStatus` gains `lockedUntilMs: number | null` (the end of a running wait as checked UTC milliseconds, so the screen can say "try again at 14:35" in the chosen zone) and `clockPending: boolean` (a wait is running but its end cannot be judged yet: the device restarted and the time was not checked online since; nothing is counted or checked meanwhile).
+* `GateOutcome` `locked` gains `clockPending: boolean` (then `retryAfterMs` is 0).
+* Every stored time is UTC milliseconds since 1970. Nothing in the contract carries a zone except `DeviceInfo.timeZone`.
+
+**Network.** `clock_*` and the background check are the only requests the core makes besides S3: three `HEAD` requests (about 20 s apart at most, at most once in 6 hours after a good check) to `google.com/generate_204`, `cloudflare.com/cdn-cgi/trace` and `aws.amazon.com`, reading only the `Date` header. No vault data, identifier or cookie is sent. They are skipped while the check is switched off.
+

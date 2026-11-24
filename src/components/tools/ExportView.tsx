@@ -58,7 +58,7 @@ export function ExportView() {
     <PageBody>
       <PageHeader title="Export" back subtitle={`Save “${profile?.displayName ?? "this vault"}” as a file you can keep, move to another device, or open with Add account, Open a vault file.`} />
 
-      <section className="glass flex flex-col gap-4 rounded-lg p-5">
+      <section className="surface flex flex-col gap-4 rounded-lg p-5">
         <div className="flex items-start gap-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileLock2 className="size-5 text-brass" aria-hidden /></span>
           <div className="min-w-0">
@@ -72,7 +72,7 @@ export function ExportView() {
         </div>
       </section>
 
-      <section className="glass flex flex-col gap-4 rounded-lg p-5">
+      <section className="surface flex flex-col gap-4 rounded-lg p-5">
         <div className="flex items-start gap-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><ShieldAlert className="size-5 text-ember" aria-hidden /></span>
           <div className="min-w-0">

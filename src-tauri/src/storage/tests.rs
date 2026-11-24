@@ -51,7 +51,7 @@ impl Fx {
 
     /// Edit through the real two-step flow.
     fn edit(&self, id: &str, f: impl FnOnce(&mut ItemDraft)) -> super::ItemSummary {
-        let b = self.s.item_begin_edit(id, PW.into()).unwrap();
+        let b = self.s.item_begin_edit(id, Some(PW.into())).unwrap();
         let mut d = b.draft.clone();
         f(&mut d);
         self.s.item_update(id, &b.token, b.version, d).unwrap()
@@ -77,6 +77,7 @@ fn login(title: &str, password: &str) -> ItemDraft {
         item_type: ItemType::Login,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: BTreeMap::from([
@@ -147,8 +148,8 @@ fn a_locked_vault_refuses_every_command() {
     let d = || login("x", "y");
     assert_eq!(code(fx.s.item_list()), "locked");
     assert_eq!(code(fx.s.item_get(&id)), "locked");
-    assert_eq!(code(fx.s.item_reveal(&id, PW.into())), "locked");
-    assert_eq!(code(fx.s.item_begin_edit(&id, PW.into())), "locked");
+    assert_eq!(code(fx.s.item_reveal(&id, Some(PW.into()))), "locked");
+    assert_eq!(code(fx.s.item_begin_edit(&id, Some(PW.into()))), "locked");
     assert_eq!(code(fx.s.item_create(d())), "locked");
     assert_eq!(code(fx.s.item_update(&id, "tok", 1, d())), "locked");
     assert_eq!(code(fx.s.item_trash(&id)), "locked");
@@ -156,9 +157,12 @@ fn a_locked_vault_refuses_every_command() {
     assert_eq!(code(fx.s.trash_list()), "locked");
     assert_eq!(code(fx.s.item_purge(&id, PW.into(), "CONFIRM")), "locked");
     assert_eq!(code(fx.s.history_list(&id)), "locked");
-    assert_eq!(code(fx.s.history_get(&id, 1, PW.into())), "locked");
-    assert_eq!(code(fx.s.history_restore(&id, 1, PW.into())), "locked");
-    assert_eq!(code(fx.s.totp_now(&id)), "locked");
+    assert_eq!(code(fx.s.history_get(&id, 1, Some(PW.into()))), "locked");
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, Some(PW.into()))),
+        "locked"
+    );
+    assert_eq!(code(fx.s.totp_now(&id, None)), "locked");
     assert_eq!(
         code(fx.s.change_password(PW.into(), "another long password".into())),
         "locked"
@@ -252,7 +256,7 @@ fn get_masks_secrets_and_reveal_returns_them() {
     }
     assert!(json.contains("ana@example.com") && json.contains("Team"));
 
-    let revealed = fx.s.item_reveal(&id, PW.into()).unwrap();
+    let revealed = fx.s.item_reveal(&id, Some(PW.into())).unwrap();
     assert_eq!(revealed.fields["password"], "s3cret-pass-word");
     assert_eq!(revealed.fields["notes"], "recovery: 1234");
     assert_eq!(revealed.custom_fields[1].value, "4321");
@@ -267,8 +271,11 @@ fn malformed_and_unknown_ids() {
     assert_eq!(code(fx.s.item_trash(MISSING)), "not_found");
     assert_eq!(code(fx.s.item_restore(MISSING)), "not_found");
     assert_eq!(code(fx.s.history_list(MISSING)), "not_found");
-    assert_eq!(code(fx.s.totp_now(MISSING)), "not_found");
-    assert_eq!(code(fx.s.item_reveal(MISSING, PW.into())), "not_found");
+    assert_eq!(code(fx.s.totp_now(MISSING, None)), "not_found");
+    assert_eq!(
+        code(fx.s.item_reveal(MISSING, Some(PW.into()))),
+        "not_found"
+    );
 }
 
 // ============================================================ versions and history
@@ -303,7 +310,7 @@ fn every_state_change_adds_one_snapshot_and_bumps_the_version() {
         (expected, expected)
     );
 
-    fx.s.history_restore(&id, 1, PW.into()).unwrap(); // v5 restoredFromVersion
+    fx.s.history_restore(&id, 1, Some(PW.into())).unwrap(); // v5 restoredFromVersion
     expected += 1;
     assert_eq!(
         (fx.versions(&id), fx.item_version(&id)),
@@ -337,23 +344,23 @@ fn history_is_append_only_and_restore_keeps_it_linear() {
 
     // reading an old snapshot needs the password and returns the old content
     assert_eq!(
-        code(fx.s.history_get(&id, 1, WRONG.into())),
+        code(fx.s.history_get(&id, 1, Some(WRONG.into()))),
         "wrong_password"
     );
-    let old = fx.s.history_get(&id, 1, PW.into()).unwrap();
+    let old = fx.s.history_get(&id, 1, Some(PW.into())).unwrap();
     assert_eq!(old.fields["password"], "pw-A-first");
     assert_eq!(old.title, "GitHub");
 
     // restore version 1 => a NEW version 4 with the old content
     assert_eq!(
-        code(fx.s.history_restore(&id, 1, WRONG.into())),
+        code(fx.s.history_restore(&id, 1, Some(WRONG.into()))),
         "wrong_password"
     );
     assert_eq!(fx.versions(&id), 3, "a rejected restore changes nothing");
-    let sum = fx.s.history_restore(&id, 1, PW.into()).unwrap();
+    let sum = fx.s.history_restore(&id, 1, Some(PW.into())).unwrap();
     assert_eq!(sum.version, 4);
     assert_eq!(sum.title, "GitHub");
-    let now = fx.s.item_reveal(&id, PW.into()).unwrap();
+    let now = fx.s.item_reveal(&id, Some(PW.into())).unwrap();
     assert_eq!(now.fields["password"], "pw-A-first");
 
     let h = fx.s.history_list(&id).unwrap();
@@ -370,7 +377,7 @@ fn history_is_append_only_and_restore_keeps_it_linear() {
     assert_eq!(before, after);
     // and snapshot 3 still has the pre-restore content
     assert_eq!(
-        fx.s.history_get(&id, 3, PW.into()).unwrap().fields["password"],
+        fx.s.history_get(&id, 3, Some(PW.into())).unwrap().fields["password"],
         "pw-C-third"
     );
 }
@@ -379,15 +386,18 @@ fn history_is_append_only_and_restore_keeps_it_linear() {
 fn history_get_for_a_missing_version_is_not_found() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    assert_eq!(code(fx.s.history_get(&id, 9, PW.into())), "not_found");
-    assert_eq!(code(fx.s.history_restore(&id, 9, PW.into())), "not_found");
+    assert_eq!(code(fx.s.history_get(&id, 9, Some(PW.into()))), "not_found");
+    assert_eq!(
+        code(fx.s.history_restore(&id, 9, Some(PW.into()))),
+        "not_found"
+    );
 }
 
 #[test]
 fn saving_without_changes_writes_no_version() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     let sum =
         fx.s.item_update(&id, &b.token, b.version, b.draft.clone())
             .unwrap();
@@ -404,7 +414,7 @@ fn saving_without_changes_writes_no_version() {
 fn an_items_type_cannot_change() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     let mut d = b.draft.clone();
     d.item_type = ItemType::SecureNote;
     d.fields = BTreeMap::from([("body".into(), "text".into())]);
@@ -425,17 +435,20 @@ fn every_gated_command_rejects_a_wrong_password_and_changes_nothing() {
     fx.s.item_trash(&trashed).unwrap();
     let (v_before, n_before) = (fx.item_version(&id), fx.versions(&id));
 
-    assert_eq!(code(fx.s.item_reveal(&id, WRONG.into())), "wrong_password");
     assert_eq!(
-        code(fx.s.item_begin_edit(&id, WRONG.into())),
+        code(fx.s.item_reveal(&id, Some(WRONG.into()))),
         "wrong_password"
     );
     assert_eq!(
-        code(fx.s.history_get(&id, 1, WRONG.into())),
+        code(fx.s.item_begin_edit(&id, Some(WRONG.into()))),
         "wrong_password"
     );
     assert_eq!(
-        code(fx.s.history_restore(&id, 1, WRONG.into())),
+        code(fx.s.history_get(&id, 1, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, Some(WRONG.into()))),
         "wrong_password"
     );
     assert_eq!(
@@ -462,8 +475,8 @@ fn every_gated_command_rejects_a_wrong_password_and_changes_nothing() {
         "the trashed item is still there"
     );
     // the same calls with the right password succeed
-    fx.s.item_reveal(&id, PW.into()).unwrap();
-    fx.s.history_get(&id, 1, PW.into()).unwrap();
+    fx.s.item_reveal(&id, Some(PW.into())).unwrap();
+    fx.s.history_get(&id, 1, Some(PW.into())).unwrap();
 }
 
 #[test]
@@ -473,14 +486,15 @@ fn the_password_is_nfkc_normalized_like_at_creation() {
     s.create("caf\u{e9}-password".into()).unwrap(); // precomposed é
     let id = s.item_create(login("x", "pw-xxxxxxx")).unwrap().id;
     // decomposed e + combining acute
-    s.item_reveal(&id, "cafe\u{301}-password".into()).unwrap();
+    s.item_reveal(&id, Some("cafe\u{301}-password".into()))
+        .unwrap();
 }
 
 #[test]
 fn edit_tokens_are_single_use() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     assert_eq!(fx.s.test_token_count(), 1);
     let mut d = b.draft.clone();
     d.title = "GitHub 2".into();
@@ -499,7 +513,7 @@ fn edit_tokens_are_bound_to_item_and_version() {
     let fx = Fx::new();
     let a = fx.add("Alpha", "pw-a-aaaa");
     let b = fx.add("Beta", "pw-b-bbbb");
-    let ta = fx.s.item_begin_edit(&a, PW.into()).unwrap();
+    let ta = fx.s.item_begin_edit(&a, Some(PW.into())).unwrap();
 
     // wrong item: rejected and burned
     let mut d = ta.draft.clone();
@@ -512,7 +526,7 @@ fn edit_tokens_are_bound_to_item_and_version() {
     assert_eq!(fx.s.item_get(&b).unwrap().title, "Beta");
 
     // wrong expected version: rejected and burned
-    let ta = fx.s.item_begin_edit(&a, PW.into()).unwrap();
+    let ta = fx.s.item_begin_edit(&a, Some(PW.into())).unwrap();
     assert_eq!(
         code(fx.s.item_update(&a, &ta.token, 7, d.clone())),
         "token_invalid"
@@ -540,7 +554,7 @@ fn edit_tokens_are_bound_to_item_and_version() {
 fn edit_tokens_die_with_the_session_lock() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     fx.s.lock();
     let mut d = b.draft.clone();
     d.title = "after lock".into();
@@ -560,7 +574,7 @@ fn edit_tokens_die_with_the_session_lock() {
 fn edit_tokens_expire() {
     let fx = Fx::with_ttl(Duration::ZERO);
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     let mut d = b.draft.clone();
     d.title = "too late".into();
     assert_eq!(
@@ -574,7 +588,7 @@ fn edit_tokens_expire() {
 fn a_rejected_draft_keeps_the_token_so_the_input_can_be_fixed() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let b = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     let mut bad = b.draft.clone();
     bad.title = "   ".into();
     assert_eq!(
@@ -596,7 +610,7 @@ fn a_rejected_draft_keeps_the_token_so_the_input_can_be_fixed() {
 fn a_stale_edit_is_a_version_conflict_and_burns_the_token() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let first = fx.s.item_begin_edit(&id, PW.into()).unwrap(); // opened at v1
+    let first = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap(); // opened at v1
     fx.edit(&id, |d| d.title = "Changed elsewhere".into()); // now v2
     let mut d = first.draft.clone();
     d.title = "Stale".into();
@@ -617,9 +631,9 @@ fn a_stale_edit_is_a_version_conflict_and_burns_the_token() {
 fn outstanding_tokens_are_capped() {
     let fx = Fx::new();
     let id = fx.add("GitHub", "pw-one-111");
-    let first = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let first = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     for _ in 0..16 {
-        fx.s.item_begin_edit(&id, PW.into()).unwrap();
+        fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     }
     assert_eq!(fx.s.test_token_count(), 16);
     // the oldest one was evicted
@@ -639,6 +653,185 @@ fn creating_trashing_and_restoring_need_no_password() {
     assert_eq!(fx.s.item_get(&id).unwrap().title, "GitHub");
 }
 
+// ============================================================ per-item re-prompt
+
+#[test]
+fn an_ordinary_item_works_without_the_password_once_the_vault_is_open() {
+    let fx = Fx::new();
+    let mut d = login("Cloud", "pw-cloud-11");
+    d.fields.insert("totp".into(), "JBSWY3DPEHPK3PXP".into());
+    let id = fx.s.item_create(d).unwrap().id;
+    fx.edit(&id, |d| d.title = "Cloud 2".into());
+
+    assert_eq!(
+        fx.s.item_reveal(&id, None).unwrap().fields["password"],
+        "pw-cloud-11"
+    );
+    assert_eq!(fx.s.history_get(&id, 1, None).unwrap().title, "Cloud");
+    assert_eq!(fx.s.totp_now(&id, None).unwrap().code.len(), 6);
+    let b = fx.s.item_begin_edit(&id, None).unwrap();
+    assert_eq!(b.version, 2);
+    let mut edited = b.draft.clone();
+    edited.title = "Cloud 3".into();
+    assert_eq!(
+        fx.s.item_update(&id, &b.token, b.version, edited)
+            .unwrap()
+            .version,
+        3
+    );
+    let copy = fx.s.item_clone(&id, None).unwrap();
+    assert_eq!(copy.title, "Cloud 3 (copy)");
+    assert!(!copy.reprompt);
+    assert_eq!(fx.s.history_restore(&id, 1, None).unwrap().version, 4);
+}
+
+#[test]
+fn a_password_that_is_sent_is_always_checked_even_for_an_ordinary_item() {
+    let fx = Fx::new();
+    let id = fx.add("GitHub", "pw-one-111");
+    let before = (fx.item_version(&id), fx.versions(&id));
+    assert_eq!(
+        code(fx.s.item_reveal(&id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.item_begin_edit(&id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.item_clone(&id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.history_get(&id, 1, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!((fx.item_version(&id), fx.versions(&id)), before);
+    assert_eq!(fx.s.test_token_count(), 0);
+}
+
+#[test]
+fn an_item_with_the_reprompt_flag_asks_for_the_master_password_every_time() {
+    let fx = Fx::new();
+    let mut d = login("Bank", "pw-bank-111");
+    d.fields.insert("totp".into(), "JBSWY3DPEHPK3PXP".into());
+    d.reprompt = true;
+    let made = fx.s.item_create(d).unwrap();
+    let id = made.id.clone();
+    assert!(made.reprompt);
+    assert!(fx.s.item_list().unwrap()[0].reprompt);
+    assert!(
+        fx.s.item_get(&id).unwrap().reprompt,
+        "the masked view says so too"
+    );
+    fx.edit(&id, |d| d.title = "Bank 2".into()); // version 2
+
+    let (v, n) = (fx.item_version(&id), fx.versions(&id));
+    assert_eq!(code(fx.s.item_reveal(&id, None)), "password_required");
+    assert_eq!(code(fx.s.item_begin_edit(&id, None)), "password_required");
+    assert_eq!(code(fx.s.item_clone(&id, None)), "password_required");
+    assert_eq!(code(fx.s.history_get(&id, 1, None)), "password_required");
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, None)),
+        "password_required"
+    );
+    assert_eq!(code(fx.s.totp_now(&id, None)), "password_required");
+    assert_eq!(
+        code(fx.s.item_reveal(&id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.totp_now(&id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        (fx.item_version(&id), fx.versions(&id)),
+        (v, n),
+        "nothing changed"
+    );
+    assert_eq!(fx.s.test_token_count(), 0, "no token without the password");
+    assert_eq!(fx.s.item_list().unwrap().len(), 1, "no copy was made");
+
+    // with the right password everything works, and the clone keeps the flag
+    assert_eq!(
+        fx.s.item_reveal(&id, Some(PW.into())).unwrap().fields["password"],
+        "pw-bank-111"
+    );
+    assert_eq!(fx.s.totp_now(&id, Some(PW.into())).unwrap().code.len(), 6);
+    assert_eq!(
+        fx.s.history_get(&id, 1, Some(PW.into())).unwrap().title,
+        "Bank"
+    );
+    assert!(fx.s.item_clone(&id, Some(PW.into())).unwrap().reprompt);
+    fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
+}
+
+#[test]
+fn the_flag_is_a_normal_edit_and_shows_up_in_the_history_by_name_only() {
+    let fx = Fx::new();
+    let id = fx.add("GitHub", "pw-one-111");
+    assert!(!fx.s.item_list().unwrap()[0].reprompt);
+    // turning it on needs no password (it only adds protection) ...
+    let on = fx.edit(&id, |d| d.reprompt = true);
+    assert!(on.reprompt);
+    let history = fx.s.history_list(&id).unwrap();
+    assert_eq!(history[0].changed_fields, vec!["reprompt".to_string()]);
+    // ... turning it off starts from begin_edit, which now asks
+    assert_eq!(code(fx.s.item_begin_edit(&id, None)), "password_required");
+    let b = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
+    assert!(b.draft.reprompt);
+    let mut d = b.draft.clone();
+    d.reprompt = false;
+    assert!(
+        !fx.s
+            .item_update(&id, &b.token, b.version, d)
+            .unwrap()
+            .reprompt
+    );
+    assert!(fx.s.item_reveal(&id, None).is_ok());
+}
+
+#[test]
+fn the_flag_survives_a_restart_and_the_trash() {
+    let fx = Fx::new();
+    let id = fx.add("Bank", "pw-bank-111");
+    fx.edit(&id, |d| d.reprompt = true);
+    fx.s.item_trash(&id).unwrap();
+    fx.s.item_restore(&id).unwrap();
+    assert_eq!(code(fx.s.item_reveal(&id, None)), "password_required");
+    let again = fx.reopen();
+    again.unlock(PW.into()).unwrap();
+    assert!(again.item_list().unwrap()[0].reprompt);
+    assert_eq!(code(again.item_reveal(&id, None)), "password_required");
+    assert!(again.item_reveal(&id, Some(PW.into())).is_ok());
+    // trashed and unknown items keep their own errors, flag or not
+    fx.s.item_trash(&id).unwrap();
+    assert_eq!(code(fx.s.item_reveal(&id, None)), "in_trash");
+    assert_eq!(code(fx.s.item_reveal(MISSING, None)), "not_found");
+    assert_eq!(code(fx.s.totp_now(MISSING, None)), "not_found");
+}
+
+#[test]
+fn the_commands_that_never_had_a_per_item_exception_still_ask_every_time() {
+    // `item_purge` and `change_password` take a plain `String`: there is no way to call them without a password.
+    let fx = Fx::new();
+    let id = fx.add("Old", "pw-old-000");
+    fx.s.item_trash(&id).unwrap();
+    assert_eq!(
+        code(fx.s.item_purge(&id, WRONG.into(), "CONFIRM")),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.s.change_password(WRONG.into(), "another long password".into())),
+        "wrong_password"
+    );
+    fx.s.item_purge(&id, PW.into(), "CONFIRM").unwrap();
+}
+
 // ============================================================ trash
 
 #[test]
@@ -648,16 +841,19 @@ fn the_trash_hides_everything_but_title_and_time() {
     d.fields.insert("totp".into(), "JBSWY3DPEHPK3PXP".into());
     d.fields.insert("notes".into(), "very private note".into());
     let id = fx.s.item_create(d).unwrap().id;
-    let token = fx.s.item_begin_edit(&id, PW.into()).unwrap();
+    let token = fx.s.item_begin_edit(&id, Some(PW.into())).unwrap();
     fx.s.item_trash(&id).unwrap();
 
     assert_eq!(code(fx.s.item_get(&id)), "in_trash");
-    assert_eq!(code(fx.s.item_reveal(&id, PW.into())), "in_trash");
-    assert_eq!(code(fx.s.item_begin_edit(&id, PW.into())), "in_trash");
+    assert_eq!(code(fx.s.item_reveal(&id, Some(PW.into()))), "in_trash");
+    assert_eq!(code(fx.s.item_begin_edit(&id, Some(PW.into()))), "in_trash");
     assert_eq!(code(fx.s.history_list(&id)), "in_trash");
-    assert_eq!(code(fx.s.history_get(&id, 1, PW.into())), "in_trash");
-    assert_eq!(code(fx.s.history_restore(&id, 1, PW.into())), "in_trash");
-    assert_eq!(code(fx.s.totp_now(&id)), "in_trash");
+    assert_eq!(code(fx.s.history_get(&id, 1, Some(PW.into()))), "in_trash");
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, Some(PW.into()))),
+        "in_trash"
+    );
+    assert_eq!(code(fx.s.totp_now(&id, None)), "in_trash");
     assert_eq!(code(fx.s.item_trash(&id)), "in_trash");
     // an edit token handed out before the trashing cannot save into the trash
     assert_eq!(
@@ -704,7 +900,7 @@ fn restore_returns_full_access_with_a_new_version() {
     assert_eq!(sum.version, 3);
     assert_eq!(code(fx.s.item_restore(&id)), "not_in_trash");
     assert_eq!(
-        fx.s.item_reveal(&id, PW.into()).unwrap().fields["password"],
+        fx.s.item_reveal(&id, Some(PW.into())).unwrap().fields["password"],
         "bank-secret-pw"
     );
     assert!(fx.s.trash_list().unwrap().is_empty());
@@ -857,7 +1053,7 @@ fn totp_codes_are_computed_in_rust_and_the_secret_stays_inside() {
     let sum = fx.s.item_create(d).unwrap();
     assert!(sum.has_totp);
 
-    let now = fx.s.totp_now(&sum.id).unwrap();
+    let now = fx.s.totp_now(&sum.id, None).unwrap();
     assert_eq!(now.digits, 6);
     assert_eq!(now.period, 30);
     assert!((1..=30).contains(&now.seconds_remaining));
@@ -893,6 +1089,7 @@ fn totp_from_an_otpauth_uri_and_without_a_secret() {
         item_type: ItemType::Totp,
         title: "Acme".into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: BTreeMap::from([
@@ -903,11 +1100,11 @@ fn totp_from_an_otpauth_uri_and_without_a_secret() {
     };
     let sum = fx.s.item_create(d).unwrap();
     assert_eq!(sum.subtitle.as_deref(), Some("Acme"));
-    let now = fx.s.totp_now(&sum.id).unwrap();
+    let now = fx.s.totp_now(&sum.id, None).unwrap();
     assert_eq!((now.digits, now.period), (8, 60));
 
     let plain = fx.add("No code", "pw-plain-11");
-    assert_eq!(code(fx.s.totp_now(&plain)), "invalid_input");
+    assert_eq!(code(fx.s.totp_now(&plain, None)), "invalid_input");
 }
 
 #[test]
@@ -959,7 +1156,7 @@ fn everything_survives_closing_and_reopening() {
     );
     assert_eq!(again.trash_list().unwrap()[0].title, "Beta");
     assert_eq!(
-        again.item_reveal(&a, PW.into()).unwrap().fields["password"],
+        again.item_reveal(&a, Some(PW.into())).unwrap().fields["password"],
         "pw-a-changed"
     );
     assert_eq!(again.history_list(&a).unwrap().len(), 2);
@@ -987,9 +1184,9 @@ fn tampered_item_blobs_are_errors_and_never_panics() {
     });
     for r in [
         code(fx.s.item_get(&a)),
-        code(fx.s.item_reveal(&a, PW.into())),
-        code(fx.s.item_begin_edit(&a, PW.into())),
-        code(fx.s.totp_now(&a)),
+        code(fx.s.item_reveal(&a, Some(PW.into()))),
+        code(fx.s.item_begin_edit(&a, Some(PW.into()))),
+        code(fx.s.totp_now(&a, None)),
     ] {
         assert_eq!(r, "crypto");
     }
@@ -1071,10 +1268,13 @@ fn tampered_snapshots_fail_history_without_panicking() {
             .unwrap();
     });
     assert_eq!(code(fx.s.history_list(&id)), "crypto");
-    assert_eq!(code(fx.s.history_get(&id, 1, PW.into())), "crypto");
-    assert_eq!(code(fx.s.history_restore(&id, 1, PW.into())), "crypto");
+    assert_eq!(code(fx.s.history_get(&id, 1, Some(PW.into()))), "crypto");
+    assert_eq!(
+        code(fx.s.history_restore(&id, 1, Some(PW.into()))),
+        "crypto"
+    );
     // the intact snapshot is still readable and nothing changed
-    assert!(fx.s.history_get(&id, 2, PW.into()).unwrap().favorite);
+    assert!(fx.s.history_get(&id, 2, Some(PW.into())).unwrap().favorite);
     assert_eq!(fx.item_version(&id), 2);
 }
 
@@ -1121,9 +1321,12 @@ fn changing_the_password_re_seals_keys_only() {
         "no data is re-encrypted"
     );
     // the live session keeps working, with the new password for the guard
-    assert_eq!(code(fx.s.item_reveal(&id, PW.into())), "wrong_password");
     assert_eq!(
-        fx.s.item_reveal(&id, new_pw.into()).unwrap().fields["password"],
+        code(fx.s.item_reveal(&id, Some(PW.into()))),
+        "wrong_password"
+    );
+    assert_eq!(
+        fx.s.item_reveal(&id, Some(new_pw.into())).unwrap().fields["password"],
         "pw-a-aaaa"
     );
 
@@ -1184,7 +1387,7 @@ fn custom_fields_round_trip_in_order() {
         })
         .collect();
     let id = fx.s.item_create(d.clone()).unwrap().id;
-    let back = fx.s.item_reveal(&id, PW.into()).unwrap();
+    let back = fx.s.item_reveal(&id, Some(PW.into())).unwrap();
     assert_eq!(back.custom_fields, d.custom_fields);
     let view = fx.s.item_get(&id).unwrap();
     assert_eq!(view.custom_fields.len(), 5);

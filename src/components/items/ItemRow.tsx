@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { motion } from "motion/react";
-import { Archive, MoreHorizontal, Star, Timer } from "lucide-react";
+import { Archive, KeyRound, MoreHorizontal, Star, Timer } from "lucide-react";
 import type { ItemSummary } from "../../backend";
 import { relativeTime } from "../../lib/format";
 import { Avatar } from "../ui/Avatar";
@@ -31,6 +31,7 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
         role="option"
         aria-selected={selected}
         data-item-row
+        data-item-id={item.id}
         onClick={() => {
           if (suppressClick.current) { suppressClick.current = false; return; }
           onSelect();
@@ -63,6 +64,7 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
           <span className="whitespace-nowrap">{relativeTime(item.updatedAt)}</span>
           <span className="flex items-center gap-1.5">
             {item.archived && <Archive className="size-3.5" aria-label="Archived" />}
+            {item.reprompt && <KeyRound className="size-3.5 text-brass" aria-label="Asks for the master password" />}
             {showType && item.type !== "login" && <TypeIcon className="size-3.5" aria-hidden />}
             {item.hasTotp && <Timer className="size-3.5 text-verdigris" aria-label="Has a one-time code" />}
             {item.favorite && <Star className="size-3.5 fill-brass text-brass" aria-label="Favorite" />}

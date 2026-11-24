@@ -34,13 +34,31 @@ pub use vault_keys::{
 
 use serde::Serialize;
 
-/// Current UTC time in milliseconds since the Unix epoch (the timestamp unit used everywhere).
-pub fn now_millis() -> u64 {
+/// Where "now" comes from. The app installs the trusted clock (`crate::clock`: UTC checked online, the device
+/// date only as a fallback) at start-up; until then, and in the standalone crypto test crate, it is the device date.
+static TIME_SOURCE: std::sync::OnceLock<fn() -> u64> = std::sync::OnceLock::new();
+
+/// Replace the source of [`now_millis`]. Only the first call counts.
+pub fn install_time_source(source: fn() -> u64) {
+    let _ = TIME_SOURCE.set(source);
+}
+
+/// The device's own clock in UTC milliseconds since the Unix epoch. Anyone can change it in the settings.
+pub fn device_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Current UTC time in milliseconds since the Unix epoch (the timestamp unit used everywhere).
+/// Checked online time when the app has it, the device date otherwise (see `crate::clock`).
+pub fn now_millis() -> u64 {
+    match TIME_SOURCE.get() {
+        Some(source) => source(),
+        None => device_millis(),
+    }
 }
 
 /// Non-secret description of the crypto suite, shown on the UI status page.

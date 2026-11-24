@@ -134,6 +134,10 @@ struct Item {
     #[serde(default, deserialize_with = "lax_bool")]
     #[zeroize(skip)]
     favorite: Option<bool>,
+    /// 1 = ask for the master password again; 0 or missing = no.
+    #[serde(default, deserialize_with = "lax_i64")]
+    #[zeroize(skip)]
+    reprompt: Option<i64>,
     #[serde(default, deserialize_with = "nullable")]
     fields: Vec<Field>,
     login: Option<Login>,
@@ -248,6 +252,7 @@ fn convert(
     };
     let mut e = ImportedEntry::new(kind, s(&item.name));
     e.favorite = item.favorite.unwrap_or(false);
+    e.reprompt = item.reprompt == Some(1);
     e.source_id = item.id.clone();
     e.created = time(&item.created);
     e.modified = time(&item.revised);
@@ -446,6 +451,9 @@ mod tests {
         assert_eq!((p.entries.len(), p.skipped), (3, 0));
         let card = p.entries[0].to_draft().draft;
         assert_eq!(card.item_type, ItemType::Card);
+        assert!(card.reprompt, "reprompt 1 is kept");
+        assert!(!p.entries[1].to_draft().draft.reprompt, "reprompt 0 is off");
+        assert!(p.entries[2].to_draft().draft.reprompt);
         assert_eq!(card.folder.as_deref(), Some("Keys"));
         assert_eq!(card.fields["expMonth"], "01");
         assert_eq!(card.fields["cardholder"], "Jo Doe");

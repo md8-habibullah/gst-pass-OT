@@ -5,7 +5,9 @@ import {
   type AppSettings,
   type BackupTargetView,
   type BackupTestResult,
+  type ClockStatus,
   type CsvInspect,
+  type DeviceInfo,
   type DisguiseView,
   type EditSession,
   type ErrorCode,
@@ -31,7 +33,7 @@ import {
 const KNOWN: ReadonlySet<string> = new Set<ErrorCode>([
   "locked", "no_vault", "vault_exists", "wrong_password", "not_found", "in_trash", "not_in_trash",
   "version_conflict", "invalid_input", "confirmation_mismatch", "token_invalid", "storage", "crypto",
-  "profile_name_taken", "unsupported_file", "network", "remote",
+  "profile_name_taken", "unsupported_file", "network", "remote", "password_required", "wrong_answer",
 ]);
 
 /** The core rejects with the serialized Rust error ({code,message}) or, for framework errors, a string. */
@@ -69,8 +71,8 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
 
     listItems: () => call<ItemSummary[]>("item_list"),
     getItem: (id) => call<ItemView>("item_get", { id }),
-    revealItem: (id, password) => call<ItemDraft>("item_reveal", { id, password }),
-    beginEdit: (id, password) => call<EditSession>("item_begin_edit", { id, password }),
+    revealItem: (id, password) => call<ItemDraft>("item_reveal", { id, password: password ?? null }),
+    beginEdit: (id, password) => call<EditSession>("item_begin_edit", { id, password: password ?? null }),
     createItem: (draft) => call<ItemSummary>("item_create", { draft }),
     updateItem: (id, token, expectedVersion, draft) => call<ItemSummary>("item_update", { id, token, expectedVersion, draft }),
     trashItem: (id) => call("item_trash", { id }),
@@ -79,14 +81,14 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
     purgeItem: (id, password, confirmation) => call("item_purge", { id, password, confirmation }),
     archiveItem: (id) => call<ItemSummary>("item_archive", { id }),
     unarchiveItem: (id) => call<ItemSummary>("item_unarchive", { id }),
-    cloneItem: (id, password) => call<ItemSummary>("item_clone", { id, password }),
+    cloneItem: (id, password) => call<ItemSummary>("item_clone", { id, password: password ?? null }),
 
     listHistory: (id) => call<VersionEntry[]>("history_list", { id }),
     reviewOtherDevice: (id) => call<void>("item_review_other_device", { id }),
-    getVersion: (id, version, password) => call<ItemDraft>("history_get", { id, version, password }),
-    restoreVersion: (id, version, password) => call<ItemSummary>("history_restore", { id, version, password }),
+    getVersion: (id, version, password) => call<ItemDraft>("history_get", { id, version, password: password ?? null }),
+    restoreVersion: (id, version, password) => call<ItemSummary>("history_restore", { id, version, password: password ?? null }),
 
-    totpNow: (id) => call<TotpNow>("totp_now", { id }),
+    totpNow: (id, password) => call<TotpNow>("totp_now", { id, password: password ?? null }),
 
     listBackups: () => call<BackupTargetView[]>("backup_list"),
     testBackup: (input) => call<BackupTestResult>("backup_test", { input }),
@@ -106,10 +108,13 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
     gatePanic: () => call<GateOutcome>("gate_panic"),
     gateClose: () => call("gate_close"),
     gateConfigure: (input) => call<GateStatus>("gate_configure", { input }),
-    appReset: () => call("app_reset", { confirmedSteps: 3 }),
+    appResetChallenge: () => call<string>("app_reset_challenge"),
+    appReset: (answer) => call("app_reset", { confirmedSteps: 3, answer }),
     appSettingsGet: () => call<AppSettings>("app_settings_get"),
     appSettingsSet: (input) => call<AppSettings>("app_settings_set", { input }),
     activityPing: () => call("activity_ping"),
+    appLeave: () => call("app_leave"),
+    appReturn: () => call("app_return"),
     screenSecure: (on) => call("screen_secure", { on }),
     importPick: () => call<ImportPick | null>("import_pick"),
     importPickKeyfile: () => call<{ handle: string; fileName: string } | null>("import_pick_keyfile"),
@@ -124,6 +129,14 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
     fileDelete: (id, password) => call("file_delete", { id, password }),
     fileRead: (id) => call<ArrayBuffer>("file_read", { id }),
     fileSaveCopy: (id, password) => call<{ path: string } | null>("file_save_copy", { id, password }),
+    deviceGet: () => call<DeviceInfo>("device_get"),
+    deviceSetTimeZone: (zone) => call<DeviceInfo>("device_set_time_zone", { zone }),
+    deviceFinishSetup: () => call<DeviceInfo>("device_finish_setup"),
+    deviceSetTimeCheck: (on) => call<DeviceInfo>("device_set_time_check", { on }),
+    clockStatus: () => call<ClockStatus>("clock_status"),
+    clockSync: () => call<ClockStatus>("clock_sync"),
+    demoSpawn: () => call<ProfileInfo>("demo_spawn"),
+    demoOpen: () => call("demo_open"),
     disguiseGet: () => call<DisguiseView>("disguise_get"),
     disguiseSet: (input) => call<DisguiseView>("disguise_set", { input }),
   };

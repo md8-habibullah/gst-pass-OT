@@ -7,10 +7,12 @@ import type { Backend } from "./types";
 // DEV test aid: `&legacy=1` lets the UI run against an older shim binary that predates the app-level commands;
 // `&legacy=2` does the same but leaves `disguise_get` to the shim (for a binary that already has the disguise commands).
 const LEGACY: Record<string, unknown> = {
-  gate_status: { enabled: false, open: true, mode: "pin", biometricAvailable: false, biometric: false, panicButton: false, equation: null, attemptsLeft: null, streak: 0 },
+  gate_status: { enabled: false, open: true, mode: "pin", biometricAvailable: false, biometric: false, panicButton: false, equation: null, attemptsLeft: null, lockedForMs: null, lockedUntilMs: null, clockPending: false, finalAttempt: false, streak: 0 },
   disguise_get: { presetId: null, customName: null, lowercase: false, appliedName: "Hexis", note: null },
-  app_settings_get: { lockAfterMinutes: 15 },
+  app_settings_get: { lockAfterMinutes: 15, lockAfterLeaveSeconds: 300 },
   activity_ping: null,
+  app_leave: null,
+  app_return: null,
   sync_flush: { complete: true },
   screen_secure: null,
 };

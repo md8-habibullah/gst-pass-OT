@@ -1,14 +1,18 @@
-import { getBackend, type Backend, type BackupTargetInput, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type TrashEntry, type VaultStatus } from "../backend";
+import { getBackend, type Backend, type BackupTargetInput, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type TrashEntry, type VaultStatus } from "../backend";
+import { setDisplayZone } from "../lib/format";
 import { setBrand } from "./brand";
 import { createStore } from "./store";
+import { setLockIntent, type LockFlow } from "./ui";
 
 /**
- * gate     the optional Stage 1 app lock is closed; nothing about the accounts is shown yet
- * welcome  no account exists on this device yet
- * picker   several accounts exist and none is chosen
- * locked   one account is chosen; its master password is needed (always, never skipped by Stage 1)
+ * gate       the optional Stage 1 app lock is closed; nothing about the accounts is shown yet
+ * setup      no time zone has been chosen yet: the first page, mandatory
+ * preparing  the first vault is being made (a moment of key derivation)
+ * welcome    no account exists and the built-in vault could not be made: the plain create / import / restore choices
+ * picker     several accounts exist and none is chosen
+ * locked     one account is chosen; its master password is needed (the demo vault opens itself)
  */
-export type Phase = "boot" | "gate" | "welcome" | "picker" | "locked" | "ready" | "failed";
+export type Phase = "boot" | "gate" | "setup" | "preparing" | "welcome" | "picker" | "locked" | "ready" | "failed";
 
 export type Filter =
   | "all" | "logins" | "cards" | "identities" | "ssh" | "notes" | "media" | "files" | "favorites" | "codes" | "archive" | "trash"
@@ -35,6 +39,8 @@ export interface AppState {
   suite: SuiteInfo | null;
   /** Stage 1 app lock. Holds no secret: the equation, the attempts left and which mode to draw. */
   gate: GateStatus | null;
+  /** Install-wide settings (time zone, first-run flag, online time check). `null` until the core answered. */
+  device: DeviceInfo | null;
   /** Every account on this device, most recently used first. */
   profiles: ProfileInfo[];
   /** The account whose password is being asked for, or whose vault is open. */
@@ -69,6 +75,7 @@ export const app = createStore<AppState>({
   bootError: null,
   suite: null,
   gate: null,
+  device: null,
   profiles: [],
   profile: null,
   items: [],
@@ -82,6 +89,12 @@ export const app = createStore<AppState>({
   ...loadPrefs(),
 });
 
+/**
+ * Whether to call a vault "demo" on screen. Only until the first-run welcome was read: after that (and after any erase,
+ * which keeps that flag) the built-in vault is shown like any other, so a reset does not announce itself.
+ */
+export const isLabelledDemo = (device: DeviceInfo | null, p: ProfileInfo | null): boolean => p?.demo === true && device?.setupDone === false;
+
 const patch = (p: Partial<AppState>) => app.set((s) => ({ ...s, ...p }));
 
 let backend: Backend | null = null;
@@ -92,16 +105,32 @@ export function be(): Backend {
 
 const EMPTY_VAULT: Partial<AppState> = { items: [], trash: [], selectedId: null, query: "", filter: "all", toasts: [], justUnlocked: false };
 
-/** Re-reads the account list and decides which lock-screen view to start from. */
+/** Re-reads the account list and decides which lock-screen view to start from. No vault at all: make the built-in one. */
 async function settle(status: VaultStatus): Promise<void> {
   const list = await be().listProfiles();
+  if (list.profiles.length === 0) {
+    patch({ profiles: [], profile: null });
+    await spawnDemo();
+    return;
+  }
   const profile = status.profile ?? list.profiles.find((p) => p.id === list.selectedId) ?? null;
-  const phase: Phase = status.unlocked && profile ? "ready" : list.profiles.length === 0 ? "welcome" : profile ? "locked" : "picker";
+  const phase: Phase = status.unlocked && profile ? "ready" : profile ? "locked" : "picker";
   patch({ profiles: list.profiles, profile, phase });
 }
 
-/** After Stage 1 is open (or was never on): decide between first run, the account list and a password prompt. */
+/** The first page: no time zone is known yet, so nothing else is shown until one is chosen. */
+const needsZone = () => !app.get().device?.timeZone;
+
+/** After Stage 1 is open (or was never on): the time zone page on a first run, otherwise the account list or a password prompt. */
 async function enterAccounts(): Promise<void> {
+  if (needsZone()) {
+    patch({ phase: "setup" });
+    return;
+  }
+  await continueToAccounts();
+}
+
+async function continueToAccounts(): Promise<void> {
   await settle(await be().status());
   if (app.get().phase === "ready") await refresh();
   // One account and nothing selected yet: go straight to its password prompt.
@@ -112,9 +141,10 @@ async function enterAccounts(): Promise<void> {
 export async function boot(): Promise<void> {
   try {
     backend = await getBackend();
-    const [suite, gate, disguise] = await Promise.all([backend.suiteInfo(), backend.gateStatus(), backend.disguiseGet()]);
+    const [suite, gate, disguise, device] = await Promise.all([backend.suiteInfo(), backend.gateStatus(), backend.disguiseGet(), backend.deviceGet()]);
     setBrand(disguise);
-    patch({ suite, gate });
+    setDisplayZone(device.timeZone);
+    patch({ suite, gate, device });
     if (gate.enabled && !gate.open) {
       patch({ phase: "gate" });
       return;
@@ -123,6 +153,13 @@ export async function boot(): Promise<void> {
   } catch (e) {
     patch({ phase: "failed", bootError: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/** Reads the device settings again (zone, setup, time check), for a change made outside the screens. */
+export async function refreshDevice(): Promise<void> {
+  const device = await be().deviceGet();
+  setDisplayZone(device.timeZone);
+  patch({ device });
 }
 
 export async function refreshProfiles(): Promise<void> {
@@ -146,7 +183,9 @@ export async function refresh(): Promise<void> {
 async function preload(): Promise<void> {
   await refresh();
   const status = await be().status();
-  patch({ profile: status.profile ?? app.get().profile, syncRevision: status.syncRevision ?? 0 });
+  // keep the demo flag even from an older core that does not put it on the status
+  const known = app.get().profiles.find((p) => p.id === status.profile?.id);
+  patch({ profile: status.profile ? { ...status.profile, ...(known?.demo ? { demo: true } : {}) } : app.get().profile, syncRevision: status.syncRevision ?? 0 });
   const damaged = status.damagedItems ?? 0;
   if (damaged > 0) {
     pushToast({
@@ -211,7 +250,13 @@ export async function removeProfile(id: string, password: string, confirmation: 
   await be().removeProfile(id, password, confirmation);
   await refreshProfiles();
   const s = app.get();
-  if (s.profile?.id === id || s.profiles.length === 0) patch({ ...EMPTY_VAULT, profile: null, phase: s.profiles.length === 0 ? "welcome" : "picker" });
+  if (s.profiles.length === 0) {
+    // No vault is left: the built-in one takes its place, as on a first start.
+    patch({ ...EMPTY_VAULT, profile: null });
+    await spawnDemo();
+  } else if (s.profile?.id === id) {
+    patch({ ...EMPTY_VAULT, profile: null, phase: "picker" });
+  }
 }
 
 export async function unlock(password: string): Promise<void> {
@@ -219,16 +264,71 @@ export async function unlock(password: string): Promise<void> {
   await preload();
 }
 
+// ---- device settings, first run and the built-in vault ----
+
+/** Makes the built-in vault and opens it. A failure falls back to the plain create / import / restore screen. */
+async function spawnDemo(): Promise<void> {
+  patch({ ...EMPTY_VAULT, phase: "preparing", profile: null });
+  try {
+    const info = await be().demoSpawn();
+    await refreshProfiles();
+    patch({ profile: info });
+    await preload();
+    enterApp();
+  } catch {
+    // Nothing half-made stays behind (the core rolls back); the app must never be stuck on a splash.
+    patch({ phase: "welcome", profile: null });
+  }
+}
+
+/** The lock screen opens the built-in vault without a password: this is the core part of it. */
+export async function openDemo(): Promise<void> {
+  await be().demoOpen();
+  await preload();
+}
+
+/** Saves the zone every time is shown in. Everything the app stores stays UTC. */
+export async function chooseTimeZone(zone: string): Promise<void> {
+  const device = await be().deviceSetTimeZone(zone);
+  setDisplayZone(device.timeZone);
+  patch({ device });
+}
+
+/** The first page: remember the zone, then carry on to the accounts. An install that already had vaults is not a first run. */
+export async function confirmTimeZone(zone: string): Promise<void> {
+  await chooseTimeZone(zone);
+  const list = await be().listProfiles();
+  if (list.profiles.length > 0 && !app.get().device?.setupDone) patch({ device: await be().deviceFinishSetup() });
+  await continueToAccounts();
+}
+
+/** The one-time welcome over the demo was read. `go` carries on to a way of getting a real vault. */
+export async function finishFirstRun(go: LockFlow | null = null): Promise<void> {
+  patch({ device: await be().deviceFinishSetup() });
+  if (go) {
+    setLockIntent(go);
+    await showPicker();
+  }
+}
+
+export async function setTimeCheck(on: boolean): Promise<void> {
+  patch({ device: await be().deviceSetTimeCheck(on) });
+}
+
 // ---- Stage 1 gate ----
 
 const merge = (g: GateStatus | null, p: Partial<GateStatus>): GateStatus | null => (g ? { ...g, ...p } : g);
 
-/** A wipe (panic, the 15th failure, or the manual reset) ends here: the app looks freshly installed and says nothing. */
+/** A wipe (panic, the 16th failure, or the manual reset) ends here: the app looks freshly installed and says nothing. */
 async function afterWipe(): Promise<void> {
   const b = be();
-  const [gate, disguise] = await Promise.all([b.gateStatus(), b.disguiseGet()]);
+  const [gate, disguise, device] = await Promise.all([b.gateStatus(), b.disguiseGet(), b.deviceGet()]);
   setBrand(disguise);
-  patch({ ...EMPTY_VAULT, profiles: [], profile: null, gate, phase: "welcome" });
+  setDisplayZone(device.timeZone);
+  patch({ ...EMPTY_VAULT, profiles: [], profile: null, gate, device });
+  // The time zone survives the erase, so the new start has no setup page: it opens straight into the built-in vault.
+  if (needsZone()) patch({ phase: "setup" });
+  else await spawnDemo();
 }
 
 async function applyGateOutcome(out: GateOutcome): Promise<void> {
@@ -240,8 +340,21 @@ async function applyGateOutcome(out: GateOutcome): Promise<void> {
     await afterWipe();
   } else if (out.kind === "math") {
     patch({ gate: merge(app.get().gate, { equation: out.equation, streak: out.streak }) });
+  } else if (out.kind === "locked") {
+    // A wait is running: nothing was counted. Read the whole status so the countdown and the attempts are exact.
+    patch({ gate: merge(await b.gateStatus(), { lockedForMs: out.retryAfterMs, clockPending: out.clockPending }) });
+  } else if (out.lockedForMs !== null) {
+    // This failure started a wait: read the whole status so the end time (checked UTC) and the attempts are exact.
+    patch({ gate: await b.gateStatus() });
   } else {
-    patch({ gate: merge(app.get().gate, { equation: out.equation, attemptsLeft: out.attemptsLeft }) });
+    patch({
+      gate: merge(app.get().gate, {
+        equation: out.equation,
+        attemptsLeft: out.attemptsLeft,
+        lockedForMs: out.lockedForMs,
+        finalAttempt: out.attemptsLeft <= 1,
+      }),
+    });
   }
 }
 
@@ -258,8 +371,11 @@ export async function gateWithBiometric(): Promise<GateOutcome> {
 export async function gatePanic(): Promise<void> {
   await applyGateOutcome(await be().gatePanic());
 }
-export async function resetAppData(): Promise<void> {
-  await be().appReset();
+/** A new long sum for the last "erase everything" step. */
+export const resetChallenge = (): Promise<string> => be().appResetChallenge();
+/** Erases this device when `answer` is right; `wrong_answer` (and a used-up sum) otherwise. */
+export async function resetAppData(answer: string): Promise<void> {
+  await be().appReset(answer);
   await afterWipe();
 }
 export async function refreshGate(): Promise<GateStatus> {

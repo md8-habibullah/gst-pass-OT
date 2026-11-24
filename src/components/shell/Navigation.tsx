@@ -38,14 +38,14 @@ function useBackupSummary() {
 
 const TONE_DOT = { none: "bg-fog", ok: "bg-verdigris", busy: "bg-brass", bad: "bg-ember", untested: "bg-brass" } as const;
 
-/** Wide layout: glass sidebar with the account chip, grouped places with counts, and the real backup state. */
+/** Wide layout: sidebar with the account chip, grouped places with counts, and the real backup state. */
 export function Sidebar() {
   const brandName = useStore(brand, (b) => b.name);
   const filter = useStore(app, (s) => s.filter);
   const total = useCounts();
   const summary = useBackupSummary();
   return (
-    <nav aria-label="Main" className="glass flex h-full flex-col border-y-0 border-l-0 px-3 pt-4 pb-3">
+    <nav aria-label="Main" className="surface flex h-full flex-col border-y-0 border-l-0 px-3 pt-4 pb-3">
       <div className="mb-3 flex items-center gap-2.5 px-2.5">
         <VaultMark size={28} />
         <span className="font-display text-[1.3rem] leading-none font-semibold tracking-[-0.01em]">{brandName}</span>
@@ -102,7 +102,7 @@ export function Rail() {
   const itemFilterOn = !RAIL.flat().some((n) => n.filter === filter);
   void items;
   return (
-    <nav aria-label="Main" className="glass flex h-full flex-col items-center gap-1 border-y-0 border-l-0 py-4">
+    <nav aria-label="Main" className="surface flex h-full flex-col items-center gap-1 border-y-0 border-l-0 py-4">
       <VaultMark size={30} />
       <AccountChip compact className="mt-3" />
       <div className="no-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto">
@@ -135,7 +135,7 @@ export function BottomNav() {
   const filter = useStore(app, (s) => s.filter);
   useBackupSummary();
   return (
-    <nav aria-label="Main" className="glass-strong fixed inset-x-0 bottom-0 z-30 rounded-t-xl border-b-0 pt-1.5 pb-[calc(0.5rem+var(--safe-bottom))]">
+    <nav aria-label="Main" className="surface-float fixed inset-x-0 bottom-0 z-30 rounded-t-xl border-b-0 pt-1.5 pb-[calc(0.5rem+var(--safe-bottom))]">
       <ul className="mx-auto flex max-w-md justify-around px-2">
         {TABS.map((t) => {
           const on = t.owns.has(filter);

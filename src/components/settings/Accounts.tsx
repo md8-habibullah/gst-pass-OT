@@ -3,7 +3,8 @@ import { Pencil, Plus, Trash2, UserRound } from "lucide-react";
 import { BackendError, type ProfileInfo } from "../../backend";
 import { checkDisplayName, MAX_NAME_CHARS } from "../../lib/profileName";
 import { relativeTime } from "../../lib/format";
-import { app, pushToast, removeProfile, renameProfile, showPicker } from "../../state/app";
+import { DEMO_PASSWORD } from "../../lib/demo";
+import { app, isLabelledDemo, pushToast, removeProfile, renameProfile, showPicker } from "../../state/app";
 import { useStore } from "../../state/store";
 import { setLockIntent } from "../../state/ui";
 import { Avatar } from "../ui/Avatar";
@@ -45,6 +46,33 @@ function Rename({ profile, onClose }: { profile: ProfileInfo | null; onClose: ()
   );
 }
 
+/** The demo vault, introduced as a demo on the first screen: no password to type, it holds nothing real. */
+function RemoveDemo({ profile, onClose }: { profile: ProfileInfo; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function go() {
+    setBusy(true); setError(null);
+    try {
+      await removeProfile(profile.id, DEMO_PASSWORD, "CONFIRM");
+      pushToast({ kind: "info", text: "The demo vault was removed." });
+      onClose();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : "Could not remove the demo vault.");
+    }
+  }
+  return (
+    <div className="flex flex-col gap-4 pt-1">
+      <p>This removes the demo vault and its made-up items from this device. Your own vaults are not touched.</p>
+      {error && <p role="alert" className="text-[0.93em] text-ember">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Keep it</Button>
+        <Button variant="danger" busy={busy} onClick={() => void go()} icon={<Trash2 className="size-4" />}>Remove demo</Button>
+      </div>
+    </div>
+  );
+}
+
 function Remove({ profile, onClose }: { profile: ProfileInfo | null; onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -83,9 +111,10 @@ function Remove({ profile, onClose }: { profile: ProfileInfo | null; onClose: ()
 }
 
 /** The accounts on this device: rename, delete, add. */
-export function AccountsGroup() {
+export function AccountsGroup({ heading = true }: { heading?: boolean }) {
   const profiles = useStore(app, (s) => s.profiles);
   const current = useStore(app, (s) => s.profile);
+  const device = useStore(app, (s) => s.device);
   const [sheet, setSheet] = useState<{ kind: "rename" | "remove"; p: ProfileInfo } | null>(null);
   const close = () => setSheet(null);
 
@@ -96,8 +125,8 @@ export function AccountsGroup() {
 
   return (
     <section aria-label="Accounts" className="flex flex-col gap-2">
-      <h3 className="px-1 font-semibold">Accounts</h3>
-      <div className="glass overflow-hidden rounded-lg">
+      {heading && <h3 className="px-1 font-semibold">Accounts</h3>}
+      <div className="surface overflow-hidden rounded-lg">
         <p className="border-b border-hairline px-4 py-3 text-[0.93em] text-mist">
           Each account is its own vault with its own master password. Names are only labels, and must be different on this device.
         </p>
@@ -109,11 +138,13 @@ export function AccountsGroup() {
                 <Avatar title={p.displayName} size={38} />
                 <div className="min-w-0 flex-1 basis-40">
                   <p className="truncate font-semibold">{p.displayName}</p>
-                  <p className="text-[0.86em] text-mist">{on ? "Open now" : p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</p>
+                  <p className="text-[0.86em] text-mist">{isLabelledDemo(device, p) ? (on ? "Demo vault, open now" : "Demo vault") : on ? "Open now" : p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</p>
                 </div>
                 <div className="flex gap-1.5">
                   <Button className="min-h-8" icon={<Pencil className="size-3.5" />} onClick={() => setSheet({ kind: "rename", p })}>Rename</Button>
-                  <Button className="min-h-8 text-ember" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setSheet({ kind: "remove", p })}>Delete</Button>
+                  {!(isLabelledDemo(device, p) && profiles.length === 1) && (
+                    <Button className="min-h-8 text-ember" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setSheet({ kind: "remove", p })}>Delete</Button>
+                  )}
                 </div>
               </li>
             );
@@ -127,8 +158,8 @@ export function AccountsGroup() {
       <Sheet open={sheet?.kind === "rename"} onClose={close} title="Rename account" variant="dialog" size="sm">
         {sheet?.kind === "rename" && <Rename key={sheet.p.id} profile={sheet.p} onClose={close} />}
       </Sheet>
-      <Sheet open={sheet?.kind === "remove"} onClose={close} title="Delete this account?" variant="dialog" size="sm">
-        {sheet?.kind === "remove" && <Remove key={sheet.p.id} profile={sheet.p} onClose={close} />}
+      <Sheet open={sheet?.kind === "remove"} onClose={close} title={sheet && isLabelledDemo(device, sheet.p) ? "Remove the demo vault?" : "Delete this account?"} variant="dialog" size="sm">
+        {sheet?.kind === "remove" && (isLabelledDemo(device, sheet.p) ? <RemoveDemo key={sheet.p.id} profile={sheet.p} onClose={close} /> : <Remove key={sheet.p.id} profile={sheet.p} onClose={close} />)}
       </Sheet>
     </section>
   );

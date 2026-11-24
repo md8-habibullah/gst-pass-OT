@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, Plus, Search, Timer, X } from "lucide-react";
+import { ChevronRight, KeyRound, Plus, Search, Timer, X } from "lucide-react";
 import type { ItemSummary } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { groupDigits } from "../../lib/format";
@@ -16,10 +16,11 @@ import { useTotp } from "./FieldRows";
 import { viewItem } from "./actions";
 
 function CodeTile({ item }: { item: ItemSummary }) {
-  const { now, failed, remainingMs, seconds } = useTotp(item.id, true);
+  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(item.id, true, item.title);
   const tone = ringTone(seconds);
   const codeOnly = item.type === "totp";
   async function copy() {
+    if (locked) return void unlock().catch((e: unknown) => pushToast({ kind: "error", text: e instanceof Error ? e.message : "Could not show the code." }));
     if (!now) return;
     try {
       await copyText(now.code);
@@ -30,7 +31,7 @@ function CodeTile({ item }: { item: ItemSummary }) {
   }
   return (
     <li className="relative">
-      <button type="button" onClick={() => void copy()} disabled={!now} aria-label={now ? `Copy code for ${item.title}` : `${item.title}, loading`} className="pressable glass flex w-full items-center gap-3.5 rounded-lg py-3.5 pr-14 pl-4 text-left hover:bg-raised/70 pointer-coarse:py-4">
+      <button type="button" onClick={() => void copy()} disabled={!now && !locked} aria-label={now ? `Copy code for ${item.title}` : locked ? `Show code for ${item.title}. It asks for your master password.` : `${item.title}, loading`} className="pressable surface flex w-full items-center gap-3.5 rounded-lg py-3.5 pr-14 pl-4 text-left hover:bg-raised/70 pointer-coarse:py-4">
         <Avatar title={item.title} size={42} />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
@@ -39,7 +40,7 @@ function CodeTile({ item }: { item: ItemSummary }) {
           </span>
           <span className="block truncate text-[0.86em] text-mist">{item.subtitle ?? "Tap to copy"}</span>
           <span className={`mt-1 block font-mono text-[1.55rem] leading-8 font-medium tracking-[0.08em] tabular-nums ${tone === "critical" ? "text-ember" : "text-frost"}`}>
-            {failed ? <span className="text-[0.6em] text-ember">{failed}</span> : now ? groupDigits(now.code) : "••• •••"}
+            {failed ? <span className="text-[0.6em] text-ember">{failed}</span> : now ? groupDigits(now.code) : locked ? <span className="flex items-center gap-2 text-[0.62em] font-normal tracking-normal text-mist"><KeyRound className="size-4" aria-hidden /> Tap to show with your master password</span> : "••• •••"}
           </span>
         </span>
         {now && (

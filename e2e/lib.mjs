@@ -24,7 +24,7 @@ export class Core {
   constructor({ bin, data, port, args = [] }) { Object.assign(this, { bin, data, port, args }); this.proc = null; this.err = ""; }
   get ui() { return `http://localhost:${UI_PORT}/?e2e=${this.port}${process.env.LEGACY ? `&legacy=${process.env.LEGACY}` : ""}`; }
   async start() {
-    this.proc = spawn(this.bin, ["--data-dir", this.data, "--port", String(this.port), "--fast-kdf", ...this.args], { stdio: ["ignore", "ignore", "pipe"] });
+    this.proc = spawn(this.bin, ["--data-dir", this.data, "--port", String(this.port), "--fast-kdf", "--no-time-check", ...this.args], { stdio: ["ignore", "ignore", "pipe"] });
     this.proc.stderr.on("data", (d) => (this.err += d));
     for (let i = 0; i < 150; i++) {
       try { if ((await fetch(`http://127.0.0.1:${this.port}/health`)).ok) return; } catch { /* not yet */ }
@@ -61,18 +61,56 @@ export const waitText = (p, s, timeout = 10000) => p.waitFor(`document.body.inne
 export const waitGone = (p, s, timeout = 10000) => p.waitFor(`!document.body.innerText.includes(${JSON.stringify(s)})`, { timeout, label: `text gone “${s}”` });
 export const btn = (p, t) => p.click("button,[role=menuitem],[role=tab],[role=option]", t);
 export const nav = (p, label) => p.click('nav[aria-label="Main"] button:not([aria-label^="Account:"])', label);
+/** Chooses an option of a native <select> by its aria-label and fires the change React listens for. */
+export const setSelect = (p, label, value) => p.eval(`(()=>{const el=document.querySelector('select[aria-label=${JSON.stringify(label)}]'); if(!el) return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el, ${JSON.stringify(String(value))}); el.dispatchEvent(new Event('change',{bubbles:true})); return true;})()`);
 export const noDialog = (p, timeout = 12000) => p.waitFor(`!document.querySelector('[role=dialog]')`, { timeout, label: "dialog closed" });
 export async function reprompt(p, password) { await waitText(p, "Confirm it is you"); await p.typeLabel("Master password", password); await p.press("Enter"); await waitGone(p, "Confirm it is you"); }
-export async function createAccount(p, name, password) {
-  await btn(p, "Create a new vault");
+/** Settings, then one of its pages (these scripts run at desktop width, where the pages sit in a column on the left). */
+export const settingsPage = async (p, name) => { await nav(p, "Settings"); await p.click("nav[aria-label='Settings categories'] button", name); };
+/**
+ * A start with no accounts. A brand-new install shows the time zone page, then the demo vault with its welcome sheet; after
+ * an erase the zone is remembered, so the demo vault opens at once with no sheet. Either way the demo vault ends up open.
+ */
+export async function firstStart(p) {
+  await p.waitFor(`document.body.innerText.includes('Choose your time zone') || !!document.querySelector('button[aria-label^="Account: Hexis123"]')`, { timeout: 15000, label: "the zone page or the demo vault" });
+  if (await has(p, "Choose your time zone")) {
+    await btn(p, "Continue");
+    await waitText(p, "You are in a demo vault", 20000);
+  }
+}
+/** The shell is showing the demo vault (an erase, or a first start whose sheet has been answered). */
+export const waitDemoShell = (p, timeout = 15000) => p.waitFor(`!!document.querySelector('nav[aria-label="Main"]') && !!document.querySelector('button[aria-label^="Account: Hexis123"]')`, { timeout, label: "the demo vault" });
+/**
+ * Takes the demo vault away through the core (a start or an erase leaves one behind), then reloads so the page lists only the
+ * accounts a script makes. Done over IPC and not the Settings screen because some scripts run the core with a very short idle lock.
+ */
+export async function removeDemo(p) {
+  const port = await p.eval(`new URLSearchParams(location.search).get('e2e')`);
+  const call = async (cmd, args = {}) => (await fetch(`http://127.0.0.1:${port}/ipc`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd, args }) })).json();
+  const demo = ((await call("profile_list")).ok?.profiles ?? []).find((x) => x.demo);
+  if (!demo) return;
+  const r = await call("profile_remove", { id: demo.id, password: "Hexis123", confirmation: "CONFIRM" });
+  if (r.err) throw new Error(`the demo vault would not go: ${JSON.stringify(r.err)}`);
+  await p.goto(await p.eval(`location.href`));
+  await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 8000, label: "app shell after removing the demo" });
+}
+export async function createAccount(p, name, password, { skipBackup = true } = {}) {
+  if (await has(p, "You are in a demo vault")) await btn(p, "Create my own vault");
+  else {
+    if (await p.eval(`!!document.querySelector('nav[aria-label="Main"]')`)) { await p.click('button[aria-label^="Account:"]'); await btn(p, "Add account"); }
+    else if (await has(p, "Choose an account")) await btn(p, "Add account");
+    await btn(p, "Create a new vault");
+  }
   await p.typeLabel("Account name", name);
   await p.typeLabel("Master password", password);
   await p.typeLabel("Confirm master password", password);
   await p.click("input[type=checkbox]");
   await btn(p, "Create vault");
   await waitText(p, "Back up this vault?", 15000);
+  if (!skipBackup) return;
   await btn(p, "Skip for now");
   await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 8000, label: "app shell" });
+  await removeDemo(p); // the demo vault from a first start (or an erase) is still listed
 }
 export async function unlockUi(p, password) { await p.typeLabel("Master password", password); await p.press("Enter"); }
 export async function addLogin(p, fields) {

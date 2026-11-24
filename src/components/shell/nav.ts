@@ -112,4 +112,4 @@ export const FILTER_TYPE: Partial<Record<Filter, ItemType>> = {
 };
 
 /** Sub-pages reached from Settings on the compact layout (they get a back button). */
-export const SETTINGS_CHILDREN: ReadonlySet<Filter> = new Set<Filter>(["import", "export", "backup"]);
+export const SETTINGS_CHILDREN: ReadonlySet<Filter> = new Set<Filter>(["import", "export", "backup", "files"]);

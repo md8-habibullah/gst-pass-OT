@@ -4,11 +4,11 @@ Visual and interaction system for the Hexis UI (`src/`). Dark only. Written befo
 
 ## 1. Direction
 
-Hexis is opened for about ten seconds at a time, usually to copy one value, and the person must feel sure nothing leaks. The look is a **strongroom**: deep marine ground, frosted glass panes, a single brass "key" accent, tactile raised surfaces. References for quality (not for look-alikes): 1Password, Proton Pass, Apple Keychain.
+Hexis is opened for about ten seconds at a time, usually to copy one value, and the person must feel sure nothing leaks. The look is a **strongroom**: deep marine ground, flat panes with hairline edges, a single brass "key" accent. (The first version used frosted glass and a lattice; the Q5 pass in §9 removed both.) References for quality (not for look-alikes): 1Password, Proton Pass, Apple Keychain.
 
 Calibration notes (what we deliberately avoided): aurora/violet gradient glows, one identical rounded card per field, all-caps eyebrow labels, monospace for ordinary labels, `A · B · C` meta strings, arrows appended to buttons, emoji as icons.
 
-The one memorable element is the **unlock moment** (§6). The recurring motif is a faint **triangular lattice** in the ground (a nod to the lattice-based ML-KEM), which also gives the glass something real to blur.
+The one memorable element is the **unlock moment** (§6). The signature detail is the **brass key beside keycaps**: the key button is the one brass surface on a screen, and every keyboard shortcut is written as a small keycap.
 
 ## 2. Tokens
 
@@ -32,7 +32,7 @@ Defined once in `src/styles/tokens.css`; Tailwind utilities are generated from t
 | `ember` | `#F0737A` | danger text, low TOTP time | 6.1 / 5.3 / 4.6 |
 | `danger` | `#C23B44` | destructive button fill (white text 5.3) | – |
 
-Glass: fill `rgba(15, 32, 41, 0.58)`, hairline `rgba(190, 230, 240, 0.10)`, `backdrop-filter: blur(22px) saturate(1.35)`. Text over glass is always `frost`/`mist` and was measured on the lightest lattice point.
+Surfaces (`surface` utility, was `glass`): a solid fill from the marine ramp and a hairline `rgba(190, 230, 240, 0.10)`. No `backdrop-filter`, no lattice, no coloured glow. Text on a surface is always `frost`/`mist`.
 
 Colour is never the only signal: states also change shape, icon or text (e.g. TOTP low time also shortens the arc and pulses the digits once).
 
@@ -54,11 +54,11 @@ Sentence case everywhere. Line length stays under 70 characters (detail column m
 
 * Space: 4 px base, steps 4 · 8 · 12 · 16 · 20 · 24 · 32 · 48. Touch targets on `(pointer: coarse)` are at least 48 × 48 px; desktop controls are 32–36 px.
 * Radius is tiered by hierarchy, not uniform: **8** (inputs, buttons, chips) · **14** (rows, grouped panels) · **22** (sheets, lock card, glass shells) · full (avatars, FAB, rings).
-* Elevation (`--elev-1..4`) combines a top inner highlight, a 1 px dark bottom edge and a teal-tinted ambient shadow, so surfaces read as machined metal, not floating cards. Pressed controls sink 1 px and lose their highlight. The primary button has a subtle vertical tone shift (material, not decoration).
+* Elevation is a surface step plus a hairline; only a floating sheet or menu keeps a small neutral shadow. Pressed controls sink 1 px. (The first version's top highlights, brass glow and teal ambient shadows were removed in Q5.)
 
 ### Motion
 
-Tokens: `--dur-fast 120ms`, `--dur 200ms`, `--dur-slow 340ms`, `--ease-out cubic-bezier(.2,.8,.2,1)`, spring for sheets `{ stiffness: 420, damping: 38 }`. `MotionConfig reducedMotion="user"` plus a CSS `prefers-reduced-motion` override: transitions collapse to opacity, rings update without easing.
+Tokens (revised in Q5): `--dur-fast 80ms`, `--dur 120ms`, `--dur-slow 180ms`, one easing `cubic-bezier(.2,.8,.2,1)` (`src/lib/motion.ts` exports `EASE`, `DUR` and `tween` for Motion). No springs. `MotionConfig reducedMotion="user"` plus a CSS `prefers-reduced-motion` override: transitions collapse to opacity, rings update without easing.
 
 ## 3. Platform adaptation
 
@@ -90,7 +90,7 @@ Native follow-ups that need Rust/Android work and are not part of this UI pass: 
 * **Trash** — rows show only the title and "Deleted <time>". The detail states that the item must be restored to open it. **Delete forever** is two steps: warning, then master password plus typing the item name or `CONFIRM`. Nothing auto-expires and the copy says so.
 * **Settings** — Accounts, clipboard clear (15 / 30 / 60 s, default 30), change master password, "Backup and files" links (Backup, Import, Export), lock now, about (suite from `crypto_suite_info`). Lock timers and quick unlock are added when their backends exist.
 * **Feedback** — toasts with Undo for trash and archive; a copy toast with a ring that counts down to clipboard clearing; per-filter empty states that say what to do next.
-* **App lock gate (Stage 1)** — optional, set up in Settings → App lock. Full-screen card with one decoy: an arithmetic exercise (`(48 + 27) − 19 = ?`, Fraunces, tabular figures) above an answer box and the credential entry of the chosen mode: **PIN** keypad, **password** field (`inputMode="text"`), or the **numbered 3×3 grid** (a tap types the digit; dragging across two or more numbers draws a brass line and sends the sequence on release). Digits stay readable for the first three characters (they might be a maths answer) and are masked from the fourth. "Correct!" / "Incorrect, try again" are quiet one-liners; a wrong passcode of four or more characters shows a red banner with the exact attempts left. Biometric button only when the platform offers it. The reset is deliberately discreet: a small "?" mark and a long-press on the equation open a **three-step** confirmation (three different warnings, the last one the only "Erase everything"). The optional panic mark is a 10 px dot at the lower right that needs a 1.2 s hold or a double tap. A panic credential, a panic mark or the 15th failure ends on the first-run screen with no banner, toast or animation. The gate card never shows the app name or the Hexis mark.
+* **App lock gate (Stage 1)** — optional, set up in Settings → App lock. Full-screen card with one decoy: an arithmetic exercise (`(48 + 27) − 19 = ?`, Fraunces, tabular figures) above an answer box and the credential entry of the chosen mode: **PIN** keypad, **password** field (`inputMode="text"`), or the **numbered 3×3 grid** (a tap types the digit; dragging across two or more numbers draws a brass line and sends the sequence on release). Digits stay readable for the first three characters (they might be a maths answer) and are masked from the fourth. "Correct!" / "Incorrect, try again" are quiet one-liners; a wrong passcode of four or more characters shows a red banner with the exact attempts left (16 in all). After the 3rd, 6th, 9th, 12th and 15th wrong attempt the keypad refuses passcodes for a while and a panel counts the time down (1.5 min, 5 min, 45 min, 8 h, 3 days; "Nothing you type as a passcode is checked until then"). Before the last attempt a red "Last attempt" panel says a wrong passcode erases everything, and sending it asks "Send your last attempt?" with the number of digits typed. Biometric button only when the platform offers it. The reset is deliberately discreet: a small "?" mark and a long-press on the equation open a **three-step** confirmation (three different warnings; the last one shows a long sum and an answer field, and only a right answer enables the single "Erase everything" to work; a wrong answer erases nothing, says so and shows a new sum). The optional panic mark is a 10 px dot at the lower right that needs a 1.2 s hold or a double tap. A panic credential, a panic mark or the 16th failure ends on the first-run screen with no banner, toast or animation. The gate card never shows the app name or the Hexis mark.
 * **App icon and name** — Settings → App icon and name: the 11 presets as a radio grid of tiles (the original first), a lower-case switch, and a custom-name field. The chosen name and icon replace "Hexis" and the keyhole inside the app (sidebar, lock screens, window title). `assets/disguise/presets.json` is the source of the ids, names and tile colours; the icons are generated by `scripts/gen_disguise_icons.py`.
 * **Files** — sidebar entry and Settings link: list of encrypted files with Preview, Save copy, Rename and Delete (re-prompt), add up to 50 MB each. Item attachments use the same list inside the item detail. Preview sheet: images in an `<img>` from a blob URL, text in a mono block (first 2 MB), PDFs drawn page by page on canvases with pdf.js (loaded only when a PDF is opened). Bytes exist in the webview only while a preview is open.
 * **Import and export** — Import is a guided page: choose a file (the core opens the dialog and names the format from the content), confirm or correct the format, give a KeePass password and optional key file, match columns for an unknown CSV, pick how duplicates are handled, check the file (counts, warnings, names), import, then a reminder to delete the unencrypted source. Export offers the encrypted vault file and, behind a danger re-prompt and a plain warning, a readable Bitwarden JSON or CSV.
@@ -102,7 +102,7 @@ Native follow-ups that need Rust/Android work and are not part of this UI pass: 
 2. Re-prompt for edit, reveal, history secrets, restore-from-history, permanent delete, Clone, copying a secret from the item menu, copying a backup secret key, exporting a vault file and deleting an account. Create, archive/unarchive, trash and restore-from-trash are not gated.
 3. Trash is restricted in Rust; the UI additionally never offers actions that would fail.
 4. Clipboard: copying a secret schedules a clear after the configured time; the toast shows the countdown. Non-secret values (username, url) are not auto-cleared.
-5. No telemetry and no inline scripts. Fonts and icons are bundled. The webview makes no network requests at all; the only traffic leaving the machine is the Rust core talking to the S3 endpoints the user configured. Web addresses are opened by the core in the system browser, never inside the webview.
+5. No telemetry and no inline scripts. Fonts and icons are bundled. The webview makes no network requests at all; the only traffic leaving the machine is the Rust core talking to the S3 endpoints the user configured and, unless the person switches it off, the three-site time check (`ARCHITECTURE.md` D27). Web addresses are opened by the core in the system browser, never inside the webview.
 6. Honest status: the sidebar says "Local only" until a backup target exists, then reports real health and the time of the last successful upload; unavailable features are absent or explained, never faked.
 
 ## 6. The unlock moment (the single orchestrated animation)
@@ -143,3 +143,25 @@ Dev-only deep links for screenshots (preview backend only): `?vault=unlocked|loc
 ## 9. CSP
 
 `style-src 'self'` blocks `<style>` blocks and HTML `style=""` attributes, not styles set through the CSSOM. React's `style` prop and Motion animate via CSSOM. Verified so far in the real WebKitGTK window: the first-run screen (bundled fonts, lattice, glass, the SVG ring) renders correctly under the strict CSP. Not yet verified there: running Motion transitions (sheets, layout animations, the unlock moment); that is part of the manual smoke test in `CHANGELOG_AND_STATE.md`. Never add inline `<script>`/`<style>` tags or `dangerouslySetInnerHTML`.
+
+## 9. The Q5 pass (2026-11-24): shortcuts, layered settings, zone page, demo vault, less "AI" look
+
+**Direction (written with the `unslop` method).** Product: a private, local-first, post-quantum password vault. Character: quiet, exact, a little austere. World: a strongroom, a brass key, a ledger. Moments: the unlock, and the demo vault's list. Signature: the brass key beside keycaps. **Removed:** glass blur, the lattice, brass glow and gradients, the pulse, bevel highlights, brass-tinted fills, exclamation marks and decorative icons. **Not changed:** the logo's gradient (an existing brand asset).
+
+**Motion.** Every transition is 80, 120 or 180 ms on one easing. The pattern lock (`GridPad`) does not animate at all: no fade, no dimming while a code is checked; the line follows the finger through one SVG attribute written in `requestAnimationFrame`, and React re-renders only when a number is entered. A compact detail page slides in 160 ms. Reduced motion still collapses everything to opacity.
+
+**Shortcuts** (`src/lib/shortcuts.ts` is the one table; the overlay, Help and the handler in `components/shell/shortcuts.ts` all read it). 33 shortcuts in four groups: General, Go to, Items, Selected item. Writing: single keys (`n`, `/`, `?`), modifier combos (`Mod+K`, `Mod+Shift+L`; `Mod` is Ctrl, or Cmd on Apple platforms) and two-key chords (`g` then `a`, 1.5 s window). Single keys and chords are ignored while typing in a field or while a dialog is open; modifier combos, `F1` and `Esc` work anywhere. `?` or `F1` opens the overlay; Settings > Help and shortcuts shows the same table and the common questions.
+
+**Settings are layered.** Eight pages: Security, App lock, Accounts, Date and time, App icon and name, Backup and files, Help and shortcuts, About. A phone (compact layout) shows a list of pages with a one-line state each and drills into one page with a back control (the system back gesture too); a tablet and a desktop show the list as a column on the left and the page on the right. The page is kept when the person returns from Import, Export, Backup or Files (`SETTINGS_CHILDREN`).
+
+**First start.**
+1. *Choose your time zone* is always the first page: a searchable list (place name or `utc+06`), the device's zone suggested, no skip. Nothing is saved before Continue. A lock-screen gate, when one exists, comes before it.
+2. The app opens the demo vault "Hexis123" (a "Opening your vault" splash while it is made).
+3. A sheet, "You are in a demo vault", once: *Create my own vault*, *Open a vault file*, *Restore from a backup*, *Explore the demo*. Until it is answered the demo is labelled; after that it looks like any other vault. An existing install with vaults gets the zone page once and no sheet.
+4. After an erase or a forgotten-password reset the zone and the "setup done" flag survive (`device.json`), so the app opens straight into a fresh demo vault with no page and no label.
+
+**Lock screen.** A wide screen shows a product panel (three plain statements) beside the form; a phone shows the form alone. First-run choices live in the sheet above, not on the lock screen. Typography: Fraunces for names and headings, Instrument Sans for everything else.
+
+**Time on screen.** `lib/format.ts` holds the display zone (`setDisplayZone`); every date and time the UI writes goes through it. The Date and time page names the zone, the online check (switch, status, "Check now", the measured difference to this device's clock) and what is stored (UTC).
+
+**A CSS rule that matters.** The base `button { color: inherit }` reset sits in `@layer base`. Unlayered, it beat every Tailwind v4 utility and made all button text pale; keep every reset in a layer.

@@ -79,7 +79,7 @@ export function FileList({ itemId, emptyText, onChanged }: { itemId: string | nu
       {files === null ? null : files.length === 0 ? (
         <p className="rounded-lg bg-pane/60 px-4 py-6 text-center text-mist">{emptyText}</p>
       ) : (
-        <ul className="glass overflow-hidden rounded-lg">
+        <ul className="surface overflow-hidden rounded-lg">
           {files.map((f) => {
             const Icon = KIND_ICON[previewKind(f)];
             const can = previewKind(f) !== "none";

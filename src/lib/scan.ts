@@ -28,7 +28,8 @@ function setScanning(on: boolean) {
 export async function scanWithCamera(): Promise<string | null> {
   const scanner = await import("@tauri-apps/plugin-barcode-scanner");
   let state = await scanner.checkPermissions();
-  if (state !== "granted") state = await scanner.requestPermissions();
+  // The permission prompt is a system screen on top of the app: it must not count as leaving the app.
+  if (state !== "granted") state = await withNativeUi(() => scanner.requestPermissions());
   if (state !== "granted") throw new ScanError(`Camera access is turned off for ${brandName()}. Allow it in the app settings to scan QR codes.`, "denied");
   setScanning(true);
   try {

@@ -1,6 +1,6 @@
 // Disguise against the REAL core: preset, lower-case, custom name, persistence, validation, launcher file (Linux .desktop) in a temp XDG dir.
 import { readFileSync, existsSync } from "node:fs";
-import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, btn, nav, createAccount, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, btn, nav, createAccount, firstStart, waitDemoShell, settingsPage, runSteps } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const DATA = freshDir("d-data"), XDG = freshDir("d-xdg");
 const core = new Core({ bin: BIN, data: DATA, port: 1445, args: ["--xdg-data-home", XDG] });
@@ -10,14 +10,14 @@ const applied = async () => JSON.parse(await core.get("/e2e/disguise-applied").c
 const steps = []; const step = (name, fn) => steps.push({ name, fn });
 
 step("defaults: original look, window title Hexis", async (p) => {
-  await p.goto(core.ui); await waitText(p, "Welcome to");
+  await p.goto(core.ui); await firstStart(p);
   const v = await view(); check("nothing is disguised by default", v.presetId === null && v.customName === null && v.lowercase === false && v.appliedName === "Hexis", JSON.stringify(v));
   check("the page title is Hexis", (await p.eval("document.title")) === "Hexis");
   await createAccount(p, "Marlowe", PW);
 });
 
 step("pick Kerf: the core, the title, the lock screen and the launcher entry follow", async (p) => {
-  await nav(p, "Settings"); await waitText(p, "App icon and name");
+  await settingsPage(p, "App icon and name"); await waitText(p, "Your own name (optional)");
   await p.click('[role=radio]', "Kerf");
   await p.waitFor(`document.title === 'Kerf'`, { timeout: 8000 });
   const v = await view(); check("the core stored Kerf", v.presetId === "kerf" && v.appliedName === "Kerf", JSON.stringify(v));

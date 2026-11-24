@@ -1,6 +1,6 @@
 // Backup UI against the REAL core and the SigV4-verifying S3 mock: add/test, replication, failure and recovery, restore into a fresh account.
 import { spawn } from "node:child_process";
-import { Core, SP, check, finish, freshDir, walkFiles, scanFor, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, unlockUi, addLogin, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, scanFor, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, unlockUi, addLogin, runSteps } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const S3_PORT = 9333, S3_DATA = freshDir("b-s3"), DATA = freshDir("b-data"), DATA2 = freshDir("b-data2");
@@ -31,7 +31,7 @@ const targetText = (p) => p.eval(`document.querySelector('ul[aria-label="Backup 
 const steps = []; const step = (name, fn) => steps.push({ name, fn });
 
 step("account with two logins", async (p) => {
-  await p.goto(core.ui + legacy); await waitText(p, "Welcome to");
+  await p.goto(core.ui + legacy); await firstStart(p);
   await createAccount(p, MAR, PW);
   await addLogin(p, [["Title", "GitHub"], ["Username", "marlowe-dev"], ["Password", "Tr0ub4dor&3-horse"]]);
   await addLogin(p, [["Title", "Cloudflare"], ["Username", "ops@marlowe.example"], ["Password", "Zk9-plain-secret-77"]]);
@@ -84,7 +84,7 @@ step("no timers: an idle worker makes no requests", async () => {
 
 step("restore into a fresh device: items come back, the backup target reappears", async (p) => {
   await core.stop(); await core2.start();
-  await p.goto(core2.ui + legacy); await waitText(p, "Welcome to");
+  await p.goto(core2.ui + legacy); await firstStart(p);
   await btn(p, "Restore from a backup"); await waitText(p, "Restore from a backup");
   await p.typeLabel("Account name", "Restored");
   await fillTarget(p, { name: "" });
@@ -92,6 +92,7 @@ step("restore into a fresh device: items come back, the backup target reappears"
   await waitText(p, "Master password", 30000);
   await unlockUi(p, PW);
   await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 20000 });
+  check("the restored vault is the one that is open, not the demo", await p.eval(`!!document.querySelector('button[aria-label^="Account: Restored"]')`));
   await waitText(p, "GitHub"); await waitText(p, "Cloudflare"); await waitText(p, "Fastmail");
   check("all three items are back after the restore and the master password", true);
   await nav(p, "Backup"); await waitText(p, "Home bucket", 20000);

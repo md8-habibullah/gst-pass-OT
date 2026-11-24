@@ -10,6 +10,7 @@
 //! hooks the third one: the window `CloseRequested` event on desktop, and the mobile
 //! `Suspended` event (Android `onPause`). There are no timers, no tray icon and no notifications.
 
+pub mod clock;
 pub mod commands;
 pub mod crypto;
 pub mod disguise;
@@ -64,6 +65,8 @@ pub fn run() {
             state.core().gate().set_biometric(std::sync::Arc::new(
                 gate::biometric::PluginBiometric::new(app.handle().clone()),
             ));
+            // Start asking the time servers in the background (checked UTC time, see `clock`).
+            state.core().start_clock();
             app.manage(state);
             // The disguise: install the launcher (window, launcher entry) and re-apply the saved look.
             commands::disguise::install(app.handle());

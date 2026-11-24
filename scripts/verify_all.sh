@@ -34,6 +34,12 @@ if [ "$mode" = "--e2e" ] || [ "$mode" = "--e2e-only" ]; then
   for t in run real-gate real-drive real-import real-disguise real-backup real-sync; do
     [ -f "e2e/$t.mjs" ] && step "e2e: $t" node "e2e/$t.mjs"
   done
+  # Several buckets at once against real S3-compatible servers (two throw-away containers on loopback). Needs Docker.
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    step "e2e: real-multi-s3 (S3 servers in Docker)" node e2e/real-multi-s3.mjs
+  else
+    printf '\nskipped e2e: real-multi-s3 (Docker is not available)\n'
+  fi
 fi
 printf '\n%s\n' "$([ $fail = 0 ] && echo 'ALL CHECKS PASSED' || echo 'SOMETHING FAILED (see above)')"
 exit $fail

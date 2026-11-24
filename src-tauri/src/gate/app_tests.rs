@@ -38,11 +38,23 @@ fn code<T: std::fmt::Debug>(r: Result<T, StorageError>) -> &'static str {
     r.expect_err("expected an error").code()
 }
 
+/// `app_reset` the way the screen does it: ask for the long sum, then answer it (the test reads the answer from the core).
+fn erase(app: &AppCore, steps: u64) -> Result<(), StorageError> {
+    app.app_reset_challenge();
+    let answer = app
+        .gate()
+        .reset_answer()
+        .expect("a sum is waiting")
+        .to_string();
+    app.app_reset(steps, &answer)
+}
+
 fn login(title: &str) -> ItemDraft {
     ItemDraft {
         item_type: ItemType::Login,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: [("username", "ana@example.com"), ("password", "pw-111")]
@@ -206,7 +218,7 @@ fn the_session_is_gone_after_lock_switch_gate_close_wipe_remove_and_exit() {
     let fx = Fx::new();
     fx.account("Ana", PW);
     let s = fx.app.test_session();
-    fx.app.app_reset(3).unwrap();
+    erase(&fx.app, 3).unwrap();
     assert_session_gone(&s, "wipe");
 
     // quitting the app
@@ -228,6 +240,7 @@ fn the_idle_timer_drops_the_session_and_a_command_in_flight_never_races_it() {
     fx.app
         .app_settings_set(AppSettings {
             lock_after_minutes: 1,
+            ..AppSettings::default()
         })
         .unwrap();
     fx.app.before_command("item_list").unwrap();
@@ -272,6 +285,7 @@ fn with_the_gate_on_the_idle_lock_also_closes_the_gate_and_activity_postpones_it
     fx.app
         .app_settings_set(AppSettings {
             lock_after_minutes: 1,
+            ..AppSettings::default()
         })
         .unwrap();
     // pings keep both the vault and the gate open well past one period
@@ -383,6 +397,7 @@ fn nothing_that_could_unlock_a_vault_is_ever_written_to_disk() {
     fx.app
         .app_settings_set(AppSettings {
             lock_after_minutes: 5,
+            ..AppSettings::default()
         })
         .unwrap();
     fx.app.gate_close();
@@ -422,6 +437,91 @@ fn realistic(fx: &Fx) -> (String, String) {
 }
 
 #[test]
+fn erase_everything_needs_the_long_sum_and_a_wrong_answer_erases_nothing() {
+    let fx = Fx::new();
+    realistic(&fx);
+    // no sum was asked for: nothing is accepted
+    assert_eq!(code(fx.app.app_reset(3, "100")), "wrong_answer");
+    // with the gate closed the sum can still be asked for and answered (closing locks the vault, which tidies its
+    // journal files: the folder is compared from here on)
+    fx.app.gate_close();
+    let before = fx.tree();
+    fx.app.before_command("app_reset_challenge").unwrap();
+    let text = fx.app.app_reset_challenge();
+    assert!(text.len() > 12, "{text}");
+    let answer = fx.app.gate().reset_answer().unwrap();
+    assert_eq!(
+        code(fx.app.app_reset(3, &(answer + 1).to_string())),
+        "wrong_answer"
+    );
+    assert_eq!(fx.tree(), before, "a wrong answer erases nothing");
+    assert_eq!(
+        code(fx.app.app_reset(3, &answer.to_string())),
+        "wrong_answer",
+        "the sum was used up by the wrong answer"
+    );
+    assert_eq!(fx.tree(), before);
+    assert!(fx.app.gate().is_enabled());
+    // steps are checked before the sum, so a wrong step count never even uses the sum up
+    fx.app.app_reset_challenge();
+    assert_eq!(code(fx.app.app_reset(2, "1")), "invalid_input");
+    assert!(fx.app.gate().reset_answer().is_some());
+    // the right answer to a fresh sum erases
+    erase(&fx.app, 3).unwrap();
+    assert_eq!(fx.tree(), vec!["notes.txt".to_string()]);
+}
+
+#[test]
+fn leaving_the_app_locks_the_vault_after_the_chosen_time_and_not_before() {
+    // 0 seconds: the vault is locked the moment the person leaves
+    let fx = Fx::new();
+    fx.account("Ana", PW);
+    let s = fx.app.test_session();
+    fx.app
+        .app_settings_set(AppSettings {
+            lock_after_leave_seconds: 0,
+            ..AppSettings::default()
+        })
+        .unwrap();
+    fx.app.app_leave();
+    assert_session_gone(&s, "leaving the app");
+    assert_eq!(code(fx.app.item_list()), "locked");
+    fx.app.unlock(PW.into()).unwrap();
+    assert_eq!(fx.app.item_list().unwrap().len(), 1);
+
+    // 5 minutes: leaving and coming straight back keeps the vault open and every command works without a prompt
+    fx.app
+        .app_settings_set(AppSettings {
+            lock_after_leave_seconds: 300,
+            ..AppSettings::default()
+        })
+        .unwrap();
+    fx.app.app_leave();
+    fx.app.app_return();
+    assert!(fx.app.status().unwrap().unlocked);
+    assert_eq!(fx.app.item_list().unwrap().len(), 1);
+
+    // with the gate on, staying away longer than allowed locks the vault and closes the gate
+    let fx = Fx::new();
+    fx.account("Ana", PW);
+    fx.app.gate_configure(pin("2468", PW)).unwrap();
+    fx.app.gate().set_idle_unit(Duration::from_millis(200));
+    fx.app
+        .app_settings_set(AppSettings {
+            lock_after_minutes: 240,
+            lock_after_leave_seconds: 15,
+        })
+        .unwrap();
+    fx.app.app_leave();
+    let start = std::time::Instant::now();
+    while !fx.app.gate().is_closed() && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(fx.app.gate().is_closed());
+    assert!(!fx.app.test_session().status().unwrap().unlocked);
+}
+
+#[test]
 fn the_manual_reset_wipes_a_realistic_tree_and_leaves_the_app_at_first_run() {
     let fx = Fx::new();
     let (ana, bob) = realistic(&fx);
@@ -434,12 +534,12 @@ fn the_manual_reset_wipes_a_realistic_tree_and_leaves_the_app_at_first_run() {
 
     // wrong confirmations touch nothing
     for steps in [0, 1, 2, 4, 99] {
-        assert_eq!(code(fx.app.app_reset(steps)), "invalid_input", "{steps}");
+        assert_eq!(code(erase(&fx.app, steps)), "invalid_input", "{steps}");
     }
     assert!(fx.tree().contains(&format!("vaults/{bob}/vault.db")));
     assert!(fx.app.gate().is_enabled());
 
-    fx.app.app_reset(3).unwrap();
+    erase(&fx.app, 3).unwrap();
     assert_eq!(
         fx.tree(),
         vec!["notes.txt".to_string()],
@@ -470,7 +570,7 @@ fn the_manual_reset_wipes_a_realistic_tree_and_leaves_the_app_at_first_run() {
     assert!(fx.app.before_command("profile_list").is_ok());
 
     // a second wipe is a no-op, not an error
-    fx.app.app_reset(3).unwrap();
+    erase(&fx.app, 3).unwrap();
     assert_eq!(fx.tree(), vec!["notes.txt".to_string()]);
 
     // and the app is usable again from scratch
@@ -506,7 +606,7 @@ fn a_panic_pin_wipes_silently_with_exactly_the_wiped_outcome() {
 }
 
 #[test]
-fn the_panic_mark_and_the_fifteenth_failure_run_the_same_wipe() {
+fn the_panic_mark_and_the_sixteenth_failure_run_the_same_wipe() {
     // the mark
     let fx = Fx::new();
     realistic(&fx);
@@ -516,12 +616,13 @@ fn the_panic_mark_and_the_fifteenth_failure_run_the_same_wipe() {
     assert_eq!(fx.tree(), vec!["notes.txt".to_string()]);
     assert!(fx.app.profile_list().unwrap().profiles.is_empty());
 
-    // the 15th failure
+    // the 16th failure
     let fx = Fx::new();
     realistic(&fx);
     fx.app.gate_close();
+    fx.app.gate().set_lock_unit(Duration::ZERO);
     let mut last = None;
-    for i in 0..15 {
+    for i in 0..16 {
         last = Some(
             fx.app
                 .gate_submit(Zeroizing::new(format!("{:04}", 3000 + i)))
@@ -687,7 +788,7 @@ fn a_wipe_cut_off_after_the_key_bundles_leaves_vaults_that_cannot_be_opened() {
         assert!(restarted.unlock("anything else at all".into()).is_err());
     }
     // finishing the job later removes the rest
-    restarted.app_reset(3).unwrap();
+    erase(&restarted, 3).unwrap();
     assert_eq!(fx.tree(), vec!["notes.txt".to_string()]);
 }
 
@@ -720,12 +821,12 @@ fn a_refused_wipe_touches_nothing_locks_the_vault_and_leaves_the_gate_closed() {
         "a refused wipe never opens the gate"
     );
     assert_eq!(code(fx.app.before_command("profile_list")), "locked");
-    assert_eq!(code(fx.app.app_reset(3)), "storage");
+    assert_eq!(code(erase(&fx.app, 3)), "storage");
     assert_eq!(fx.tree(), before);
 
     // once the link is gone the same request works
     std::fs::remove_file(fx.root().join("disguise.json")).unwrap();
-    fx.app.app_reset(3).unwrap();
+    erase(&fx.app, 3).unwrap();
     assert!(fx.tree().is_empty());
     assert_eq!(std::fs::read(&target).unwrap(), b"keep");
 }
@@ -735,11 +836,11 @@ fn the_wipe_is_idempotent_on_an_empty_folder_and_never_removes_the_folder_or_its
     let parent = tempfile::tempdir().unwrap();
     let data = parent.path().join("data");
     let app = open_app(&data);
-    app.app_reset(3).unwrap();
-    app.app_reset(3).unwrap();
+    erase(&app, 3).unwrap();
+    erase(&app, 3).unwrap();
     assert!(data.is_dir(), "the data folder itself is not removed");
     std::fs::write(parent.path().join("precious.txt"), b"keep").unwrap();
-    app.app_reset(3).unwrap();
+    erase(&app, 3).unwrap();
     assert_eq!(
         std::fs::read(parent.path().join("precious.txt")).unwrap(),
         b"keep"

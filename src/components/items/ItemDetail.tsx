@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, ArrowLeft, EyeOff, ExternalLink, MoreHorizontal, Paperclip, Pencil, Star } from "lucide-react";
+import { ArchiveRestore, ArrowLeft, EyeOff, ExternalLink, KeyRound, MoreHorizontal, Paperclip, Pencil, Star } from "lucide-react";
 import { TYPE_LABEL, type ItemDraft, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { exactTime, relativeTime } from "../../lib/format";
 import { be, pushToast, app } from "../../state/app";
 import { useStore } from "../../state/store";
-import { reprompt } from "../reprompt/Reprompt";
+import { withItemPassword } from "../reprompt/Reprompt";
 import { Avatar } from "../ui/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { CountdownRing } from "../ui/Ring";
@@ -59,7 +59,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
 
   const ensureRevealed = useCallback(async (): Promise<ItemDraft | undefined> => {
     if (revealed && revealed.until > Date.now()) return revealed.draft;
-    const draft = await reprompt({ reason: `Show the secrets for “${title}” for ${REVEAL_MS / 1000} seconds.`, confirmLabel: "Reveal", run: (pw) => be().revealItem(id, pw) });
+    const draft = await withItemPassword({ reason: `Show the secrets for “${title}” for ${REVEAL_MS / 1000} seconds.`, confirmLabel: "Reveal", run: (pw) => be().revealItem(id, pw) });
     if (draft) setRevealed({ draft, until: Date.now() + REVEAL_MS, key: Date.now() });
     return draft;
   }, [revealed, id, title]);
@@ -103,6 +103,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
             <h2 className="flex items-center gap-2 font-display text-[1.65rem] leading-[1.15] font-semibold tracking-[-0.01em] break-words">
               {view.title}
               {view.favorite && <Star className="size-[18px] shrink-0 fill-brass text-brass" aria-label="Favorite" />}
+              {view.reprompt && <KeyRound className="size-[18px] shrink-0 text-brass" aria-label="Asks for the master password" />}
             </h2>
             <p className="mt-1 text-[0.93em] text-mist" title={exactTime(view.updatedAt)}>
               {TYPE_LABEL[view.type]}, edited {relativeTime(view.updatedAt)}
@@ -150,10 +151,10 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
         </div>
       )}
 
-      <div className="glass overflow-hidden rounded-lg">
+      <div className="surface overflow-hidden rounded-lg">
         {view.fields.filter((f) => f.hasValue).map((f) => {
           const shown = secrets?.fields[f.key];
-          if (f.kind === "totp") return <TotpValue key={f.key} id={id} onCopy={(c) => copyPlain("One-time code", c)} />;
+          if (f.kind === "totp") return <TotpValue key={f.key} id={id} title={title} onCopy={(c) => copyPlain("One-time code", c)} />;
           if (!f.secret) {
             return (
               <FieldRow
@@ -187,9 +188,9 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
               label={f.label}
               actions={
                 <>
-                  <RevealToggle revealed={shown !== undefined} onReveal={() => void ensureRevealed()} onHide={() => setRevealed(null)} />
+                  <RevealToggle revealed={shown !== undefined} asks={view.reprompt} onReveal={() => void ensureRevealed()} onHide={() => setRevealed(null)} />
                   <CopyButton
-                    label={`Copy ${f.label.toLowerCase()} (asks for your master password)`}
+                    label={`Copy ${f.label.toLowerCase()}${view.reprompt ? " (asks for your master password)" : ""}`}
                     onCopy={async () => {
                       const d = await ensureRevealed();
                       const value = d?.fields[f.key];
@@ -216,7 +217,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
               label={c.name}
               actions={
                 c.hidden ? (
-                  <RevealToggle revealed={shown !== undefined} onReveal={() => void ensureRevealed()} onHide={() => setRevealed(null)} />
+                  <RevealToggle revealed={shown !== undefined} asks={view.reprompt} onReveal={() => void ensureRevealed()} onHide={() => setRevealed(null)} />
                 ) : (
                   <CopyButton label={`Copy ${c.name.toLowerCase()}`} onCopy={() => copyPlain(c.name, c.value ?? "")} />
                 )

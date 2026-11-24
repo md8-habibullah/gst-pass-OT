@@ -32,6 +32,7 @@ struct Cols {
     totp: Option<usize>,
     folder: Option<usize>,
     favorite: Option<usize>,
+    reprompt: Option<usize>,
     kind: Option<usize>,
     tags: Option<usize>,
     fields: Option<usize>,
@@ -135,6 +136,7 @@ impl Cols {
                 ],
             ),
             favorite: find(h, &["favorite", "fav", "favourite", "starred"]),
+            reprompt: find(h, &["reprompt"]),
             kind: find(h, &["type", "itemtype", "kind"]),
             tags: find(h, &["tags", "tag", "labels"]),
             fields: find(h, &["fields", "customfields"]),
@@ -357,6 +359,7 @@ fn row_entry(format: ImportFormat, c: &Cols, row: &StringRecord) -> Row {
     let mut e = ImportedEntry::new(kind, get(c.title));
     e.source_id = Some(get(c.guid).trim().to_string()).filter(|s| !s.is_empty());
     e.favorite = truthy(get(c.favorite));
+    e.reprompt = truthy(get(c.reprompt));
     e.created = super::jsonutil::parse_iso(get(c.created)).or_else(|| {
         get(c.created)
             .trim()

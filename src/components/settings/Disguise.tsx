@@ -9,7 +9,7 @@ import { Field, Switch, TextInput } from "../ui/Inputs";
 import { VaultMark } from "../lock/VaultMark";
 
 /** "App icon and name": 11 neutral looks for the launcher, a lower-case option, and a name of your own. */
-export function DisguiseGroup() {
+export function DisguiseGroup({ heading = true }: { heading?: boolean }) {
   const [view, setView] = useState<DisguiseView | null>(null);
   const [custom, setCustom] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,8 +37,8 @@ export function DisguiseGroup() {
   const tile = "pressable flex w-[5.5rem] flex-col items-center gap-2 rounded-lg p-2 text-center";
   return (
     <section aria-label="App icon and name" className="flex flex-col gap-2">
-      <h3 className="px-1 font-semibold">App icon and name</h3>
-      <div className="glass flex flex-col gap-5 rounded-lg p-4">
+      {heading && <h3 className="px-1 font-semibold">App icon and name</h3>}
+      <div className="surface flex flex-col gap-5 rounded-lg p-4">
         <p className="text-[0.93em] text-mist">Change how the app looks in your launcher and on its own screens, so it does not announce what it is. The name is shown as <span className="font-medium text-frost">{view.appliedName}</span>.</p>
 
         <div role="radiogroup" aria-label="Icon" className="flex flex-wrap gap-2">

@@ -88,7 +88,7 @@ export function ImportView() {
     <PageBody>
       <PageHeader title="Import" back subtitle="Bring in passwords and codes from another manager, a browser, a KeePass file or an authenticator app." />
 
-      <section className="glass flex flex-col gap-4 rounded-lg p-5" aria-label="Choose a file">
+      <section className="surface flex flex-col gap-4 rounded-lg p-5" aria-label="Choose a file">
         <div className="flex flex-wrap items-center gap-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><FileUp className="size-5 text-brass" aria-hidden /></span>
           <div className="min-w-0 flex-1 basis-56">
@@ -166,7 +166,7 @@ export function ImportView() {
       </section>
 
       {preview && (
-        <section className="glass flex flex-col gap-4 rounded-lg p-5" aria-label="What will be imported">
+        <section className="surface flex flex-col gap-4 rounded-lg p-5" aria-label="What will be imported">
           <h3 className="font-semibold">{plural(total, "entry", "entries")} ready</h3>
           <ul className="flex flex-wrap gap-2 text-[0.93em]">
             <li className="rounded-full bg-raised px-3 py-1">{plural(preview.totpSeeds, "one-time code")}</li>

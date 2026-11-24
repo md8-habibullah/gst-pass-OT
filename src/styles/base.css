@@ -1,4 +1,4 @@
-/* Ground, lattice texture, focus, scrollbars and the tactile utilities. Spec: UI_DESIGN_SYSTEM.md §1-2. */
+/* Ground, focus, scrollbars and the surface utilities. Spec: UI_DESIGN_SYSTEM.md §1-2. */
 
 :root {
   color-scheme: dark;
@@ -36,23 +36,6 @@ body {
   }
 }
 
-/* The ground: a triangular lattice (spacing 32px) that fades away from the top-left corner.
-   It is the nod to lattice-based ML-KEM, and gives the glass panes something real to blur. */
-#root::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.34) 1.2px, transparent 1.9px),
-    radial-gradient(circle at 0 0, rgb(155 178 185 / 0.34) 1.2px, transparent 1.9px);
-  background-size: 32px 55.4256px;
-  background-position: 0 0, 16px 27.7128px;
-  -webkit-mask-image: radial-gradient(130% 100% at 14% 0%, #000 0%, rgb(0 0 0 / 0.6) 50%, rgb(0 0 0 / 0.12) 100%);
-  mask-image: radial-gradient(130% 100% at 14% 0%, #000 0%, rgb(0 0 0 / 0.6) 50%, rgb(0 0 0 / 0.12) 100%);
-}
-
 ::selection {
   background: rgb(226 178 89 / 0.32);
   color: var(--color-frost);
@@ -67,12 +50,16 @@ body {
   border-radius: inherit;
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+/* In the base layer, so a utility such as text-mist or the key button's dark label can override it. Unlayered, this rule
+   beat every utility on every button and made all of them frost-coloured. */
+@layer base {
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
 }
 button {
   cursor: pointer;
@@ -99,38 +86,32 @@ button:disabled {
   background-clip: padding-box;
 }
 
-/* Glass pane: frosted, hairline edge, lit from above. */
-@utility glass {
-  background: rgb(15 32 41 / 0.58);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
-  backdrop-filter: blur(22px) saturate(1.35);
+/* Surfaces. A pane is a solid step up from the ground with a hairline edge; a floating layer (menu, sheet, toast)
+   adds one neutral shadow. No blur, no glow. */
+@utility surface {
+  background: var(--color-pane);
   border: 1px solid var(--color-hairline);
-  box-shadow: var(--shadow-e2);
 }
-@utility glass-strong {
-  background: rgb(12 27 35 / 0.82);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  backdrop-filter: blur(28px) saturate(1.4);
+@utility surface-float {
+  background: var(--color-pane);
   border: 1px solid var(--color-hairline-strong);
-  box-shadow: var(--shadow-e4);
+  box-shadow: var(--shadow-e3);
 }
 
-/* Machined key button: tone shift for material, sinks 1px when pressed. */
+/* The key button: flat brass, one tone step on hover, sinks 1px when pressed. */
 @utility key-surface {
-  background: linear-gradient(180deg, #ecc271 0%, var(--color-brass) 52%, #d4a24c 100%);
+  background: var(--color-brass);
   color: var(--color-on-brass);
-  box-shadow: var(--shadow-key);
-  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), filter var(--dur-fast);
+  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast);
   &:hover:not(:disabled) {
-    filter: brightness(1.06);
+    background: var(--color-brass-hi);
   }
   &:disabled[aria-busy="true"] {
     cursor: progress;
   }
   &:active:not(:disabled) {
     transform: translateY(1px);
-    box-shadow: var(--shadow-key-down);
-    filter: brightness(0.97);
+    background: var(--color-brass-lo);
   }
   &:disabled:not([aria-busy="true"]) {
     background: rgb(226 178 89 / 0.15);
@@ -139,18 +120,16 @@ button:disabled {
   }
 }
 
-/* Secret pill: frosted so the value is physically behind glass. */
+/* Secret pill: a quiet inset field. */
 @utility frosted {
   background: rgb(155 178 185 / 0.1);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
   box-shadow: inset 0 0 0 1px rgb(190 230 240 / 0.08);
 }
 
 @utility pressable {
-  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast), box-shadow var(--dur-fast);
+  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast);
   &:active:not(:disabled) {
-    transform: translateY(1px) scale(0.985);
+    transform: translateY(1px);
   }
 }
 
@@ -208,9 +187,6 @@ button:disabled {
 html[data-scanning],
 html[data-scanning] body {
   background: transparent;
-}
-html[data-scanning] #root::before {
-  display: none;
 }
 html[data-scanning] #root > :not([data-scan-overlay]),
 html[data-scanning] body > :not(#root) {

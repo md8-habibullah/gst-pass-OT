@@ -245,6 +245,15 @@ impl Vault {
         }
     }
 
+    /// Does this item ask for the master password every time it is shown, copied, edited or cloned? Read from the
+    /// in-memory index, so it costs nothing. Errors like `require_active` for a trashed or unknown item.
+    pub fn requires_reprompt(&self, id: &str) -> Result<bool> {
+        match self.entry(id)? {
+            IndexEntry::Active(s) => Ok(s.reprompt),
+            IndexEntry::Trashed { .. } => Err(StorageError::InTrash),
+        }
+    }
+
     pub fn require_trashed(&self, id: &str) -> Result<()> {
         match self.entry(id)? {
             IndexEntry::Trashed { .. } => Ok(()),

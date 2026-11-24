@@ -5,6 +5,7 @@ import { DISGUISES } from "../lib/disguise";
 import { MAX_FILE_BYTES, MAX_FILE_LABEL, mimeFor } from "../lib/files";
 import { ImportError, parseImport, type ImportResult } from "../lib/importers";
 import { checkDisplayName } from "../lib/profileName";
+import { DEMO_NAME, DEMO_PASSWORD, demoSeeds } from "./mockDemo";
 import { MockGate } from "./mockGate";
 import {
   BackendError,
@@ -14,6 +15,8 @@ import {
   type Backend,
   type BackupTargetInput,
   type BackupTargetView,
+  type ClockStatus,
+  type DeviceInfo,
   type DisguiseInput,
   type DisguiseView,
   type FileEntry,
@@ -98,6 +101,14 @@ async function verify(password: string, p: MockProfile = selected()) {
   await delay(650); // stands in for Argon2id, which is slow on purpose
   if (password !== p.password) err("wrong_password", "That master password is not right.");
 }
+/**
+ * The per-item re-prompt, as the core does it: a password that is sent is always checked; without one the item must not
+ * have the `reprompt` flag (otherwise `password_required`).
+ */
+async function gateItem(s: Stored, password: string | undefined): Promise<void> {
+  if (password !== undefined) return verify(password);
+  if (s.draft.reprompt) err("password_required", "Enter your master password to do this with “" + s.draft.title + "”.");
+}
 function need(id: string): Stored {
   const s = items().get(id);
   if (!s) err("not_found", "That item no longer exists.");
@@ -160,6 +171,7 @@ function summarize(s: Stored): ItemSummary {
     title: d.title,
     subtitle: subtitleOf(d),
     favorite: d.favorite,
+    reprompt: d.reprompt,
     tags: d.tags,
     folder: d.folder,
     hasTotp: Boolean(d.fields.totp),
@@ -174,6 +186,7 @@ function diff(a: ItemDraft | null, b: ItemDraft): string[] {
   const out: string[] = [];
   if (a.title !== b.title) out.push("title");
   if (a.favorite !== b.favorite) out.push("favorite");
+  if (a.reprompt !== b.reprompt) out.push("reprompt");
   if (a.folder !== b.folder) out.push("folder");
   if (a.tags.join("\u0000") !== b.tags.join("\u0000")) out.push("tags");
   for (const k of new Set([...Object.keys(a.fields), ...Object.keys(b.fields)])) {
@@ -219,7 +232,7 @@ function seedItem(minsAgo: number, draft: ItemDraft, edits: { minsAgo: number; p
 }
 
 const login = (title: string, fields: Record<string, string>, extra: Partial<ItemDraft> = {}): ItemDraft => ({
-  type: "login", title, favorite: false, tags: [], folder: null, fields, customFields: [], ...extra,
+  type: "login", title, favorite: false, reprompt: false, tags: [], folder: null, fields, customFields: [], ...extra,
 });
 
 /** A tiny but valid PDF so the in-app PDF preview can be reviewed without a real file. */
@@ -268,11 +281,11 @@ function seedInto(p: MockProfile) {
     ]),
     seedItem(60 * 24 * 3, login("Northline Bank", { username: "4417 2208", password: "7!rBv-ka39Q#sdLm", url: "https://online.northline.example", notes: "Branch PIN is not stored here." }, { favorite: true, tags: ["finance"] })),
     seedItem(60 * 24 * 21, login("Cloudflare", { username: "marlowe@fastmail.example", password: "Zp3&yLk0!vWm8RtB", url: "https://dash.cloudflare.com", totp: "otpauth://totp/Cloudflare:marlowe?secret=MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U&issuer=Cloudflare&digits=6&period=30" }, { tags: ["work", "infra"] })),
-    seedItem(60 * 24 * 160, { type: "secureNote", title: "Home Wi-Fi", favorite: false, tags: ["home"], folder: null, fields: { body: "Network: Linden-5G\nPassword: marble-orchard-kettle-84\nRouter admin: 192.168.1.1 (admin / see router label)" }, customFields: [] }),
-    seedItem(60 * 24 * 30, { type: "secureNote", title: "Recovery codes", favorite: false, tags: ["work"], folder: null, fields: { body: "GitHub\n8f2a-91cc-d04e\n3b7d-62aa-1f90\ne1c5-77b8-0a4d\n\nCloudflare\n9d31-aa20-5be7" }, customFields: [] }),
-    seedItem(60 * 24 * 7, { type: "totp", title: "Google", favorite: false, tags: ["personal"], folder: null, fields: { issuer: "Google", account: "marlowe@example.com", totp: "otpauth://totp/Google:marlowe@example.com?secret=KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU&issuer=Google" }, customFields: [] }),
+    seedItem(60 * 24 * 160, { type: "secureNote", title: "Home Wi-Fi", favorite: false, reprompt: false, tags: ["home"], folder: null, fields: { body: "Network: Linden-5G\nPassword: marble-orchard-kettle-84\nRouter admin: 192.168.1.1 (admin / see router label)" }, customFields: [] }),
+    seedItem(60 * 24 * 30, { type: "secureNote", title: "Recovery codes", favorite: false, reprompt: false, tags: ["work"], folder: null, fields: { body: "GitHub\n8f2a-91cc-d04e\n3b7d-62aa-1f90\ne1c5-77b8-0a4d\n\nCloudflare\n9d31-aa20-5be7" }, customFields: [] }),
+    seedItem(60 * 24 * 7, { type: "totp", title: "Google", favorite: false, reprompt: false, tags: ["personal"], folder: null, fields: { issuer: "Google", account: "marlowe@example.com", totp: "otpauth://totp/Google:marlowe@example.com?secret=KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU&issuer=Google" }, customFields: [] }),
     seedItem(60 * 24 * 2, login("Proxmox lab", { username: "root@pam", password: "Cx8^pQe2!tVn7MsH", url: "https://pve.lab.example:8006" }, { tags: ["infra"], customFields: [{ name: "Node", value: "pve-02", hidden: false }, { name: "API token", value: "pve!ci=3f8a1c2e-77d4-4b1a-9e0c-5d2b8f6a1e44", hidden: true }] })),
-    seedItem(60 * 24 * 55, { type: "media", title: "Passport scan", favorite: false, tags: ["documents"], folder: null, fields: { description: "Front page, scanned 2025. Encrypted files can be attached once media support ships." }, customFields: [] }),
+    seedItem(60 * 24 * 55, { type: "media", title: "Passport scan", favorite: false, reprompt: false, tags: ["documents"], folder: null, fields: { description: "Front page, scanned 2025. Encrypted files can be attached once media support ships." }, customFields: [] }),
     seedItem(60 * 30, login("Atlas Registry", { username: "marlowe", password: "Wd6!kRm3^Ys9TqLz", url: "https://registry.atlas.example" })),
   ];
   const old1 = seedItem(60 * 24 * 200, login("Old VPN", { username: "mdev", password: "o1d-vpn-pass-0000", url: "https://vpn.legacy.example" }));
@@ -284,9 +297,9 @@ function seedInto(p: MockProfile) {
     items.push(s);
   }
   const extra: Stored[] = [
-    seedItem(60 * 24 * 6, { type: "card", title: "Northline Visa", favorite: false, tags: ["finance"], folder: null, fields: { cardholder: "M. Marlowe", brand: "Visa", number: "4111 1111 1111 4242", expMonth: "08", expYear: "2029", code: "913", pin: "4821" }, customFields: [] }),
-    seedItem(60 * 24 * 40, { type: "identity", title: "Personal details", favorite: false, tags: ["home"], folder: null, fields: { salutation: "Mx", firstName: "Marlowe", lastName: "Dean", email: "marlowe@example.com", phone: "+44 20 7946 0000", address1: "14 Linden Row", city: "Bristol", postalCode: "BS1 4DJ", country: "United Kingdom", passport: "563201948" }, customFields: [] }),
-    seedItem(60 * 24 * 9, { type: "sshKey", title: "Deploy key (edge-cluster)", favorite: false, tags: ["infra"], folder: null, fields: { publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ3x9bK2deploy marlowe@edge", privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----", fingerprint: "SHA256:Qm3vN8wLr2TmZxHq4vN8wLr2TmZxHq4vN8w" }, customFields: [] }),
+    seedItem(60 * 24 * 6, { type: "card", title: "Northline Visa", favorite: false, reprompt: false, tags: ["finance"], folder: null, fields: { cardholder: "M. Marlowe", brand: "Visa", number: "4111 1111 1111 4242", expMonth: "08", expYear: "2029", code: "913", pin: "4821" }, customFields: [] }),
+    seedItem(60 * 24 * 40, { type: "identity", title: "Personal details", favorite: false, reprompt: false, tags: ["home"], folder: null, fields: { salutation: "Mx", firstName: "Marlowe", lastName: "Dean", email: "marlowe@example.com", phone: "+44 20 7946 0000", address1: "14 Linden Row", city: "Bristol", postalCode: "BS1 4DJ", country: "United Kingdom", passport: "563201948" }, customFields: [] }),
+    seedItem(60 * 24 * 9, { type: "sshKey", title: "Deploy key (edge-cluster)", favorite: false, reprompt: false, tags: ["infra"], folder: null, fields: { publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ3x9bK2deploy marlowe@edge", privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----", fingerprint: "SHA256:Qm3vN8wLr2TmZxHq4vN8wLr2TmZxHq4vN8w" }, customFields: [] }),
   ];
   const archived = seedItem(60 * 24 * 300, login("Old Slack workspace", { username: "marlowe", password: "sl4ck-0ld-pass!", url: "https://oldteam.slack.example" }));
   archived.archived = true;
@@ -343,7 +356,7 @@ async function totpAt(raw: string, nowMs: number): Promise<TotpNow> {
 function view(s: Stored): ItemView {
   const d = s.draft;
   return {
-    id: s.id, type: d.type, title: d.title, favorite: d.favorite, tags: d.tags, folder: d.folder,
+    id: s.id, type: d.type, title: d.title, favorite: d.favorite, reprompt: d.reprompt, tags: d.tags, folder: d.folder,
     fields: FIELD_SCHEMA[d.type]
       .filter((spec) => d.fields[spec.key])
       .map((spec) => {
@@ -363,7 +376,22 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
   if (t.version !== expectedVersion) err("version_conflict", "This item changed since you opened it.");
 }
 
-const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info });
+// ---- device settings and the demo vault (same rules as the core; see storage/device.rs and storage/demo.rs) ----
+let device: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true };
+let demoId: string | null = null;
+const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info, ...(p.info.id === demoId ? { demo: true } : {}) });
+function seedDemo(p: MockProfile) {
+  p.store.clear();
+  for (const d of demoSeeds()) {
+    const s = seedItem(d.minsAgo, d.draft);
+    if (d.editedMinsAgo !== undefined && d.editedMinsAgo < d.minsAgo) {
+      const prev = clone(s.draft);
+      s.version += 1; s.updatedAt = Date.now() - d.editedMinsAgo * MIN;
+      snapshot(s, "edited", prev, null, s.updatedAt);
+    }
+    p.store.set(s.id, s);
+  }
+}
 
 function toView(t: MockTarget): BackupTargetView {
   const { secretAccessKey, queued, lastSuccessAt, lastCheckedAt, lastError, tested, ...rest } = t;
@@ -399,9 +427,17 @@ function importFor(o: ImportOptions): { result: ImportResult } {
   try { return { result: f.result ?? parseImport(f.text) }; } catch (e) { return err("unsupported_file", e instanceof ImportError ? e.message : "That file could not be read."); }
 }
 
+function clockView(): ClockStatus {
+  return { verified: device.timeCheck, enabled: device.timeCheck, skewMs: device.timeCheck ? 120 : null, checkedAgoMs: device.timeCheck ? 4_000 : null, sources: device.timeCheck ? 3 : 0, problem: null, nowMs: Date.now() };
+}
+
 export const gate = new MockGate();
-gate.onWipe = () => { profiles.length = 0; selectedId = null; unlocked = false; tokens.clear(); };
-let appSettings: AppSettings = { lockAfterMinutes: 5 };
+gate.onWipe = () => { profiles.length = 0; selectedId = null; unlocked = false; tokens.clear(); demoId = null; };
+let appSettings: AppSettings = { lockAfterMinutes: 5, lockAfterLeaveSeconds: 300 };
+// "After leaving the app": the preview follows the same rule as the core (the vault and, when on, the gate lock when the time away runs out).
+let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+let leaveDeadline = 0;
+function lockForAway() { leaveDeadline = 0; unlocked = false; tokens.clear(); gate.close(); }
 let disguise: DisguiseInput = { presetId: null, customName: null, lowercase: false };
 function disguiseView(): DisguiseView {
   const preset = DISGUISES.find((d) => d.id === disguise.presetId);
@@ -456,6 +492,7 @@ export const previewBackend: Backend = {
     const c = confirmation.trim();
     if (c !== "CONFIRM" && c !== p.info.displayName) err("confirmation_mismatch", "Type the account name or CONFIRM exactly.");
     profiles.splice(profiles.indexOf(p), 1);
+    if (demoId === id) demoId = null;
     if (selectedId === id) { selectedId = null; unlocked = false; tokens.clear(); }
   },
   async importProfileFile(displayName) {
@@ -504,9 +541,9 @@ export const previewBackend: Backend = {
     return [...items().values()].filter((s) => !s.deleted).map(summarize).sort((a, b) => b.updatedAt - a.updatedAt);
   },
   async getItem(id) { items(); await delay(50); return view(active(id)); },
-  async revealItem(id, password) { const s = active(id); await verify(password); return clone(s.draft); },
+  async revealItem(id, password) { const s = active(id); await gateItem(s, password); return clone(s.draft); },
   async beginEdit(id, password) {
-    const s = active(id); await verify(password);
+    const s = active(id); await gateItem(s, password);
     const token = crypto.randomUUID();
     tokens.set(token, { id, version: s.version, expires: Date.now() + 10 * MIN });
     return { token, draft: clone(s.draft), version: s.version };
@@ -564,7 +601,7 @@ export const previewBackend: Backend = {
     return summarize(s);
   },
   async cloneItem(id, password) {
-    const store = items(); const src = active(id); await verify(password);
+    const store = items(); const src = active(id); await gateItem(src, password);
     const now = Date.now();
     const d = clone(src.draft); d.title = `${d.title} (copy)`.slice(0, 256);
     const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
@@ -580,13 +617,13 @@ export const previewBackend: Backend = {
   async syncFlush() { return { complete: true }; },
   async screenSecure() { /* nothing to block in a browser preview */ },
   async getVersion(id, version, password) {
-    const s = active(id); await verify(password);
+    const s = active(id); await gateItem(s, password);
     const snap = s.history.find((h) => h.version === version);
     if (!snap) err("not_found", "That version does not exist.");
     return clone(snap.draft);
   },
   async restoreVersion(id, version, password) {
-    const s = active(id); await verify(password);
+    const s = active(id); await gateItem(s, password);
     const snap = s.history.find((h) => h.version === version);
     if (!snap) err("not_found", "That version does not exist.");
     const prev = clone(s.draft);
@@ -596,8 +633,8 @@ export const previewBackend: Backend = {
     return summarize(s);
   },
 
-  async totpNow(id) {
-    items(); const s = active(id);
+  async totpNow(id, password) {
+    items(); const s = active(id); await gateItem(s, password);
     const raw = s.draft.fields.totp;
     if (!raw) err("invalid_input", "This item has no one-time code.");
     return totpAt(raw, Date.now());
@@ -790,10 +827,57 @@ export const previewBackend: Backend = {
     const p = requireUnlocked(); await verify(input.masterPassword, p);
     try { return gate.configure(input); } catch (e) { return err("invalid_input", e instanceof Error ? e.message : "Could not save the app lock."); }
   },
-  async appReset() { gate.reset(); },
+  async appResetChallenge() { return gate.resetChallenge(); },
+  async appReset(answer) { if (!gate.reset(answer)) err("wrong_answer", "That is not the answer. Try the new sum."); },
   async appSettingsGet() { return { ...appSettings }; },
   async appSettingsSet(input) { appSettings = { ...input }; return { ...appSettings }; },
   async activityPing() { /* the preview never times out */ },
+  async appLeave() {
+    clearTimeout(leaveTimer);
+    const ms = appSettings.lockAfterLeaveSeconds * 1000;
+    if (ms === 0) { lockForAway(); return; }
+    leaveDeadline = Date.now() + ms;
+    leaveTimer = setTimeout(lockForAway, ms);
+  },
+  async appReturn() {
+    clearTimeout(leaveTimer);
+    const ranOut = leaveDeadline !== 0 && Date.now() >= leaveDeadline;
+    leaveDeadline = 0;
+    if (ranOut) lockForAway();
+  },
+  // ---- device settings, the clock and the demo vault ----
+  async deviceGet() { return { ...device }; },
+  async deviceSetTimeZone(zone) {
+    try { new Intl.DateTimeFormat("en", { timeZone: zone.trim() }); } catch { err("invalid_input", "Choose a time zone from the list, for example Asia/Dhaka or Europe/Berlin."); }
+    device = { ...device, timeZone: zone.trim() };
+    return { ...device };
+  },
+  async deviceFinishSetup() { device = { ...device, setupDone: true }; return { ...device }; },
+  async deviceSetTimeCheck(on) { device = { ...device, timeCheck: on }; return { ...device }; },
+  async clockStatus() { return clockView(); },
+  async clockSync() {
+    if (!device.timeCheck) err("invalid_input", "The online time check is switched off. Switch it on first.");
+    await delay(700);
+    return clockView();
+  },
+  async demoSpawn() {
+    if (profiles.length > 0) err("invalid_input", "A vault already exists on this device.");
+    await delay(500);
+    const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: DEMO_NAME, createdAt: Date.now(), lastUsedAt: Date.now() }, password: DEMO_PASSWORD, store: new Map(), targets: [], files: new Map() };
+    seedDemo(p);
+    profiles.push(p);
+    demoId = p.info.id;
+    selectedId = p.info.id; unlocked = true; tokens.clear();
+    return profileInfo(p);
+  },
+  async demoOpen() {
+    const p = profiles.find((x) => x.info.id === demoId);
+    if (!p) err("not_found", "That account no longer exists on this device.");
+    if (selectedId !== p.info.id) tokens.clear();
+    selectedId = p.info.id; unlocked = true;
+    p.info.lastUsedAt = Date.now();
+  },
+
   async disguiseGet() { return disguiseView(); },
   async disguiseSet(input) {
     const name = input.customName?.trim() ?? "";
@@ -812,6 +896,7 @@ export const previewBackend: Backend = {
 /** DEV deep links: create a profile that already holds the demo items (and a second, empty one for the picker). */
 export async function seedPreview(): Promise<void> {
   if (profiles.length > 0) return;
+  device = { ...device, setupDone: true, timeZone: device.timeZone ?? "Europe/London" };
   const a: MockProfile = { info: { id: crypto.randomUUID(), displayName: "Marlowe", createdAt: Date.now() - 40 * 86_400_000, lastUsedAt: Date.now() - 3_600_000 }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
   seedInto(a);
   a.targets.push(

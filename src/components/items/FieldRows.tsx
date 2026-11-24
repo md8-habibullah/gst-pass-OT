@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, Eye, EyeOff } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
 import { be } from "../../state/app";
+import { withItemPassword } from "../reprompt/Reprompt";
 import { charClass } from "../../lib/password";
 import { groupDigits } from "../../lib/format";
 import { ringTone, secondsLeft, TONE_COLOR } from "../../lib/totp";
-import type { TotpNow } from "../../backend";
-import { IconButton } from "../ui/Button";
+import { BackendError, type TotpNow } from "../../backend";
+import { Button, IconButton } from "../ui/Button";
 import { CountdownRing } from "../ui/Ring";
 
 /** Passwords are tinted by character class (letters, digits, symbols) so they can be read aloud or retyped. */
@@ -70,42 +71,65 @@ export function HiddenPill({ note }: { note?: boolean }) {
   );
 }
 
-export function RevealToggle({ revealed, onReveal, onHide }: { revealed: boolean; onReveal: () => void; onHide: () => void }) {
+/** `asks` is true for an item set to ask for the master password again: the label says so before the person taps. */
+export function RevealToggle({ revealed, onReveal, onHide, asks = false }: { revealed: boolean; onReveal: () => void; onHide: () => void; asks?: boolean }) {
   return revealed ? (
     <IconButton label="Hide" onClick={onHide}>
       <EyeOff className="size-[18px]" />
     </IconButton>
   ) : (
-    <IconButton label="Reveal (asks for your master password)" onClick={onReveal}>
+    <IconButton label={asks ? "Reveal (asks for your master password)" : "Reveal"} onClick={onReveal}>
       <Eye className="size-[18px]" />
     </IconButton>
   );
 }
 
-/** Live code + ring. The secret never reaches the UI: only the current code and its validity window. */
-export function useTotp(id: string, enabled: boolean) {
+/**
+ * Live code + ring. The secret never reaches the UI: only the current code and its validity window.
+ *
+ * An item that is set to ask for the master password again does not show a live code. It reports `locked` instead, and
+ * `unlock()` asks for the password and shows the code for its own 30 seconds (or whatever the period is), then locks again.
+ */
+export function useTotp(id: string, enabled: boolean, title = "this item") {
   const [now, setNow] = useState<TotpNow | null>(null);
   const [tick, setTick] = useState(() => Date.now());
   const [failed, setFailed] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  const relock = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    setNow(null);
+    setLocked(false);
+    setFailed(null);
     async function load() {
       try {
         const t = await be().totpNow(id);
         if (!alive) return;
         setNow(t);
         setFailed(null);
+        setLocked(false);
         timer = setTimeout(load, Math.max(250, t.validUntilMs - Date.now() + 40));
       } catch (e) {
-        if (alive) setFailed(e instanceof Error ? e.message : "Could not read the code.");
+        if (!alive) return;
+        if (e instanceof BackendError && e.code === "password_required") { setNow(null); setLocked(true); return; }
+        setFailed(e instanceof Error ? e.message : "Could not read the code.");
       }
     }
     void load();
-    return () => { alive = false; clearTimeout(timer); };
+    return () => { alive = false; clearTimeout(timer); clearTimeout(relock.current); };
   }, [id, enabled]);
+
+  const unlock = useCallback(async () => {
+    const t = await withItemPassword({ reason: `Show the one-time code for “${title}”.`, confirmLabel: "Show code", run: (pw) => be().totpNow(id, pw) });
+    if (!t) return;
+    setNow(t);
+    setLocked(false);
+    clearTimeout(relock.current);
+    relock.current = setTimeout(() => { setNow(null); setLocked(true); }, Math.max(0, t.validUntilMs - Date.now()));
+  }, [id, title]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -114,12 +138,22 @@ export function useTotp(id: string, enabled: boolean) {
   }, [enabled]);
 
   const remainingMs = now ? Math.max(0, now.validUntilMs - tick) : 0;
-  return { now, failed, remainingMs, seconds: now ? secondsLeft(now.validUntilMs, tick) : 0 };
+  return { now, failed, locked, unlock, remainingMs, seconds: now ? secondsLeft(now.validUntilMs, tick) : 0 };
 }
 
-export function TotpValue({ id, onCopy }: { id: string; onCopy: (code: string) => Promise<void> }) {
-  const { now, failed, remainingMs, seconds } = useTotp(id, true);
+export function TotpValue({ id, title, onCopy }: { id: string; title: string; onCopy: (code: string) => Promise<void> }) {
+  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(id, true, title);
   if (failed) return <FieldRow label="One-time code">{<span className="text-ember">{failed}</span>}</FieldRow>;
+  if (locked) {
+    return (
+      <FieldRow label="One-time code">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-mist">Hidden. This item asks for your master password.</span>
+          <Button className="min-h-8" icon={<KeyRound className="size-3.5" />} onClick={() => void unlock().catch(() => undefined)}>Show code</Button>
+        </div>
+      </FieldRow>
+    );
+  }
   const tone = ringTone(seconds);
   return (
     <FieldRow

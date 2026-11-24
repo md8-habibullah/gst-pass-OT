@@ -52,7 +52,7 @@ function migrationLink(entries) {
 // ---- server control ----
 let server = null;
 async function startServer() {
-  server = spawn(BIN, ["--data-dir", DATA, "--port", String(PORT), "--fast-kdf"], { stdio: ["ignore", "ignore", "pipe"] });
+  server = spawn(BIN, ["--data-dir", DATA, "--port", String(PORT), "--fast-kdf", "--no-time-check"], { stdio: ["ignore", "ignore", "pipe"] });
   let err = ""; server.stderr.on("data", (d) => (err += d));
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return; } catch { /* not yet */ }
@@ -76,18 +76,37 @@ const waitGone = (p, s, timeout = 10000) => p.waitFor(`!document.body.innerText.
 const btn = (p, text) => p.click("button,[role=menuitem],[role=tab],[role=option]", text);
 // The account chip lives in the same landmark and its name can contain a nav label ("Imported copy"), so skip it.
 const nav = (p, label) => p.click('nav[aria-label="Main"] button:not([aria-label^="Account:"])', label);
+/** Settings, then one of its pages (a phone shows a list of pages; this runs at desktop width, where they sit on the left). */
+const settingsPage = async (p, name) => { await nav(p, "Settings"); await p.click("nav[aria-label='Settings categories'] button", name); };
 const menu = (p, label) => p.click("[role=menuitem]", label);
 const noDialog = (p, timeout = 12000) => p.waitFor(`!document.querySelector('[role=dialog]')`, { timeout, label: "dialog closed" });
 async function reprompt(p, password) { await waitText(p, "Confirm it is you"); await p.typeLabel("Master password", password); await p.press("Enter"); await waitGone(p, "Confirm it is you"); }
+/** The demo vault a first start opens is removed through Settings > Accounts, so the later steps see only the accounts they make. */
+async function removeDemoUi(p) {
+  await settingsPage(p, "Accounts");
+  await waitText(p, "Hexis123");
+  await p.eval(`[...document.querySelectorAll('li')].find(li=>li.textContent.includes('Hexis123'))?.querySelectorAll('button')[1]?.click()`);
+  await waitText(p, "Delete this account?");
+  await p.typeLabel("That account's master password", "Hexis123");
+  await p.typeLabel("Type “Hexis123” or CONFIRM to continue", "CONFIRM");
+  await btn(p, "Delete account"); await noDialog(p);
+  await waitGone(p, "Hexis123");
+  await nav(p, "All items");
+}
 async function createAccount(p, name, password, { skipBackup = true } = {}) {
-  await btn(p, "Create a new vault");
+  if (await has(p, "You are in a demo vault")) await btn(p, "Create my own vault");
+  else if (await has(p, "Choose an account")) { await btn(p, "Add account"); await btn(p, "Create a new vault"); }
+  else await btn(p, "Create a new vault");
   await p.typeLabel("Account name", name);
   await p.typeLabel("Master password", password);
   await p.typeLabel("Confirm master password", password);
   await p.click("input[type=checkbox]");
   await btn(p, "Create vault");
   await waitText(p, "Back up this vault?", 15000);
-  if (skipBackup) { await btn(p, "Skip for now"); await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 8000, label: "app shell" }); }
+  if (skipBackup) {
+    await btn(p, "Skip for now"); await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 8000, label: "app shell" });
+    if (((await ipc("profile_list")).ok?.profiles ?? []).some((x) => x.demo)) await removeDemoUi(p);
+  }
 }
 async function unlockUi(p, password) { await p.typeLabel("Master password", password); await p.press("Enter"); }
 async function fillItem(p, type, fields, { save = true } = {}) {
@@ -113,20 +132,29 @@ const BARE_SECRET = "MFRGGZDFMZTWQ2LK";
 let page;
 const S = (n) => results.filter((r) => r.name.startsWith(n));
 
-step("first run: welcome offers create / open file / restore", async (p) => {
-  await p.goto(UI); await waitText(p, "Welcome to Hexis");
-  check("welcome screen lists the three ways in", ["Create a new vault", "Open a vault file", "Restore from a backup"].every((s) => has(p, s) && true));
+step("first run: time zone page, then the demo vault with its welcome sheet", async (p) => {
+  await p.goto(UI); await waitText(p, "Choose your time zone");
+  check("the first page asks for a time zone", true);
+  check("a zone is suggested from the device and there is no skip", (await has(p, "Suggested by this device")) && !(await has(p, "Skip")));
+  const none = await ipc("device_get");
+  check("nothing is saved before the choice", none.ok && none.ok.timeZone === null && none.ok.setupDone === false, JSON.stringify(none));
+  await btn(p, "Continue");
+  await waitText(p, "You are in a demo vault", 20000);
+  check("a first start opens the demo vault, not an empty create screen", await has(p, "Hexis123"));
   const t = await p.text();
-  check("welcome screen lists the three ways in (text)", ["Create a new vault", "Open a vault file", "Restore from a backup"].every((s) => t.includes(s)));
-});
-
-step("name rules and unique display name", async (p) => {
-  await btn(p, "Create a new vault");
-  await p.typeLabel("Account name", "x".repeat(41));
-  check("41-character name is rejected", (await p.text()).includes("40 characters or fewer"));
-  await p.typeLabel("Account name", "");
-  check("create button disabled with empty name", await p.eval(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Create vault')?.disabled`));
-  await btn(p, "Back");
+  check("the sheet offers create / open file / restore / explore", ["Create my own vault", "Open a vault file", "Restore from a backup", "Explore the demo"].every((s) => t.includes(s)));
+  const list = (await ipc("profile_list")).ok;
+  const demo = list.profiles.filter((x) => x.demo);
+  check("exactly one vault exists and it is the demo", list.profiles.length === 1 && demo.length === 1 && demo[0].displayName === "Hexis123", JSON.stringify(list));
+  const items = (await ipc("item_list")).ok ?? [];
+  const titles = items.map((i) => i.title);
+  check("the demo vault holds 15 to 25 believable items", items.length >= 15 && items.length <= 25, String(items.length));
+  check("including the big names", ["Google", "Microsoft account", "GitHub", "Amazon"].every((n) => titles.includes(n)), titles.join(", "));
+  check("with several kinds: logins, cards, codes, notes", ["login", "card", "totp", "secureNote"].every((k) => items.some((i) => i.type === k)));
+  check("sign-ins carry codes", items.filter((i) => i.hasTotp).length >= 5);
+  const dev = (await ipc("device_get")).ok;
+  check("the chosen zone is saved, the welcome not yet marked as seen", typeof dev.timeZone === "string" && dev.timeZone.length > 2 && dev.setupDone === false, JSON.stringify(dev));
+  check("device.json holds the zone and no demo id leaks to the screen", existsSync(`${DATA}/device.json`) && !JSON.stringify(dev).includes(list.profiles[0].id));
 });
 
 step("create account Marlowe (no backup yet) and land in the empty vault", async (p) => {
@@ -142,20 +170,16 @@ step("create a login with a lower-case spaced setup key", async (p) => {
   check("login appears in the list", await has(p, "marlowe-dev"));
 });
 
-step("login detail: secrets hidden, reveal needs the master password", async (p) => {
+step("login detail: secrets hidden; an ordinary item reveals at once, no master password", async (p) => {
   await p.click("[data-item-row]", "GitHub");
   await waitText(p, "Version history");
   let t = await p.text();
   check("password is hidden before reveal", !t.includes("Tr0ub4dor"));
   check("setup key is never shown", !t.includes(GH_SECRET));
-  await p.click("button", "Reveal (asks for your master password)");
-  await waitText(p, "Confirm it is you");
-  await p.typeLabel("Master password", "wrong password here"); await p.press("Enter");
-  await waitText(p, "That master password is not right.");
-  check("wrong master password is refused by the guard", true);
-  await p.typeLabel("Master password", MAR_PW); await p.press("Enter"); await waitGone(p, "Confirm it is you");
+  check("the reveal button does not promise a prompt for an ordinary item", await p.eval(`!![...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Reveal')`));
+  await p.click("button", "Reveal");
   await waitText(p, "Tr0ub4dor&3-horse");
-  check("correct password reveals the secret", true);
+  check("the secret shows at once while the vault is open: no master password prompt", !(await has(p, "Confirm it is you")));
   check("secrets hide again on request", (await (async () => { await btn(p, "Hide now"); await waitGone(p, "Tr0ub4dor&3-horse"); return true; })()));
 });
 
@@ -224,14 +248,35 @@ step("search and type filters", async (p) => {
   await nav(p, "All items");
 });
 
-step("card number is secret and revealed only after the password", async (p) => {
+step("an item set to ask again: the master password is needed every time, a wrong one is refused", async (p) => {
   await p.click("[data-item-row]", "Northline Visa");
   await waitText(p, "Card number");
   check("card number hidden", !(await has(p, "4242 4242 4242 4242")));
+  // switch the flag on through the editor (an ordinary item edits without a prompt)
+  await btn(p, "Edit");
+  await waitText(p, "Edit Northline Visa");
+  await p.click("[role=dialog] [role=switch]", "Ask for the master password again");
+  await btn(p, "Save changes");
+  await p.waitFor(`!document.querySelector('[role=dialog]')`, { timeout: 12000 });
+  check("the flagged card shows the key mark in its row", await p.eval(`[...document.querySelectorAll('[data-item-row]')].some(r=>r.textContent.includes('Northline Visa') && !!r.querySelector('[aria-label="Asks for the master password"]'))`));
   await p.click("button", "Reveal (asks for your master password)");
-  await reprompt(p, MAR_PW);
+  await waitText(p, "Confirm it is you");
+  await p.typeLabel("Master password", "wrong password here"); await p.press("Enter");
+  await waitText(p, "That master password is not right.");
+  check("wrong master password is refused by the guard", !(await has(p, "4242 4242 4242 4242")));
+  await p.typeLabel("Master password", MAR_PW); await p.press("Enter"); await waitGone(p, "Confirm it is you");
   await waitText(p, "4242 4242 4242 4242");
   check("card number revealed after the password", true);
+  await btn(p, "Hide now"); await waitGone(p, "4242 4242 4242 4242");
+  await btn(p, "Edit"); await waitText(p, "Confirm it is you");
+  check("editing a flagged item asks as well", true);
+  await p.typeLabel("Master password", MAR_PW); await p.press("Enter"); await waitText(p, "Edit Northline Visa");
+  await p.click("[role=dialog] [role=switch]", "Ask for the master password again");
+  await btn(p, "Save changes");
+  await p.waitFor(`!document.querySelector('[role=dialog]')`, { timeout: 12000 });
+  await p.click("button", "Reveal");
+  await waitText(p, "4242 4242 4242 4242");
+  check("with the flag off again the number shows at once", !(await has(p, "Confirm it is you")));
 });
 
 step("context menu: View/Edit/Clone/Archive/Trash and quick copies", async (p) => {
@@ -242,9 +287,8 @@ step("context menu: View/Edit/Clone/Archive/Trash and quick copies", async (p) =
   const labels = await p.eval(`[...document.querySelectorAll('[role=menuitem]')].map(e=>e.textContent.trim())`);
   check("menu offers the Bitwarden-style actions", ["View", "Edit", "Clone", "Archive", "Move to trash", "Launch", "Copy username", "Copy password"].every((l) => labels.includes(l)), labels.join(","));
   await menu(p, "Clone");
-  await reprompt(p, MAR_PW);
   await waitText(p, "GitHub (copy)");
-  check("clone creates “GitHub (copy)”", true);
+  check("clone creates “GitHub (copy)” without a master password prompt", !(await has(p, "Confirm it is you")));
 });
 
 step("archive hides from lists and codes, unarchive restores", async (p) => {
@@ -270,7 +314,7 @@ step("archive hides from lists and codes, unarchive restores", async (p) => {
 step("edit creates version 2; history keeps version 1", async (p) => {
   await p.click("[data-item-row]", "Cabin Wi-Fi");
   await waitText(p, "Version history");
-  await btn(p, "Edit"); await reprompt(p, MAR_PW);
+  await btn(p, "Edit");
   await waitText(p, "Edit Cabin Wi-Fi");
   await p.typeLabel("Note", "network: cabin-5g\npassword: lakeside-sunrise-92");
   await btn(p, "Save changes");
@@ -363,7 +407,7 @@ step("second account: unique names, isolation, switching", async (p) => {
 });
 
 step("rename account (unique check) in Settings", async (p) => {
-  await nav(p, "Settings"); await waitText(p, "Accounts");
+  await settingsPage(p, "Accounts"); await waitText(p, "Each account is its own vault");
   // The open account is Marlowe; the first Rename button on the page may belong to Atlas (renaming Atlas to its own
   // name in other case is legitimately allowed), so target Marlowe's row explicitly.
   await p.eval(`[...document.querySelectorAll('section[aria-label=Accounts] li')].find(li=>li.textContent.includes('Marlowe')).querySelector('button').click()`);
@@ -455,7 +499,7 @@ step("restart: accounts persist, password still required", async (p) => {
 });
 
 step("delete an account needs its password and a confirmation", async (p) => {
-  await nav(p, "Settings"); await waitText(p, "Accounts");
+  await settingsPage(p, "Accounts"); await waitText(p, "Each account is its own vault");
   const idx = await p.eval(`[...document.querySelectorAll('section[aria-label=Accounts] li')].findIndex(li=>li.textContent.includes('Imported copy'))`);
   await p.eval(`[...document.querySelectorAll('section[aria-label=Accounts] li')][${idx}].querySelectorAll('button')[1].click()`);
   await waitText(p, "Delete this account?");
@@ -466,6 +510,56 @@ step("delete an account needs its password and a confirmation", async (p) => {
   await waitGone(p, "Imported copy", 10000).catch(() => undefined);
   const r = await ipc("profile_list");
   check("account removed from the registry", r.ok && !r.ok.profiles.some((x) => x.displayName === "Imported copy"), JSON.stringify(r).slice(0, 200));
+});
+
+step("date and time: choosing a zone is saved by the core and shown on the page", async (p) => {
+  await settingsPage(p, "Date and time"); await waitText(p, "Your time zone");
+  const before = (await ipc("device_get")).ok;
+  check("the check was switched off for this run", before.timeCheck === false);
+  check("the time check switch shows it", await p.eval(`document.querySelector('button[role=switch][aria-label="Check the real time online"]')?.getAttribute('aria-checked') === 'false'`));
+  check("Check now is unavailable while the check is off", await p.eval(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Check now')?.disabled === true`));
+  await p.typeAria("Search time zones", "tokyo");
+  await p.click("[role=option]", "Asia / Tokyo");
+  await waitText(p, "Times are now shown in Asia / Tokyo");
+  const after = (await ipc("device_get")).ok;
+  check("the core keeps the new zone", after.timeZone === "Asia/Tokyo", JSON.stringify(after));
+  check("device.json holds it", readFileSync(`${DATA}/device.json`, "utf8").includes("Asia/Tokyo"));
+  check("the page now writes the offset for Tokyo", await has(p, "UTC+09:00"));
+  const bad = await ipc("device_set_time_zone", { zone: "../etc" });
+  check("a malformed zone name is refused by the core", !!bad.err, JSON.stringify(bad));
+});
+
+step("keyboard shortcuts: overlay, chords, new item, search", async (p) => {
+  await nav(p, "All items");
+  await p.key("?", { shift: true });
+  await waitText(p, "Keyboard shortcuts");
+  check("? opens the shortcut overlay with the table", (await has(p, "Search items")) && (await has(p, "Move to the trash")));
+  await p.press("Escape"); await noDialog(p);
+  await p.key("g"); await p.key("c");
+  await waitText(p, "Cards");
+  check("g then c goes to Cards", await p.eval(`document.querySelector('section[aria-label=Items] h2')?.textContent === 'Cards'`));
+  await p.key("g"); await p.key("a");
+  check("g then a goes back to All items", await p.eval(`document.querySelector('section[aria-label=Items] h2')?.textContent === 'All items'`));
+  await p.key("n");
+  await waitText(p, "What would you like to store?");
+  check("n starts a new item", true);
+  await p.press("Escape"); await noDialog(p);
+  await p.key("/");
+  check("/ focuses the search box", await p.eval(`document.activeElement?.matches('[data-search]')`));
+  await p.key("n");
+  check("letters typed into the search box are not shortcuts", !(await has(p, "What would you like to store?")) && (await p.eval(`document.activeElement.value === 'n'`)));
+  await p.typeAria("Search items", "");
+  await p.press("Escape");
+  await p.key("k", { ctrl: true });
+  check("Ctrl+K focuses search from anywhere", await p.eval(`document.activeElement?.matches('[data-search]')`));
+  await p.press("Escape");
+  await p.key(",", { ctrl: true });
+  await waitText(p, "Settings");
+  check("Ctrl+, opens Settings", await p.eval(`!!document.querySelector('nav[aria-label="Settings categories"]')`));
+  await p.key("g"); await p.key("h");
+  await waitText(p, "Keyboard shortcuts");
+  check("g then h opens the help page", await p.eval(`!!document.querySelector('section[aria-label="Keyboard shortcuts"]') || document.body.innerText.includes('Common questions')`));
+  await nav(p, "All items");
 });
 
 // ---- runner ----

@@ -2,10 +2,14 @@
 //!
 //! Tauri-free and fully testable. The command layer (`commands/`) is a thin wrapper.
 //!
-//! **Re-prompt rule** (`ai-docs/IPC_CONTRACT.md` §1): reveal, edit, history views, history
-//! restore, permanent delete and password change verify the master password with Argon2id on
-//! *every* call. The password is never stored. The Argon2id run happens **without** the session
-//! lock held, so other commands (and the UI) are not blocked behind it.
+//! **Re-prompt rule** (`ai-docs/IPC_CONTRACT.md` §1): permanent delete, password change, exports, attachments
+//! and backup secrets verify the master password with Argon2id on *every* call. Revealing, copying, editing,
+//! cloning and the history of ONE item need it only when that item has the "ask for the master password
+//! again" flag (`reprompt`, like Bitwarden's): the vault is already open, and the person typed the master
+//! password to open it. An item without the flag works directly; with the flag, a call without a password
+//! answers `password_required` and one with a wrong password `wrong_password`. A password that is sent is
+//! always verified, flagged item or not. The password is never stored. The Argon2id run happens **without** the
+//! session lock held, so other commands (and the UI) are not blocked behind it.
 
 use super::backup::{probe_config, BackupRuntime, BackupTargetInput, BackupTargetView, VaultLink};
 use super::db::Store;
@@ -232,6 +236,28 @@ impl Session {
         self.with_unlocked(op)
     }
 
+    /// The re-prompt guard for ONE item. No password: the item must not have the `reprompt` flag, and the check and
+    /// the operation happen in one visit to the lock (so the flag cannot change in between). A password: exactly
+    /// [`Self::gated`].
+    fn gated_item<T>(
+        &self,
+        id: &str,
+        password: Option<String>,
+        pre: impl FnOnce(&Unlocked) -> Result<()>,
+        op: impl FnOnce(&mut Unlocked) -> Result<T>,
+    ) -> Result<T> {
+        match password {
+            Some(password) => self.gated(password, pre, op),
+            None => self.with_unlocked(|u| {
+                pre(u)?;
+                if u.vault.requires_reprompt(id)? {
+                    return Err(StorageError::PasswordRequired);
+                }
+                op(u)
+            }),
+        }
+    }
+
     fn vault_file_has_bundle(&self) -> Result<bool> {
         if !self.path.exists() {
             return Ok(false);
@@ -418,22 +444,35 @@ impl Session {
         self.with_unlocked(|u| u.vault.history_list(id))
     }
 
-    pub fn totp_now(&self, id: &str) -> Result<TotpNow> {
-        self.with_unlocked(|u| u.vault.totp_now(id))
+    /// The current one-time code. An item with the re-prompt flag needs the master password for it too.
+    pub fn totp_now(&self, id: &str, password: Option<String>) -> Result<TotpNow> {
+        self.gated_item(
+            id,
+            password,
+            |u| u.vault.require_active(id),
+            |u| u.vault.totp_now(id),
+        )
     }
 
     // ------------------------------------------------------------------ password-gated reads
 
-    pub fn item_reveal(&self, id: &str, password: String) -> Result<ItemDraft> {
-        self.gated(
+    pub fn item_reveal(&self, id: &str, password: Option<String>) -> Result<ItemDraft> {
+        self.gated_item(
+            id,
             password,
             |u| u.vault.require_active(id),
             |u| u.vault.reveal(id).map(|(draft, _)| draft),
         )
     }
 
-    pub fn history_get(&self, id: &str, version: u64, password: String) -> Result<ItemDraft> {
-        self.gated(
+    pub fn history_get(
+        &self,
+        id: &str,
+        version: u64,
+        password: Option<String>,
+    ) -> Result<ItemDraft> {
+        self.gated_item(
+            id,
             password,
             |u| u.vault.require_active(id),
             |u| u.vault.history_get(id, version),
@@ -441,9 +480,10 @@ impl Session {
     }
 
     /// Verify the password, then hand out the editable content and a single-use edit token.
-    pub fn item_begin_edit(&self, id: &str, password: String) -> Result<BeginEdit> {
+    pub fn item_begin_edit(&self, id: &str, password: Option<String>) -> Result<BeginEdit> {
         let ttl = self.cfg.edit_token_ttl;
-        self.gated(
+        self.gated_item(
+            id,
             password,
             |u| u.vault.require_active(id),
             |u| {
@@ -511,8 +551,9 @@ impl Session {
     }
 
     /// Duplicate an item entirely inside Rust. Password-gated: it copies secrets.
-    pub fn item_clone(&self, id: &str, password: String) -> Result<ItemSummary> {
-        self.gated(
+    pub fn item_clone(&self, id: &str, password: Option<String>) -> Result<ItemSummary> {
+        self.gated_item(
+            id,
             password,
             |u| u.vault.require_active(id),
             |u| u.vault.clone_item(id),
@@ -541,8 +582,14 @@ impl Session {
         self.with_unlocked(|u| u.vault.review_other_device(id))
     }
 
-    pub fn history_restore(&self, id: &str, version: u64, password: String) -> Result<ItemSummary> {
-        self.gated(
+    pub fn history_restore(
+        &self,
+        id: &str,
+        version: u64,
+        password: Option<String>,
+    ) -> Result<ItemSummary> {
+        self.gated_item(
+            id,
             password,
             |u| u.vault.require_active(id),
             |u| u.vault.history_restore(id, version),

@@ -156,6 +156,10 @@ pub struct ItemDraft {
     pub title: String,
     #[serde(default)]
     pub favorite: bool,
+    /// "Ask for the master password again": revealing, copying, editing or cloning this item (or any of its old
+    /// versions) needs the master password every time, even while the vault is open. Off for ordinary items.
+    #[serde(default)]
+    pub reprompt: bool,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -338,7 +342,7 @@ impl ItemDraft {
 }
 
 /// Names of what differs between two drafts of the same type, never values.
-/// Order: title, favorite, tags, folder, field keys in schema order, customFields.
+/// Order: title, favorite, reprompt, tags, folder, field keys in schema order, customFields.
 pub fn changed_fields(old: &ItemDraft, new: &ItemDraft) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if old.title != new.title {
@@ -346,6 +350,9 @@ pub fn changed_fields(old: &ItemDraft, new: &ItemDraft) -> Vec<String> {
     }
     if old.favorite != new.favorite {
         out.push("favorite".into());
+    }
+    if old.reprompt != new.reprompt {
+        out.push("reprompt".into());
     }
     if old.tags != new.tags {
         out.push("tags".into());
@@ -438,6 +445,10 @@ pub struct ItemPayload {
     pub item_type: ItemType,
     pub title: String,
     pub favorite: bool,
+    /// Added after schema 1 shipped. Written only when on, so an item without the flag is sealed byte-for-byte
+    /// the way an older build seals it (an older build refuses a payload with a key it does not know).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reprompt: bool,
     pub tags: Vec<String>,
     pub folder: Option<String>,
     pub fields: BTreeMap<String, String>,
@@ -459,6 +470,10 @@ pub struct ItemPayload {
     pub parent: Option<ParentRef>,
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 impl Drop for ItemPayload {
     fn drop(&mut self) {
         wipe_values(&mut self.fields, &mut self.custom_fields);
@@ -474,6 +489,7 @@ impl ItemPayload {
             item_type: draft.item_type,
             title: String::new(),
             favorite: false,
+            reprompt: false,
             tags: Vec::new(),
             folder: None,
             fields: BTreeMap::new(),
@@ -497,6 +513,7 @@ impl ItemPayload {
     pub fn apply_draft(&mut self, draft: &ItemDraft) {
         self.title = draft.title.clone();
         self.favorite = draft.favorite;
+        self.reprompt = draft.reprompt;
         self.tags = draft.tags.clone();
         self.folder = draft.folder.clone();
         self.fields = draft.fields.clone();
@@ -508,6 +525,7 @@ impl ItemPayload {
             item_type: self.item_type,
             title: self.title.clone(),
             favorite: self.favorite,
+            reprompt: self.reprompt,
             tags: self.tags.clone(),
             folder: self.folder.clone(),
             fields: self.fields.clone(),
@@ -538,6 +556,7 @@ impl ItemPayload {
             title: self.title.clone(),
             subtitle: subtitle_of(self.item_type, &self.fields),
             favorite: self.favorite,
+            reprompt: self.reprompt,
             tags: self.tags.clone(),
             folder: self.folder.clone(),
             has_totp: self.fields.contains_key("totp"),
@@ -571,6 +590,7 @@ impl ItemPayload {
             item_type: self.item_type,
             title: self.title.clone(),
             favorite: self.favorite,
+            reprompt: self.reprompt,
             tags: self.tags.clone(),
             folder: self.folder.clone(),
             fields,
@@ -673,6 +693,8 @@ pub struct ItemSummary {
     pub title: String,
     pub subtitle: Option<String>,
     pub favorite: bool,
+    /// The item asks for the master password every time it is revealed, copied, edited or cloned.
+    pub reprompt: bool,
     pub tags: Vec<String>,
     pub folder: Option<String>,
     pub has_totp: bool,
@@ -716,6 +738,7 @@ pub struct ItemView {
     pub item_type: ItemType,
     pub title: String,
     pub favorite: bool,
+    pub reprompt: bool,
     pub tags: Vec<String>,
     pub folder: Option<String>,
     pub fields: Vec<FieldView>,
@@ -800,6 +823,7 @@ mod tests {
             item_type: ItemType::Login,
             title: title.into(),
             favorite: false,
+            reprompt: false,
             tags: vec![],
             folder: None,
             fields: BTreeMap::from([
@@ -914,6 +938,7 @@ mod tests {
             item_type: ItemType::SecureNote,
             title: "Wifi".into(),
             favorite: false,
+            reprompt: false,
             tags: vec![],
             folder: None,
             fields: BTreeMap::from([("password".into(), "x".into())]),
@@ -930,6 +955,7 @@ mod tests {
             item_type: ItemType::Totp,
             title: "Acme".into(),
             favorite: false,
+            reprompt: false,
             tags: vec![],
             folder: None,
             fields: BTreeMap::new(),
@@ -1032,6 +1058,7 @@ mod tests {
             "title",
             "subtitle",
             "favorite",
+            "reprompt",
             "tags",
             "folder",
             "hasTotp",
@@ -1044,6 +1071,21 @@ mod tests {
         assert_eq!(s["type"], "login");
         let draft = serde_json::to_value(p.to_draft()).unwrap();
         assert_eq!(draft["type"], "login");
+        assert_eq!(
+            draft["reprompt"], false,
+            "the editable view always carries the flag"
+        );
+        // The sealed payload carries the key only when it is on: an item that never asked for it is stored
+        // exactly as an older build stores it (an older build refuses a payload with a key it does not know).
+        let sealed = serde_json::to_value(&p).unwrap();
+        assert!(sealed.get("reprompt").is_none());
+        let mut flagged = d.clone();
+        flagged.reprompt = true;
+        let q = ItemPayload::new("3f2b8c1e-5d4a-4e7b-9c1d-0a1b2c3d4e5f".into(), &flagged, 5);
+        let sealed = serde_json::to_value(&q).unwrap();
+        assert_eq!(sealed["reprompt"], true);
+        let back: ItemPayload = serde_json::from_value(sealed).unwrap();
+        assert!(back.reprompt && back.summary(1).reprompt && back.view(1).reprompt);
         assert!(draft["customFields"].is_array());
         let st = serde_json::to_value(VaultStatus {
             exists: true,

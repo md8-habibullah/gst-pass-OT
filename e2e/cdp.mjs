@@ -136,6 +136,14 @@ export class Page {
     await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
     await sleep(80);
   }
+  /** One typed character or key with optional Ctrl and Shift, as the keyboard sends it (for shortcuts). */
+  async key(key, { ctrl = false, shift = false } = {}) {
+    const modifiers = (ctrl ? 2 : 0) | (shift ? 8 : 0);
+    const text = ctrl || key.length !== 1 ? undefined : key;
+    await this.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", key, modifiers, text });
+    await this.send("Input.dispatchKeyEvent", { type: "keyUp", key, modifiers });
+    await sleep(120);
+  }
   async text() { return this.eval("document.body.innerText"); }
   /** Types into the input/textarea whose <label> text equals `label` (searching the top-most dialog first). */
   async typeLabel(label, text) {
@@ -148,6 +156,14 @@ export class Page {
     if (text === "") await this.press("Delete"); else await this.send("Input.insertText", { text });
     await sleep(50);
     return ok;
+  }
+  /** Types into the input whose aria-label equals `label` (search boxes have no visible <label>). */
+  async typeAria(label, text) {
+    const sel = `input[aria-label=${JSON.stringify(label)}]`;
+    await this.waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, { label: `field ${label}` });
+    await this.eval(`(()=>{const el=document.querySelector(${JSON.stringify(sel)}); el.scrollIntoView({block:'center'}); el.focus(); el.select(); })()`);
+    if (text === "") await this.press("Delete"); else await this.send("Input.insertText", { text });
+    await sleep(80);
   }
   /** Value of the control behind a label. */
   async valueOf(label) { return this.eval(`(()=>{const dialogs=[...document.querySelectorAll('[role=dialog]')]; const root=dialogs.length?dialogs[dialogs.length-1]:document; const l=[...root.querySelectorAll('label')].find(x=>x.textContent.trim()===${JSON.stringify(label)}); return l?document.getElementById(l.htmlFor)?.value:null})()`); }

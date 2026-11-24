@@ -38,6 +38,8 @@ use zeroize::Zeroizing;
 pub struct BatchItem {
     pub draft: ItemDraft,
     pub created: Option<u64>,
+    /// When the item was last changed, if the source says (only the demo vault sets it; imports leave it at "now").
+    pub updated: Option<u64>,
     pub warnings: Vec<String>,
 }
 
@@ -150,6 +152,8 @@ pub fn merge_drafts(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
         out.folder = new.folder.clone();
     }
     out.favorite = old.favorite || new.favorite;
+    // a merge never takes protection away: either side asking for the password again keeps it
+    out.reprompt = old.reprompt || new.reprompt;
     out
 }
 
@@ -210,6 +214,7 @@ impl Vault {
             let BatchItem {
                 mut draft,
                 created,
+                updated,
                 warnings,
             } = item;
             for w in warnings {
@@ -228,7 +233,7 @@ impl Vault {
                 (ImportMode::AppendVersion, Some(id)) => {
                     self.prepare_append(id, &draft, now, &mut working)
                 }
-                _ => self.prepare_new(&draft, created, now).map(Some),
+                _ => self.prepare_new(&draft, created, updated, now).map(Some),
             };
             match step {
                 Ok(Some(p)) => {
@@ -305,11 +310,20 @@ impl Vault {
     }
 
     /// Version 1 of a new item. `draft` is already normalized.
-    fn prepare_new(&self, draft: &ItemDraft, created: Option<u64>, now: u64) -> Result<Prepared> {
+    fn prepare_new(
+        &self,
+        draft: &ItemDraft,
+        created: Option<u64>,
+        updated: Option<u64>,
+        now: u64,
+    ) -> Result<Prepared> {
         let id = uuid::new_v4()?;
         let mut payload = ItemPayload::new(id.clone(), draft, now);
         if let Some(c) = created.filter(|c| *c > 0 && *c <= now) {
             payload.created_at = c;
+        }
+        if let Some(u) = updated.filter(|u| *u >= payload.created_at && *u <= now) {
+            payload.updated_at = u;
         }
         let (item_blob, snapshot_blob) = self.seal_pair(&payload, 1)?;
         Ok(Prepared {
@@ -418,6 +432,7 @@ mod tests {
             item_type: ItemType::Login,
             title: title.into(),
             favorite: false,
+            reprompt: false,
             tags: vec![],
             folder: None,
             fields,

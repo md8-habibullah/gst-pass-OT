@@ -105,6 +105,7 @@ fn draft(item_type: ItemType, title: &str, fields: &[(&str, &str)]) -> ItemDraft
         item_type,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: fields
@@ -139,7 +140,7 @@ fn card(title: &str) -> ItemDraft {
 }
 
 fn edit(app: &AppCore, id: &str, f: impl FnOnce(&mut ItemDraft)) -> super::ItemSummary {
-    let b = app.item_begin_edit(id, PW.into()).unwrap();
+    let b = app.item_begin_edit(id, Some(PW.into())).unwrap();
     let mut d = b.draft.clone();
     f(&mut d);
     app.item_update(id, &b.token, b.version, d).unwrap()
@@ -393,7 +394,7 @@ fn accounts_are_isolated_from_each_other() {
     fx.app.unlock(PW2.into()).unwrap();
     assert_eq!(code(fx.app.item_get(&work_item)), "not_found");
     assert_eq!(
-        code(fx.app.item_reveal(&work_item, PW2.into())),
+        code(fx.app.item_reveal(&work_item, Some(PW2.into()))),
         "not_found"
     );
 }
@@ -403,7 +404,7 @@ fn lock_and_select_wipe_edit_tokens_and_unlocked_state() {
     let fx = Fx::new();
     let a = fx.app.profile_create("A", PW.into()).unwrap();
     let item = fx.app.item_create(login("x", "pw-1")).unwrap();
-    let b = fx.app.item_begin_edit(&item.id, PW.into()).unwrap();
+    let b = fx.app.item_begin_edit(&item.id, Some(PW.into())).unwrap();
     fx.app.lock();
     assert_eq!(code(fx.app.item_list()), "locked");
     assert!(fx.app.status().unwrap().exists);
@@ -417,7 +418,7 @@ fn lock_and_select_wipe_edit_tokens_and_unlocked_state() {
         "token_invalid"
     );
     // nor does it survive a switch
-    let b = fx.app.item_begin_edit(&item.id, PW.into()).unwrap();
+    let b = fx.app.item_begin_edit(&item.id, Some(PW.into())).unwrap();
     fx.app.profile_create("B", PW2.into()).unwrap();
     fx.app.profile_select(&a.id).unwrap();
     fx.app.unlock(PW.into()).unwrap();
@@ -1114,7 +1115,7 @@ fn card_identity_and_ssh_items_round_trip_through_the_whole_lifecycle() {
         let id = created.id.clone();
 
         // reveal returns exactly what was saved
-        let revealed = fx.app.item_reveal(&id, PW.into()).unwrap();
+        let revealed = fx.app.item_reveal(&id, Some(PW.into())).unwrap();
         assert_eq!(revealed, d);
         // edit through the two-step flow; history records which fields changed, never values
         let updated = edit(&fx.app, &id, |x| {
@@ -1130,7 +1131,7 @@ fn card_identity_and_ssh_items_round_trip_through_the_whole_lifecycle() {
             .iter()
             .all(|h| h.changed_fields.iter().all(|f| !f.contains("NOTE"))));
         // the first snapshot is intact
-        assert_eq!(fx.app.history_get(&id, 1, PW.into()).unwrap(), d);
+        assert_eq!(fx.app.history_get(&id, 1, Some(PW.into())).unwrap(), d);
 
         // archive, trash, restore (stays archived), restore an old version, clone
         assert!(fx.app.item_archive(&id).unwrap().archived);
@@ -1140,14 +1141,17 @@ fn card_identity_and_ssh_items_round_trip_through_the_whole_lifecycle() {
             fx.app.item_restore(&id).unwrap().archived,
             "restore returns it to the archive"
         );
-        let restored = fx.app.history_restore(&id, 1, PW.into()).unwrap();
+        let restored = fx.app.history_restore(&id, 1, Some(PW.into())).unwrap();
         assert_eq!(restored.title, d.title);
-        let copy = fx.app.item_clone(&id, PW.into()).unwrap();
+        let copy = fx.app.item_clone(&id, Some(PW.into())).unwrap();
         assert_eq!(copy.item_type, d.item_type);
         assert_eq!(copy.title, format!("{} (copy)", d.title));
         assert!(!copy.archived);
         assert_eq!(
-            fx.app.item_reveal(&copy.id, PW.into()).unwrap().fields,
+            fx.app
+                .item_reveal(&copy.id, Some(PW.into()))
+                .unwrap()
+                .fields,
             d.fields
         );
     }
@@ -1196,7 +1200,7 @@ fn field_schemas_and_light_validation_are_enforced_in_rust() {
     d.fields.insert("expMonth".into(), "12".into());
     d.fields.insert("pin".into(), String::new());
     let made = fx.app.item_create(d).unwrap();
-    let r = fx.app.item_reveal(&made.id, PW.into()).unwrap();
+    let r = fx.app.item_reveal(&made.id, Some(PW.into())).unwrap();
     assert_eq!(r.fields["number"], "4111-1111-1111-1111");
     assert!(!r.fields.contains_key("pin"));
 }
@@ -1231,11 +1235,12 @@ fn payloads_written_before_the_archive_flag_still_open() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].title, "Legacy item");
     assert!(!list[0].archived, "a missing flag means not archived");
+    assert!(!list[0].reprompt, "a missing flag means no re-prompt");
     assert_eq!(fx.app.status().unwrap().damaged_items, 0);
-    let r = fx.app.item_reveal(&id, PW.into()).unwrap();
+    let r = fx.app.item_reveal(&id, Some(PW.into())).unwrap();
     assert_eq!(r.fields["password"], "old-pw");
     assert_eq!(
-        fx.app.history_get(&id, 1, PW.into()).unwrap().title,
+        fx.app.history_get(&id, 1, Some(PW.into())).unwrap().title,
         "Legacy item"
     );
 
@@ -1245,7 +1250,7 @@ fn payloads_written_before_the_archive_flag_still_open() {
     let e = edit(&fx.app, &id, |d| d.title = "Legacy renamed".into());
     assert!(e.archived, "an edit keeps the flag");
     assert_eq!(e.version, 3);
-    let copy = fx.app.item_clone(&id, PW.into()).unwrap();
+    let copy = fx.app.item_clone(&id, Some(PW.into())).unwrap();
     assert_eq!(copy.title, "Legacy renamed (copy)");
     let hist: Vec<_> = fx
         .app
@@ -1282,7 +1287,7 @@ fn archive_is_a_flag_with_versioned_events_and_no_password() {
     assert!(list.iter().all(|i| i.id != t.id));
     assert_eq!(fx.app.item_get(&a.id).unwrap().title, "Keep");
     assert_eq!(
-        fx.app.item_reveal(&a.id, PW.into()).unwrap().fields["password"],
+        fx.app.item_reveal(&a.id, Some(PW.into())).unwrap().fields["password"],
         "pw-1"
     );
     let e = edit(&fx.app, &a.id, |d| d.title = "Kept".into());
@@ -1325,7 +1330,7 @@ fn archive_is_a_flag_with_versioned_events_and_no_password() {
     fx.app.lock();
     assert_eq!(code(fx.app.item_archive(&a.id)), "locked");
     assert_eq!(code(fx.app.item_unarchive(&a.id)), "locked");
-    assert_eq!(code(fx.app.item_clone(&a.id, PW.into())), "locked");
+    assert_eq!(code(fx.app.item_clone(&a.id, Some(PW.into()))), "locked");
 }
 
 #[test]
@@ -1339,7 +1344,7 @@ fn the_archive_flag_survives_a_restart_and_history_restore() {
     fx.app.unlock(PW.into()).unwrap();
     assert!(fx.app.item_list().unwrap()[0].archived);
     // restoring an old snapshot restores content only: the archive flag stays as it is
-    let r = fx.app.history_restore(&a.id, 1, PW.into()).unwrap();
+    let r = fx.app.history_restore(&a.id, 1, Some(PW.into())).unwrap();
     assert!(r.archived);
     assert_eq!(r.version, 3);
     assert!(fx.app.item_unarchive(&a.id).unwrap().version == 4);
@@ -1361,11 +1366,11 @@ fn clone_is_password_gated_and_never_returns_secrets() {
     let src = fx.app.item_create(d.clone()).unwrap();
 
     assert_eq!(
-        code(fx.app.item_clone(&src.id, WRONG.into())),
+        code(fx.app.item_clone(&src.id, Some(WRONG.into()))),
         "wrong_password"
     );
     assert_eq!(
-        code(fx.app.item_clone(&src.id, String::new())),
+        code(fx.app.item_clone(&src.id, Some(String::new()))),
         "invalid_input",
         "an empty password is refused before any key derivation"
     );
@@ -1375,7 +1380,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
         "a refused clone creates nothing"
     );
 
-    let copy = fx.app.item_clone(&src.id, PW.into()).unwrap();
+    let copy = fx.app.item_clone(&src.id, Some(PW.into())).unwrap();
     // what crosses back to the UI is the summary only: no secret value anywhere in it
     let wire = serde_json::to_string(&copy).unwrap();
     for secret in ["4111", "737", "SECRET-BANK-REF"] {
@@ -1390,7 +1395,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
     assert!(copy.favorite);
     assert_eq!(copy.tags, ["travel", "work"]);
     assert_eq!(copy.folder.as_deref(), Some("Money"));
-    let r = fx.app.item_reveal(&copy.id, PW.into()).unwrap();
+    let r = fx.app.item_reveal(&copy.id, Some(PW.into())).unwrap();
     assert_eq!(r.fields, d.fields);
     assert_eq!(r.custom_fields, d.custom_fields);
     // history of the copy starts fresh; the original is untouched
@@ -1400,7 +1405,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
     assert_eq!(fx.app.item_get(&src.id).unwrap().version, 1);
     // cloning a clone keeps stacking the suffix, titles never exceed the limit
     let long = fx.app.item_create(login(&"t".repeat(256), "pw")).unwrap();
-    let c = fx.app.item_clone(&long.id, PW.into()).unwrap();
+    let c = fx.app.item_clone(&long.id, Some(PW.into())).unwrap();
     assert!(
         c.title.chars().count() <= 256 && c.title.ends_with(" (copy)"),
         "{}",
@@ -1408,7 +1413,12 @@ fn clone_is_password_gated_and_never_returns_secrets() {
     );
     // an archived original clones to an active copy
     fx.app.item_archive(&src.id).unwrap();
-    assert!(!fx.app.item_clone(&src.id, PW.into()).unwrap().archived);
+    assert!(
+        !fx.app
+            .item_clone(&src.id, Some(PW.into()))
+            .unwrap()
+            .archived
+    );
 }
 
 // ============================================================ export and import
@@ -1491,7 +1501,7 @@ fn an_exported_vault_imports_as_a_working_account_with_the_same_content() {
     let hist = fx.app.history_list(alpha).unwrap();
     assert_eq!(hist.len(), 2);
     assert_eq!(
-        fx.app.history_get(alpha, 1, PW.into()).unwrap().title,
+        fx.app.history_get(alpha, 1, Some(PW.into())).unwrap().title,
         "Alpha"
     );
     assert_eq!(fx.app.trash_list().unwrap().len(), 1);

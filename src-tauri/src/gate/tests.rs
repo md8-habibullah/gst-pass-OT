@@ -27,6 +27,10 @@ struct Fx {
     locks: Arc<AtomicUsize>,
     /// How many times the wipe closure ran.
     wipes: Arc<AtomicUsize>,
+    /// The device's boot clock, its date setting and the time servers: tests move them instead of waiting.
+    fakes: Arc<crate::clock::testing::Fakes>,
+    /// The clock the gate measures waits on (shared across simulated restarts: the device stays up).
+    time: Arc<crate::clock::TrustedClock>,
     gate: GateCore,
 }
 
@@ -34,26 +38,56 @@ impl Fx {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let locks = Arc::new(AtomicUsize::new(0));
-        let gate = Self::open_in(dir.path(), &locks);
+        let real = crate::crypto::device_millis();
+        let fakes = crate::clock::testing::Fakes::new(1_000_000, real, real);
+        let time = Arc::new(fakes.clock());
+        let gate = Self::open_in(dir.path(), &locks, &time);
         Self {
             dir,
             locks,
             wipes: Arc::new(AtomicUsize::new(0)),
+            fakes,
+            time,
             gate,
         }
     }
 
-    fn open_in(dir: &Path, locks: &Arc<AtomicUsize>) -> GateCore {
+    fn open_in(
+        dir: &Path,
+        locks: &Arc<AtomicUsize>,
+        time: &Arc<crate::clock::TrustedClock>,
+    ) -> GateCore {
         let locks = Arc::clone(locks);
         let lock: LockVault = Arc::new(move || {
             locks.fetch_add(1, Ordering::SeqCst);
         });
-        GateCore::open(dir, &kdf(), lock).unwrap()
+        let gate = GateCore::open(dir, &kdf(), lock).unwrap();
+        // The waits after wrong credentials are tested on their own (see the lock tests); everywhere else a wrong
+        // attempt must not slow the next one down.
+        gate.set_lock_unit(Duration::ZERO);
+        gate.set_time(Arc::clone(time));
+        gate
     }
 
     /// Simulate quitting and starting the app again.
     fn restart(&mut self) {
-        self.gate = Self::open_in(self.dir.path(), &self.locks);
+        self.gate = Self::open_in(self.dir.path(), &self.locks, &self.time);
+    }
+
+    /// Production waits (one lock "minute" is 60 s) on the test clock.
+    fn real_waits(&self) {
+        self.gate.set_lock_unit(Duration::from_secs(60));
+    }
+
+    /// Time passes: the boot clock and the date setting both move on.
+    fn advance(&self, ms: u64) {
+        self.fakes.advance(ms);
+        self.fakes.wall_ms.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    /// The device checks the time online (the fake servers know the real time).
+    fn check_time(&self) {
+        self.time.sync().expect("the fake servers answer");
     }
 
     fn path(&self) -> PathBuf {
@@ -341,7 +375,7 @@ fn keeping_replacing_and_removing_what_is_stored() {
     );
     fx.gate.close();
     // reversed panic is off now, the custom code is still there
-    assert!(is_failed(&fx.submit("8642"), 14));
+    assert!(is_failed(&fx.submit("8642"), 15));
     assert_eq!(fx.submit("5151"), GateOutcome::Wiped);
     assert_eq!(fx.wipes(), 1);
 
@@ -356,7 +390,7 @@ fn keeping_replacing_and_removing_what_is_stored() {
     .unwrap();
     fx.restart();
     assert!(
-        is_failed(&fx.submit("5151"), 14),
+        is_failed(&fx.submit("5151"), 15),
         "the removed code is an ordinary wrong guess"
     );
     assert_eq!(fx.wipes(), 0);
@@ -419,7 +453,7 @@ fn a_new_credential_must_differ_from_the_kept_custom_panic_code() {
 fn turning_the_gate_off_removes_the_hashes_and_the_counter_file() {
     let mut fx = Fx::new();
     fx.pin_gate("2468");
-    assert!(is_failed(&fx.submit("1111"), 14));
+    assert!(is_failed(&fx.submit("1111"), 15));
     assert!(fx.path().exists());
     assert_eq!(fx.submit("2468"), GateOutcome::Opened);
     let st = fx.configure(pin_with("x", |c| c.enabled = false)).unwrap();
@@ -449,7 +483,7 @@ fn a_unicode_passcode_is_normalised_so_any_keyboard_works() {
     }))
     .unwrap();
     fx.restart();
-    assert!(is_failed(&fx.submit("cafe!!!"), 14));
+    assert!(is_failed(&fx.submit("cafe!!!"), 15));
     assert_eq!(
         fx.submit("caf\u{e9}!!"),
         GateOutcome::Opened,
@@ -610,20 +644,502 @@ fn an_endless_input_is_cut_and_still_costs_exactly_three() {
     assert_eq!(fx.gate.verifications() - before, 3);
 }
 
+// ------------------------------------------------------------------ the waits after wrong credentials
+
+fn wrong(fx: &Fx, n: u32) -> GateOutcome {
+    fx.submit(&format!("{:04}", 5000 + n))
+}
+
+#[test]
+fn the_wait_table_and_the_limit_are_what_the_product_promises() {
+    assert_eq!(MAX_ATTEMPTS, 16);
+    assert_eq!(
+        LOCK_STEPS,
+        [
+            (3, 90),
+            (6, 5 * 60),
+            (9, 45 * 60),
+            (12, 8 * 60 * 60),
+            (15, 3 * 24 * 60 * 60)
+        ]
+    );
+    for n in 0..=MAX_ATTEMPTS {
+        let expected = LOCK_STEPS.iter().find(|(k, _)| *k == n).map(|(_, s)| *s);
+        assert_eq!(lock_seconds_after(n), expected, "{n}");
+    }
+    // the wipe is the first thing after the last wait: no step lies at or beyond the limit
+    assert!(LOCK_STEPS.iter().all(|(n, _)| *n < MAX_ATTEMPTS));
+}
+
+#[test]
+fn three_wrong_credentials_start_a_wait_and_nothing_is_checked_or_counted_during_it() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    assert!(is_failed(&wrong(&fx, 1), 15));
+    assert!(is_failed(&wrong(&fx, 2), 14));
+    assert!(fx.gate.status().locked_for_ms.is_none());
+    // the third one starts the wait and says so
+    let GateOutcome::Failed {
+        attempts_left,
+        locked_for_ms,
+        ..
+    } = wrong(&fx, 3)
+    else {
+        panic!("expected a failure")
+    };
+    assert_eq!((attempts_left, locked_for_ms), (13, Some(90_000)));
+    assert_eq!(fx.attempts_on_disk(), 3);
+    assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+
+    // during the wait even the RIGHT passcode is not looked at, and nothing is counted
+    let verifications = fx.gate.verifications();
+    fx.advance(30_000);
+    assert_eq!(
+        fx.submit("2468"),
+        GateOutcome::Locked {
+            retry_after_ms: 60_000,
+            clock_pending: false,
+        }
+    );
+    assert_eq!(
+        fx.submit("2468"),
+        GateOutcome::Locked {
+            retry_after_ms: 60_000,
+            clock_pending: false,
+        }
+    );
+    assert_eq!(fx.gate.verifications(), verifications, "no Argon2id run");
+    assert_eq!(fx.attempts_on_disk(), 3, "no attempt was used");
+    assert!(fx.gate.is_closed());
+    assert_eq!(fx.gate.status().locked_for_ms, Some(60_000));
+    assert_eq!(fx.wipes(), 0);
+
+    // a sum is still just a sum: the decoy keeps working while the real input is locked
+    assert!(matches!(fx.submit("12"), GateOutcome::Math { .. }));
+
+    // when the wait is over the right passcode opens it
+    fx.advance(60_000);
+    assert!(fx.gate.status().locked_for_ms.is_none());
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    assert_eq!(fx.attempts_on_disk(), 0, "and the counter starts again");
+}
+
+#[test]
+fn every_step_of_the_ladder_waits_as_long_as_promised_and_the_sixteenth_wipes() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    let mut waits = Vec::new();
+    for n in 1..=15u32 {
+        let out = wrong(&fx, n);
+        let GateOutcome::Failed {
+            attempts_left,
+            locked_for_ms,
+            ..
+        } = out
+        else {
+            panic!("attempt {n}: {out:?}")
+        };
+        assert_eq!(attempts_left, MAX_ATTEMPTS - n, "attempt {n}");
+        if let Some(ms) = locked_for_ms {
+            waits.push((n, ms));
+            // a second too early is still locked, the exact end is not
+            fx.advance(ms - 1000);
+            assert!(
+                matches!(
+                    wrong(&fx, 99),
+                    GateOutcome::Locked {
+                        retry_after_ms: 1000,
+                        clock_pending: false,
+                    }
+                ),
+                "attempt {n}"
+            );
+            fx.advance(1000);
+        }
+        assert_eq!(fx.gate.status().final_attempt, n == 15, "attempt {n}");
+    }
+    assert_eq!(
+        waits,
+        vec![
+            (3, 90_000),
+            (6, 300_000),
+            (9, 2_700_000),
+            (12, 28_800_000),
+            (15, 259_200_000)
+        ]
+    );
+    // the last chance: one attempt left, the screen warns, and a wrong one erases
+    let st = fx.gate.status();
+    assert_eq!(st.attempts_left, Some(1));
+    assert!(st.final_attempt);
+    assert_eq!(fx.wipes(), 0);
+    assert_eq!(wrong(&fx, 16), GateOutcome::Wiped);
+    assert_eq!(fx.wipes(), 1);
+}
+
+#[test]
+fn the_right_passcode_on_the_last_attempt_still_opens() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    for n in 1..=15u32 {
+        if let GateOutcome::Failed {
+            locked_for_ms: Some(ms),
+            ..
+        } = wrong(&fx, n)
+        {
+            fx.advance(ms);
+        }
+    }
+    assert!(fx.gate.status().final_attempt);
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    assert_eq!(fx.wipes(), 0);
+    assert_eq!(fx.attempts_on_disk(), 0);
+}
+
+#[test]
+fn a_wait_survives_closing_the_app_and_a_force_close_in_the_middle_of_the_attempt() {
+    let mut fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    wrong(&fx, 1);
+    wrong(&fx, 2);
+    // the third attempt is force-closed right after the write-ahead: it still costs the attempt AND starts the wait
+    fx.gate.set_failpoint_after_write_ahead(true);
+    assert_eq!(fx.submit_err("2468").code(), "storage");
+    fx.restart();
+    fx.real_waits();
+    assert_eq!(fx.gate.status().attempts_left, Some(13));
+    assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+    assert_eq!(
+        fx.submit("2468"),
+        GateOutcome::Locked {
+            retry_after_ms: 90_000,
+            clock_pending: false,
+        }
+    );
+    // a restart does not shorten it, time passing does
+    fx.advance(89_999);
+    fx.restart();
+    fx.real_waits();
+    assert_eq!(
+        fx.submit("2468"),
+        GateOutcome::Locked {
+            retry_after_ms: 1,
+            clock_pending: false,
+        }
+    );
+    fx.advance(1);
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+}
+
+#[test]
+fn a_wait_is_stored_under_the_same_tag_as_the_counter() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    for n in 1..=3 {
+        wrong(&fx, n);
+    }
+    let CounterRead::Valid { attempts, lock, .. } = fx.counter_on_disk() else {
+        panic!("valid")
+    };
+    assert_eq!(attempts, 3);
+    // the deadline is on the boot clock; the time was not checked, so there is no UTC deadline yet
+    assert_eq!(
+        lock.boot_ms,
+        fx.fakes.boot_ms.load(Ordering::SeqCst) + 90_000
+    );
+    assert_eq!(lock.until_utc, 0);
+    // shortening the stored wait by hand breaks the tag: the record is damaged, not trusted
+    fx.edit_file(|v| v["counter"]["lockBoot"] = json!(0));
+    assert!(matches!(fx.counter_on_disk(), CounterRead::Damaged { .. }));
+}
+
+/// Fail three times (the third starts the 90 s wait). `check` = ask the time servers first.
+fn start_wait(fx: &Fx, check: bool) {
+    fx.pin_gate("2468");
+    fx.real_waits();
+    if check {
+        fx.check_time();
+    }
+    for n in 1..=3 {
+        wrong(fx, n);
+    }
+    assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+}
+
+fn locked(retry_after_ms: u64) -> GateOutcome {
+    GateOutcome::Locked {
+        retry_after_ms,
+        clock_pending: false,
+    }
+}
+
+const THREE_DAYS: u64 = 3 * 24 * 3600 * 1000;
+
+#[test]
+fn moving_the_device_date_never_shortens_a_wait() {
+    for checked in [false, true] {
+        let fx = Fx::new();
+        start_wait(&fx, checked);
+        // forward by three days, as someone would to skip the wait
+        fx.fakes.wall_ms.fetch_add(THREE_DAYS, Ordering::SeqCst);
+        assert_eq!(fx.submit("2468"), locked(90_000), "checked: {checked}");
+        assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+        // back by a day: nothing gets longer either
+        fx.fakes
+            .wall_ms
+            .fetch_sub(THREE_DAYS + 86_400_000, Ordering::SeqCst);
+        assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+        // only the boot clock counts
+        fx.fakes.advance(40_000);
+        assert_eq!(fx.submit("2468"), locked(50_000));
+        // and the same after the app is closed and started again
+        let mut fx = fx;
+        fx.restart();
+        fx.real_waits();
+        assert_eq!(fx.gate.status().locked_for_ms, Some(50_000));
+        fx.fakes.advance(50_000);
+        assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    }
+}
+
+#[test]
+fn a_status_while_checked_gives_the_end_of_the_wait_in_utc() {
+    let fx = Fx::new();
+    start_wait(&fx, true);
+    let st = fx.gate.status();
+    let now = fx.time.verified_utc_ms().unwrap();
+    assert_eq!(st.locked_until_ms, Some(now + 90_000));
+    assert!(!st.clock_pending);
+    // the stored record carries both deadlines
+    let CounterRead::Valid { lock, .. } = fx.counter_on_disk() else {
+        panic!("valid")
+    };
+    assert_eq!(lock.until_utc, now + 90_000);
+}
+
+#[test]
+fn after_the_device_restarts_a_wait_ends_only_by_time_checked_online() {
+    let mut fx = Fx::new();
+    start_wait(&fx, true);
+    let start = fx.time.verified_utc_ms().unwrap();
+    // the device restarts; the person also sets the date three days ahead, offline
+    fx.fakes.reboot();
+    fx.fakes.wall_ms.fetch_add(THREE_DAYS, Ordering::SeqCst);
+    *fx.fakes.servers.lock().unwrap() = Err(crate::clock::SyncError::Offline);
+    fx.restart();
+    fx.real_waits();
+    let st = fx.gate.status();
+    assert!(st.clock_pending, "cannot be judged without a checked time");
+    assert_eq!((st.locked_for_ms, st.locked_until_ms), (None, None));
+    // nothing is checked or counted meanwhile, not even the right passcode
+    let before = fx.gate.verifications();
+    assert_eq!(
+        fx.submit("2468"),
+        GateOutcome::Locked {
+            retry_after_ms: 0,
+            clock_pending: true
+        }
+    );
+    assert_eq!(fx.gate.verifications(), before);
+    assert_eq!(fx.attempts_on_disk(), 3);
+    // the servers come back: thirty real seconds have passed, sixty are left
+    *fx.fakes.servers.lock().unwrap() = Ok((start + 30_000) as i64);
+    fx.check_time();
+    assert!(!fx.gate.status().clock_pending);
+    assert_eq!(fx.gate.status().locked_for_ms, Some(60_000));
+    assert_eq!(fx.submit("2468"), locked(60_000));
+    // sixty seconds later, on the boot clock, it opens
+    fx.fakes.advance(60_000);
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+}
+
+#[test]
+fn a_restart_after_the_wait_really_ended_lets_the_passcode_in() {
+    let mut fx = Fx::new();
+    start_wait(&fx, true);
+    let start = fx.time.verified_utc_ms().unwrap();
+    fx.fakes.reboot();
+    *fx.fakes.servers.lock().unwrap() = Ok((start + 5 * 60_000) as i64);
+    fx.restart();
+    fx.real_waits();
+    fx.check_time();
+    assert!(fx.gate.status().locked_for_ms.is_none());
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+}
+
+#[test]
+fn a_wait_that_began_before_any_check_starts_over_at_the_first_check_after_a_restart() {
+    let mut fx = Fx::new();
+    start_wait(&fx, false);
+    fx.fakes.reboot();
+    fx.restart();
+    fx.real_waits();
+    assert!(fx.gate.status().clock_pending);
+    let real = crate::crypto::device_millis();
+    *fx.fakes.servers.lock().unwrap() = Ok(real as i64);
+    fx.check_time();
+    // the full wait, from the first moment the time is known (the safe direction), written down once
+    assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+    let epoch = || match fx.counter_on_disk() {
+        CounterRead::Valid { epoch, .. } => epoch,
+        CounterRead::Damaged { .. } => panic!("damaged"),
+    };
+    let written = epoch();
+    fx.fakes.advance(30_000);
+    assert_eq!(
+        fx.gate.status().locked_for_ms,
+        Some(60_000),
+        "it does not start over again"
+    );
+    assert_eq!(epoch(), written);
+    fx.fakes.advance(60_000);
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+}
+
+#[test]
+fn with_the_online_check_switched_off_a_restart_cannot_lock_the_person_out_for_good() {
+    let mut fx = Fx::new();
+    fx.time.set_enabled(false);
+    start_wait(&fx, false);
+    // the device restarts; no time is ever checked (the person switched that off)
+    fx.fakes.reboot();
+    fx.fakes.wall_ms.fetch_add(30_000, Ordering::SeqCst);
+    fx.restart();
+    fx.real_waits();
+    let st = fx.gate.status();
+    assert!(
+        !st.clock_pending,
+        "off means the device clock is the judge, not 'wait for ever'"
+    );
+    assert_eq!(st.locked_for_ms, Some(60_000));
+    assert_eq!(fx.submit("2468"), locked(60_000));
+    fx.fakes.wall_ms.fetch_add(60_000, Ordering::SeqCst);
+    fx.fakes.advance(60_000);
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+}
+
+#[test]
+fn the_online_check_being_on_but_unreachable_still_fails_closed() {
+    let mut fx = Fx::new();
+    start_wait(&fx, true);
+    fx.fakes.reboot();
+    *fx.fakes.servers.lock().unwrap() = Err(crate::clock::SyncError::Offline);
+    fx.restart();
+    fx.real_waits();
+    assert!(fx.time.is_enabled());
+    assert!(fx.gate.status().clock_pending);
+}
+
+#[test]
+fn a_record_from_before_the_boot_clock_is_judged_on_checked_time_only() {
+    let mut fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    fx.check_time();
+    let now = fx.time.verified_utc_ms().unwrap();
+    // what the build before wrote: a UTC deadline and nothing else, signed as v2
+    let key = match counter::load(fx.dir.path()) {
+        Loaded::Ready(p, _) => *p.install_key,
+        _ => panic!("ready"),
+    };
+    let until = now + 45_000;
+    fx.edit_file(|v| {
+        let c = v["counter"].as_object_mut().unwrap();
+        c.remove("lockBoot");
+        c.remove("lockBootId");
+        c.insert("attempts".into(), json!(3));
+        c.insert("lockUntil".into(), json!(until));
+        c.insert(
+            "tag".into(),
+            json!(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD_NO_PAD,
+                counter::tag_locked(&key, 3, 1, until)
+            )),
+        );
+        c.insert("epoch".into(), json!(1));
+    });
+    fx.restart();
+    fx.real_waits();
+    assert_eq!(fx.gate.status().locked_for_ms, Some(45_000));
+    fx.fakes.advance(45_000);
+    assert!(fx.gate.status().locked_for_ms.is_none());
+    // the same record on a device that has not checked the time since it started
+    fx.fakes.reboot();
+    fx.restart();
+    fx.real_waits();
+    *fx.fakes.servers.lock().unwrap() = Err(crate::clock::SyncError::Offline);
+    let _ = fx.time.sync();
+    assert!(
+        fx.gate.status().clock_pending,
+        "an old UTC deadline is never trusted without a check since the restart"
+    );
+}
+
+#[test]
+fn a_wrong_credential_after_a_wait_counts_from_where_it_stood() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    for n in 1..=3 {
+        wrong(&fx, n);
+    }
+    fx.advance(90_000);
+    assert!(is_failed(&wrong(&fx, 4), 12));
+    assert!(is_failed(&wrong(&fx, 5), 11));
+    let out = wrong(&fx, 6);
+    assert!(
+        matches!(
+            out,
+            GateOutcome::Failed {
+                attempts_left: 10,
+                locked_for_ms: Some(300_000),
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn the_status_shows_the_countdown_and_the_final_warning() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    fx.real_waits();
+    let st = fx.gate.status();
+    assert!(st.locked_for_ms.is_none() && !st.final_attempt && st.attempts_left.is_none());
+    for n in 1..=3 {
+        wrong(&fx, n);
+    }
+    assert_eq!(fx.gate.status().locked_for_ms, Some(90_000));
+    fx.advance(45_000);
+    assert_eq!(fx.gate.status().locked_for_ms, Some(45_000));
+    fx.advance(45_000);
+    assert_eq!(fx.gate.status().locked_for_ms, None);
+    // an open gate shows neither
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    let st = fx.gate.status();
+    assert!(st.locked_for_ms.is_none() && !st.final_attempt);
+}
+
 // ------------------------------------------------------------------ the counter
 
 #[test]
 fn failures_count_down_and_the_right_credential_resets_them() {
     let mut fx = Fx::new();
     fx.pin_gate("2468");
-    assert!(is_failed(&fx.submit("0000"), 14));
-    assert!(is_failed(&fx.submit("0001"), 13));
-    assert_eq!(fx.gate.status().attempts_left, Some(13));
+    assert!(is_failed(&fx.submit("0000"), 15));
+    assert!(is_failed(&fx.submit("0001"), 14));
+    assert_eq!(fx.gate.status().attempts_left, Some(14));
     assert_eq!(fx.attempts_on_disk(), 2);
     // the counter survives a restart
     fx.restart();
-    assert_eq!(fx.gate.status().attempts_left, Some(13));
-    assert!(is_failed(&fx.submit("0002"), 12));
+    assert_eq!(fx.gate.status().attempts_left, Some(14));
+    assert!(is_failed(&fx.submit("0002"), 13));
     assert_eq!(fx.submit("2468"), GateOutcome::Opened);
     assert_eq!(fx.attempts_on_disk(), 0, "success writes zero");
     assert_eq!(fx.gate.status().attempts_left, None);
@@ -632,10 +1148,10 @@ fn failures_count_down_and_the_right_credential_resets_them() {
 }
 
 #[test]
-fn the_fifteenth_failure_wipes_and_the_fourteenth_does_not() {
+fn the_sixteenth_failure_wipes_and_the_fifteenth_does_not() {
     let fx = Fx::new();
     fx.pin_gate("2468");
-    for left in (1..=14).rev() {
+    for left in (1..=15).rev() {
         let out = fx.submit(&format!("{:04}", 9000 + left));
         assert!(is_failed(&out, left), "{out:?}");
     }
@@ -661,7 +1177,7 @@ fn the_wipe_outcome_is_exactly_the_same_for_every_trigger() {
     let fx = Fx::new();
     fx.pin_gate("2468");
     let mut last = None;
-    for i in 0..15 {
+    for i in 0..16 {
         last = Some(fx.submit(&format!("{:04}", 7000 + i)));
     }
     seen.push(json(&last.unwrap()));
@@ -689,7 +1205,7 @@ fn a_force_close_right_after_the_write_ahead_still_costs_one_attempt() {
     assert!(fx.gate.is_closed());
     // a real restart sees it
     fx.restart();
-    assert_eq!(fx.gate.status().attempts_left, Some(14));
+    assert_eq!(fx.gate.status().attempts_left, Some(15));
     assert!(fx.gate.is_closed(), "the attempt did not open the gate");
 }
 
@@ -726,7 +1242,7 @@ fn editing_the_counter_by_hand_costs_one_extra_attempt_and_is_repaired() {
     ));
     let out = fx.submit("1111");
     // best known 3, one extra for the tamper, one for this attempt
-    assert!(is_failed(&out, 10), "{out:?}");
+    assert!(is_failed(&out, 11), "{out:?}");
     assert_eq!(fx.attempts_on_disk(), 5, "rewritten with a valid tag");
     assert_eq!(fx.wipes(), 0);
 }
@@ -752,9 +1268,9 @@ fn a_missing_unparsable_or_forged_counter_is_never_a_wipe_by_itself() {
         ),
         // a forged "exhausted" record must not wipe the device
         (
-            "forged 15",
+            "forged 16",
             Box::new(|v| {
-                v["counter"]["attempts"] = json!(15);
+                v["counter"]["attempts"] = json!(16);
                 v["counter"]["tag"] = json!("AAAA");
             }),
         ),
@@ -792,7 +1308,7 @@ fn tampering_near_the_limit_never_crosses_it() {
     let out = fx.submit("1111");
     assert!(matches!(out, GateOutcome::Failed { .. }), "{out:?}");
     assert_eq!(fx.wipes(), 0);
-    assert!(fx.attempts_on_disk() <= 14);
+    assert!(fx.attempts_on_disk() <= MAX_ATTEMPTS - 2);
 }
 
 #[test]
@@ -872,6 +1388,7 @@ fn forgetting_everything_zeroes_the_gate_and_the_settings() {
     fx.gate
         .set_settings(AppSettings {
             lock_after_minutes: 5,
+            ..AppSettings::default()
         })
         .unwrap();
     fx.gate.forget_everything();
@@ -979,7 +1496,7 @@ fn a_fingerprint_opens_stage_one_only_and_never_counts_an_attempt() {
     assert!(!fx.gate.is_closed());
     assert_eq!(std::fs::read(fx.path()).unwrap(), file_before);
     assert_eq!(fx.gate.verifications(), verifications);
-    assert_eq!(fx.gate.status().attempts_left, Some(13), "no reset either");
+    assert_eq!(fx.gate.status().attempts_left, Some(14), "no reset either");
     // the gate is already open: no prompt is shown again
     let silent = bio(true, Ok(true));
     fx.gate.set_biometric(silent.clone());
@@ -1120,6 +1637,7 @@ fn fast_idle(fx: &Fx, unit_ms: u64) {
     fx.gate
         .set_settings(AppSettings {
             lock_after_minutes: 1,
+            ..AppSettings::default()
         })
         .unwrap();
 }
@@ -1232,40 +1750,241 @@ fn closing_the_gate_stops_the_timer_and_dropping_the_core_stops_the_watcher() {
     );
     // dropping joins the watcher thread (the test would hang here if it did not stop)
     let dir = tempfile::tempdir().unwrap();
-    let g = Fx::open_in(dir.path(), &fx.locks);
+    let g = Fx::open_in(dir.path(), &fx.locks, &fx.time);
     g.before_command("item_list").unwrap();
     drop(g);
 }
 
 #[test]
-fn the_timeout_setting_accepts_only_the_four_values_and_is_stored() {
+fn the_timeout_setting_accepts_only_the_listed_values_and_is_stored() {
     let mut fx = Fx::new();
     assert_eq!(fx.gate.settings().lock_after_minutes, 15, "the default");
-    for m in [1, 5, 15, 30] {
+    for m in [1, 5, 15, 30, 60, 240] {
         let s = fx
             .gate
             .set_settings(AppSettings {
                 lock_after_minutes: m,
+                ..AppSettings::default()
             })
             .unwrap();
         assert_eq!(s.lock_after_minutes, m);
     }
-    for bad in [0, 2, 10, 60, 1440, u32::MAX] {
+    for bad in [0, 2, 10, 45, 1440, u32::MAX] {
         let e = fx
             .gate
             .set_settings(AppSettings {
                 lock_after_minutes: bad,
+                ..AppSettings::default()
             })
             .unwrap_err();
         assert_eq!(e.code(), "invalid_input", "{bad}");
     }
     assert_eq!(
         fx.gate.settings().lock_after_minutes,
-        30,
+        240,
         "a refused value changes nothing"
     );
     fx.restart();
-    assert_eq!(fx.gate.settings().lock_after_minutes, 30, "it is stored");
+    assert_eq!(fx.gate.settings().lock_after_minutes, 240, "it is stored");
+}
+
+// ------------------------------------------------------------------ leaving the app (phones and tablets)
+
+fn leave_settings(fx: &Fx, unit_ms: u64, idle_minutes: u32, leave_seconds: u32) {
+    fx.gate.set_idle_unit(Duration::from_millis(unit_ms));
+    fx.gate
+        .set_settings(AppSettings {
+            lock_after_minutes: idle_minutes,
+            lock_after_leave_seconds: leave_seconds,
+        })
+        .unwrap();
+}
+
+#[test]
+fn leaving_the_app_with_zero_seconds_locks_at_once_and_with_more_it_waits() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    leave_settings(&fx, 60_000, 240, 0);
+    fx.gate.app_leave();
+    assert_eq!(
+        fx.locks.load(Ordering::SeqCst),
+        1,
+        "locked the moment the person left"
+    );
+    assert!(fx.gate.is_closed());
+
+    // 5 minutes (the default): nothing happens right away, and coming back in time changes nothing
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    leave_settings(&fx, 60_000, 240, 300);
+    fx.gate.app_leave();
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 1);
+    assert!(!fx.gate.is_closed());
+    fx.gate.app_return();
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 1);
+    assert!(!fx.gate.is_closed());
+    assert!(fx.gate.idle_armed(), "the inactivity timer runs again");
+}
+
+#[test]
+fn staying_away_longer_than_allowed_locks_the_vault_and_the_gate_once() {
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    // one "minute" is 200 ms: 15 seconds away = 50 ms, the inactivity limit (240 minutes) is far away
+    leave_settings(&fx, 200, 240, 15);
+    fx.gate.app_leave();
+    wait_for("the lock after leaving", || {
+        fx.locks.load(Ordering::SeqCst) == 1
+    });
+    assert!(fx.gate.is_closed());
+    assert!(fx.gate.status().equation.is_some());
+    // coming back afterwards locks nothing twice
+    fx.gate.app_return();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 1);
+    assert!(fx.gate.is_closed());
+}
+
+#[test]
+fn coming_back_in_time_cancels_the_lock_and_the_inactivity_timer_pauses_while_away() {
+    let fx = Fx::new();
+    // gate off: the vault alone is locked by both timers
+    // 1 "minute" = 200 ms: inactivity after 1 minute (200 ms), leaving allowed for 300 s (1 s)
+    leave_settings(&fx, 200, 1, 300);
+    fx.gate.before_command("item_list").unwrap();
+    fx.gate.app_leave();
+    // the inactivity timer would have fired by now, but it does not run while the app is in the background
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 0);
+    fx.gate.app_return();
+    assert_eq!(
+        fx.locks.load(Ordering::SeqCst),
+        0,
+        "back in time: nothing locked"
+    );
+    // the leave timer is stopped: it never fires later
+    std::thread::sleep(Duration::from_millis(1200));
+    // ... but the inactivity timer runs again from the moment the person came back, and fires once
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn leaving_and_returning_are_polling_commands_and_work_with_the_gate_closed() {
+    assert!(is_polling("app_leave") && is_polling("app_return"));
+    assert!(allowed_while_closed("app_leave") && allowed_while_closed("app_return"));
+    let fx = Fx::new();
+    fx.pin_gate("2468");
+    // closed gate: the calls are allowed and change nothing visible
+    fx.gate.before_command("app_leave").unwrap();
+    fx.gate.before_command("app_return").unwrap();
+    assert!(fx.gate.is_closed());
+    // they must not restart the inactivity timer (the open app would never time out)
+    assert_eq!(fx.submit("2468"), GateOutcome::Opened);
+    fx.gate.close();
+}
+
+#[test]
+fn the_leave_setting_accepts_only_the_listed_times_and_is_stored() {
+    let mut fx = Fx::new();
+    assert_eq!(
+        fx.gate.settings().lock_after_leave_seconds,
+        300,
+        "the default"
+    );
+    for secs in [0, 15, 30, 60, 300, 900, 1800, 3600, 14_400] {
+        let s = fx
+            .gate
+            .set_settings(AppSettings {
+                lock_after_leave_seconds: secs,
+                ..AppSettings::default()
+            })
+            .unwrap();
+        assert_eq!(s.lock_after_leave_seconds, secs);
+    }
+    for bad in [1, 10, 45, 120, 86_400, u32::MAX] {
+        let e = fx
+            .gate
+            .set_settings(AppSettings {
+                lock_after_leave_seconds: bad,
+                ..AppSettings::default()
+            })
+            .unwrap_err();
+        assert_eq!(e.code(), "invalid_input", "{bad}");
+    }
+    assert_eq!(fx.gate.settings().lock_after_leave_seconds, 14_400);
+    fx.restart();
+    assert_eq!(
+        fx.gate.settings().lock_after_leave_seconds,
+        14_400,
+        "it is stored"
+    );
+}
+
+#[test]
+fn a_settings_file_from_before_the_leave_setting_reads_with_the_default() {
+    let fx = Fx::new();
+    std::fs::write(
+        fx.dir.path().join(settings::SETTINGS_FILE),
+        br#"{"lockAfterMinutes": 30}"#,
+    )
+    .unwrap();
+    let loaded = settings::load(fx.dir.path());
+    assert_eq!(loaded.lock_after_minutes, 30);
+    assert_eq!(loaded.lock_after_leave_seconds, 300);
+}
+
+// ------------------------------------------------------------------ the long sum that guards "erase everything"
+
+#[test]
+fn the_reset_sum_is_answered_once_and_a_wrong_answer_uses_it_up() {
+    let fx = Fx::new();
+    // no sum asked for: nothing is accepted
+    assert!(!fx.gate.check_reset_answer("1"));
+    let text = fx.gate.reset_challenge();
+    assert!(text.len() > 12 && text.contains(' '), "{text}");
+    let answer = fx.gate.reset_answer().unwrap();
+    assert!(answer >= 100);
+    // wrong, then even the right one is refused: the sum was used up
+    assert!(!fx.gate.check_reset_answer(&(answer + 1).to_string()));
+    assert!(!fx.gate.check_reset_answer(&answer.to_string()));
+    // a new sum, answered right (spaces around it do not matter), is accepted exactly once
+    fx.gate.reset_challenge();
+    let answer = fx.gate.reset_answer().unwrap();
+    assert!(fx.gate.check_reset_answer(&format!("  {answer} ")));
+    assert!(!fx.gate.check_reset_answer(&answer.to_string()));
+}
+
+#[test]
+fn a_new_reset_sum_replaces_the_old_one_and_odd_input_never_matches() {
+    let fx = Fx::new();
+    for bad in [
+        "",
+        " ",
+        "abc",
+        "-5",
+        "1e3",
+        "０１２",
+        "99999999999999999999",
+    ] {
+        fx.gate.reset_challenge();
+        assert!(!fx.gate.check_reset_answer(bad), "{bad:?}");
+    }
+    fx.gate.reset_challenge();
+    let first = fx.gate.reset_answer().unwrap();
+    let mut second = first;
+    for _ in 0..50 {
+        fx.gate.reset_challenge();
+        second = fx.gate.reset_answer().unwrap();
+        if second != first {
+            break;
+        }
+    }
+    assert!(second != first, "sums vary");
+    assert!(
+        !fx.gate.check_reset_answer(&first.to_string()),
+        "an answer to an old sum is worthless"
+    );
 }
 
 // ------------------------------------------------------------------ wire shapes
@@ -1286,9 +2005,25 @@ fn outcomes_and_status_have_the_shapes_the_front_end_expects() {
     assert_eq!(
         v(GateOutcome::Failed {
             attempts_left: 14,
-            equation: "4 * 5".into()
+            equation: "4 * 5".into(),
+            locked_for_ms: None
         }),
-        json!({"kind": "failed", "attemptsLeft": 14, "equation": "4 * 5"})
+        json!({"kind": "failed", "attemptsLeft": 14, "equation": "4 * 5", "lockedForMs": null})
+    );
+    assert_eq!(
+        v(GateOutcome::Failed {
+            attempts_left: 13,
+            equation: "4 * 5".into(),
+            locked_for_ms: Some(90_000)
+        }),
+        json!({"kind": "failed", "attemptsLeft": 13, "equation": "4 * 5", "lockedForMs": 90000})
+    );
+    assert_eq!(
+        v(GateOutcome::Locked {
+            retry_after_ms: 5000,
+            clock_pending: false,
+        }),
+        json!({"kind": "locked", "retryAfterMs": 5000, "clockPending": false})
     );
     let fx = Fx::new();
     let st = serde_json::to_value(fx.gate.status()).unwrap();
@@ -1300,8 +2035,12 @@ fn outcomes_and_status_have_the_shapes_the_front_end_expects() {
             "attemptsLeft",
             "biometric",
             "biometricAvailable",
+            "clockPending",
             "enabled",
             "equation",
+            "finalAttempt",
+            "lockedForMs",
+            "lockedUntilMs",
             "mode",
             "open",
             "panicButton",

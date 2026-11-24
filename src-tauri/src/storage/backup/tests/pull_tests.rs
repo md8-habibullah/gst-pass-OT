@@ -12,7 +12,7 @@ const NEW_ID: &str = "11111111-1111-4111-8111-111111111111";
 const NEW_ID_2: &str = "22222222-2222-4222-8222-222222222222";
 
 fn password_of(fx: &Fx, id: &str) -> String {
-    fx.app.item_reveal(id, PW.into()).unwrap().fields["password"].clone()
+    fx.app.item_reveal(id, Some(PW.into())).unwrap().fields["password"].clone()
 }
 
 fn version_of(fx: &Fx, id: &str) -> u64 {
@@ -83,7 +83,7 @@ fn a_state_records_the_state_it_replaced() {
     let fx = Fx::with_target(manual());
     let x = fx.app.item_create(login("Bank", "pw1")).unwrap().id;
     edit_password(&fx.app, &x, "pw2");
-    fx.app.history_restore(&x, 1, PW.into()).unwrap();
+    fx.app.history_restore(&x, 1, Some(PW.into())).unwrap();
     let chain = fx.app.test_session().test_vault(|v| {
         let rows = v.store().version_rows(&x).unwrap();
         rows.iter()
@@ -159,7 +159,7 @@ fn a_diverged_item_keeps_the_local_head_and_stores_the_other_one_as_another_devi
         [2, 1]
     );
     assert_eq!(
-        fx.app.history_get(&x, 3, PW.into()).unwrap().fields["password"],
+        fx.app.history_get(&x, 3, Some(PW.into())).unwrap().fields["password"],
         "from-B"
     );
     assert_eq!(sync_revision(&fx), 1);
@@ -197,7 +197,7 @@ fn restoring_the_other_devices_copy_clears_the_flag_and_lets_that_device_fast_fo
     assert!(fx.app.item_get(&x).unwrap().changed_elsewhere);
 
     // the existing restore-from-version, on the copy
-    let restored = fx.app.history_restore(&x, 3, PW.into()).unwrap();
+    let restored = fx.app.history_restore(&x, 3, Some(PW.into())).unwrap();
     assert_eq!(restored.version, 4);
     assert_eq!(password_of(&fx, &x), "from-B");
     assert!(
@@ -460,7 +460,10 @@ fn a_new_remote_item_arrives_with_its_history_and_a_second_pass_downloads_nothin
         [3, 2, 1]
     );
     assert_eq!(
-        fx.app.history_get(&second, 1, PW.into()).unwrap().fields["password"],
+        fx.app
+            .history_get(&second, 1, Some(PW.into()))
+            .unwrap()
+            .fields["password"],
         "s1"
     );
     assert!(sync_revision(&fx) >= 1);

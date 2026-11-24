@@ -1,7 +1,7 @@
 // Encrypted drive against the REAL core: add (native-picker seam), size limit, ciphertext on disk, preview, rename, save copy, delete, tamper, attachments.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, truncateSync, openSync, writeSync, closeSync, readdirSync, statSync } from "node:fs";
-import { Core, SP, check, finish, freshDir, walkFiles, scanFor, modeOf, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, addLogin, reprompt, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, scanFor, modeOf, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, addLogin, reprompt, runSteps } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const DATA = freshDir("f-data"), SRC = freshDir("f-src"), OUT = freshDir("f-out");
 const core = new Core({ bin: BIN, data: DATA, port: 1446 });
@@ -20,7 +20,7 @@ const edge = openSync(`${SRC}/limit-ok.bin`, "w"); closeSync(edge); truncateSync
 const over = openSync(`${SRC}/too-big.bin`, "w"); closeSync(over); truncateSync(`${SRC}/too-big.bin`, LIMIT + 1);
 
 step("account and an empty Files section", async (p) => {
-  await p.goto(core.ui); await waitText(p, "Welcome to");
+  await p.goto(core.ui); await firstStart(p);
   await createAccount(p, "Marlowe", PW);
   await nav(p, "Files"); await waitText(p, "kept encrypted next to your passwords");
   const r = await core.ipc("file_list", { itemId: null }); check("the core lists no files yet", Array.isArray(r.ok) && r.ok.length === 0, JSON.stringify(r));

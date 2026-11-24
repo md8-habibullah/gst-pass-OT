@@ -29,11 +29,12 @@ mod app_tests;
 mod tests;
 
 use self::biometric::{BiometricAuth, NoBiometric};
-use self::counter::{CounterRead, Loaded, Persist};
+use self::counter::{CounterRead, Loaded, Lock, Persist};
 use self::credential::{Decision, Normalised, VerifyCounter};
 use self::equation::{Equation, OsRand, Rand};
 use self::idle::IdleTimer;
 use self::settings::AppSettings;
+use crate::clock::TrustedClock;
 use crate::crypto::KdfParams;
 use crate::storage::StorageError;
 use serde::{Deserialize, Serialize};
@@ -43,8 +44,32 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// The 15th failed security attempt erases the device.
-pub const MAX_ATTEMPTS: u32 = 15;
+/// The 16th failed security attempt erases the device. Fifteen wrong ones in a row are survivable, but only with long
+/// waits in between ([`LOCK_STEPS`]), and the 16th is the last chance: the screen warns before it is sent.
+pub const MAX_ATTEMPTS: u32 = 16;
+
+/// Waits after wrong credentials: `(wrong attempts in a row, seconds until the next attempt is allowed)`.
+/// 3 wrong: 1 min 30 s. 6: 5 min. 9: 45 min. 12: 8 h. 15: 3 days. Attempt 16 is the last (a wrong one erases).
+/// Maths answers never count. A wait survives closing the app and restarting the device (it is stored in `gate.json`,
+/// under the same MAC as the counter). It is measured on the boot clock and on UTC time checked online
+/// (`crate::clock`), never on the device date, so setting the date forward shortens nothing. Honest limit: someone
+/// who edits the files can forge them (the counter's MAC detects casual edits only); the wipe at attempt 16 and the
+/// master password still stand.
+pub const LOCK_STEPS: [(u32, u64); 5] = [
+    (3, 90),
+    (6, 5 * 60),
+    (9, 45 * 60),
+    (12, 8 * 3600),
+    (15, 3 * 24 * 3600),
+];
+
+/// The wait (seconds) that starts when the counter reaches `attempts`, if any.
+pub fn lock_seconds_after(attempts: u32) -> Option<u64> {
+    LOCK_STEPS
+        .iter()
+        .find(|(n, _)| *n == attempts)
+        .map(|(_, secs)| *secs)
+}
 /// Typed text of this many characters or fewer is an answer to the maths, never a credential.
 pub const MATH_MAX_CHARS: usize = 3;
 
@@ -66,15 +91,27 @@ pub const ALLOWED_WHILE_CLOSED: &[&str] = &[
     "gate_biometric",
     "gate_panic",
     "app_reset",
+    "app_reset_challenge",
     "app_settings_get",
+    "device_get",
+    "clock_status",
+    "clock_sync",
     "activity_ping",
+    "app_leave",
+    "app_return",
     "sync_flush",
     "disguise_get",
     "screen_secure",
 ];
 
 /// The polling commands: they must not count as activity, or an open window would never time out.
-pub const POLLING_COMMANDS: &[&str] = &["vault_status", "gate_status"];
+pub const POLLING_COMMANDS: &[&str] = &[
+    "vault_status",
+    "gate_status",
+    "app_leave",
+    "app_return",
+    "clock_status",
+];
 
 pub fn allowed_while_closed(cmd: &str) -> bool {
     ALLOWED_WHILE_CLOSED.contains(&cmd)
@@ -106,6 +143,16 @@ pub struct GateStatus {
     pub panic_button: bool,
     pub equation: Option<String>,
     pub attempts_left: Option<u32>,
+    /// Milliseconds until credential attempts are allowed again, while a wait is running.
+    pub locked_for_ms: Option<u64>,
+    /// The same moment as checked UTC milliseconds, so the screen can say "try again at 14:35" in the chosen zone
+    /// without trusting the device date. Absent while the time is not checked.
+    pub locked_until_ms: Option<u64>,
+    /// A wait is running but its end cannot be judged yet: the device restarted and the time was not checked online
+    /// since. The core asks the time servers on its own; nothing is counted or checked meanwhile.
+    pub clock_pending: bool,
+    /// The next wrong credential erases the device (the screen warns before it is sent).
+    pub final_attempt: bool,
     pub streak: u32,
 }
 
@@ -125,6 +172,14 @@ pub enum GateOutcome {
     Failed {
         attempts_left: u32,
         equation: String,
+        /// Set when this failure started a wait: the milliseconds until the next attempt is allowed.
+        locked_for_ms: Option<u64>,
+    },
+    /// A wait is running: the attempt was neither counted nor checked.
+    Locked {
+        retry_after_ms: u64,
+        /// The end of the wait cannot be judged yet (see [`GateStatus::clock_pending`]); `retry_after_ms` is 0.
+        clock_pending: bool,
     },
     Wiped,
 }
@@ -171,10 +226,33 @@ pub type WipeFn<'a> = &'a dyn Fn() -> Result<(), StorageError>;
 /// Locks the open vault (keys zeroized, backup worker joined). Supplied by `AppCore`.
 pub type LockVault = Arc<dyn Fn() + Send + Sync>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Known {
     attempts: u32,
     epoch: u64,
+    /// The wait after wrong credentials, on the boot clock and in checked UTC (see [`Lock`]).
+    lock: Lock,
+}
+
+/// What is left of a wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wait {
+    Over,
+    Left(u64),
+    /// Cannot be judged yet: another boot, and no checked UTC time.
+    Unknown,
+}
+
+impl Wait {
+    /// The longer of two waits; an unknown one wins (nothing is let through on a guess).
+    fn longest(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            (Self::Left(a), Self::Left(b)) => Self::Left(a.max(b)),
+            (Self::Left(a), Self::Over) | (Self::Over, Self::Left(a)) => Self::Left(a),
+            (Self::Over, Self::Over) => Self::Over,
+        }
+    }
 }
 
 struct State {
@@ -195,9 +273,17 @@ struct Inner {
     /// Serialises security attempts, configuration and the wipe.
     attempt: Mutex<()>,
     idle: Arc<IdleTimer>,
+    /// Armed while the app is in the background: when it runs out, the same lock as the inactivity timer.
+    leave: Arc<IdleTimer>,
     settings: Mutex<AppSettings>,
     unit: Mutex<Duration>,
+    /// How long one "lock minute" lasts (production 60 s). Tests set it to zero (no waits) or use the clock below.
+    lock_unit: Mutex<Duration>,
+    /// Time: the boot clock and UTC checked online. Replaceable so tests can move time.
+    time: Mutex<Arc<TrustedClock>>,
     biometric: Mutex<Arc<dyn BiometricAuth>>,
+    /// The long sum that guards "erase everything" (the answer never leaves Rust). One at a time.
+    reset_sum: Mutex<Option<Equation>>,
     rng: Mutex<Box<dyn Rand + Send>>,
     verifications: VerifyCounter,
     lock_vault: LockVault,
@@ -210,6 +296,7 @@ struct Inner {
 pub struct GateCore {
     inner: Arc<Inner>,
     watcher: Mutex<Option<JoinHandle<()>>>,
+    leave_watcher: Mutex<Option<JoinHandle<()>>>,
 }
 
 fn relock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -252,9 +339,99 @@ impl Inner {
         (self.lock_vault)();
     }
 
+    fn time(&self) -> Arc<TrustedClock> {
+        Arc::clone(&relock(&self.time))
+    }
+
+    /// What is left of `lock`. On the same boot only the boot clock counts (the device date is never looked at);
+    /// after a restart the UTC deadline counts, but only against UTC time that was checked online.
+    fn wait_left(&self, lock: &Lock) -> Wait {
+        if lock.is_none() {
+            return Wait::Over;
+        }
+        let time = self.time();
+        let boot = time.boot_now();
+        if lock.boot_ms > 0 && lock.boot_id == boot.id {
+            return if boot.ms >= lock.boot_ms {
+                Wait::Over
+            } else {
+                Wait::Left(lock.boot_ms - boot.ms)
+            };
+        }
+        match (time.deadline_utc_ms(), lock.until_utc) {
+            (Some(now), until) if until > 0 => {
+                if now >= until {
+                    Wait::Over
+                } else {
+                    Wait::Left(until - now)
+                }
+            }
+            _ => Wait::Unknown,
+        }
+    }
+
+    /// A lock of `ms` that starts now.
+    fn start_lock(&self, ms: u64) -> Lock {
+        let time = self.time();
+        let boot = time.boot_now();
+        Lock {
+            until_utc: time.deadline_utc_ms().map_or(0, |now| now + ms),
+            boot_id: boot.id,
+            boot_ms: boot.ms + ms,
+        }
+    }
+
+    /// The wait that is running, as far as the stored lock goes. A wait that started while the time was not checked
+    /// and then survived a restart has no deadline in UTC; the first time the time is checked it starts over in
+    /// full (the safe direction), and that is written down so it does not start over again.
+    fn current_wait(&self) -> Wait {
+        let (cfg, known) = {
+            let s = self.st();
+            (s.cfg.clone(), s.known.clone())
+        };
+        let wait = self.wait_left(&known.lock);
+        let time = self.time();
+        let needs_clock = wait == Wait::Unknown;
+        if needs_clock && known.lock.until_utc == 0 {
+            if let (Some(cfg), Some(now)) = (cfg.as_ref(), time.deadline_utc_ms()) {
+                let full =
+                    lock_seconds_after(known.attempts).map_or(90_000, |secs| self.lock_ms(secs));
+                let boot = time.boot_now();
+                let lock = Lock {
+                    until_utc: now + full,
+                    boot_id: boot.id,
+                    boot_ms: boot.ms + full,
+                };
+                let epoch = known.epoch + 1;
+                if counter::store_locked(&self.dir, cfg, known.attempts, epoch, &lock).is_ok() {
+                    let mut s = self.st();
+                    s.known.epoch = epoch;
+                    s.known.lock = lock;
+                    return Wait::Left(full);
+                }
+            }
+        }
+        if needs_clock {
+            time.refresh_in_background();
+        }
+        wait
+    }
+
+    /// Milliseconds of a wait of `secs` seconds, scaled by the lock unit.
+    fn lock_ms(&self, secs: u64) -> u64 {
+        let unit_ms = relock(&self.lock_unit).as_millis() as u64;
+        secs.saturating_mul(unit_ms) / 60
+    }
+
     fn period(&self) -> Duration {
         let minutes = relock(&self.settings).lock_after_minutes;
         *relock(&self.unit) * minutes
+    }
+
+    /// How long the app may stay open in the background (one "second" is a sixtieth of the unit).
+    fn leave_period(&self) -> Duration {
+        let secs = relock(&self.settings).lock_after_leave_seconds;
+        *relock(&self.unit) * secs / 60
     }
 }
 
@@ -277,6 +454,7 @@ impl GateCore {
                 Known {
                     attempts: 0,
                     epoch: 0,
+                    lock: Lock::none(),
                 },
             ),
             Loaded::Corrupt => {
@@ -286,16 +464,26 @@ impl GateCore {
                     Known {
                         attempts: 0,
                         epoch: 0,
+                        lock: Lock::none(),
                     },
                 )
             }
             Loaded::Ready(p, c) => {
                 let known = match c {
-                    CounterRead::Valid { attempts, epoch } => Known { attempts, epoch },
+                    CounterRead::Valid {
+                        attempts,
+                        epoch,
+                        lock,
+                    } => Known {
+                        attempts,
+                        epoch,
+                        lock,
+                    },
                     // a record that failed its MAC: its number is only a hint (and capped)
                     CounterRead::Damaged { hint } => Known {
                         attempts: hint.unwrap_or(0).min(MAX_ATTEMPTS - 2),
                         epoch: 0,
+                        lock: Lock::none(),
                     },
                 };
                 (Some(*p), known)
@@ -315,9 +503,13 @@ impl GateCore {
             }),
             attempt: Mutex::new(()),
             idle: IdleTimer::new(unit * settings.lock_after_minutes),
+            leave: IdleTimer::new(unit * settings.lock_after_leave_seconds / 60),
             settings: Mutex::new(settings),
             unit: Mutex::new(unit),
+            lock_unit: Mutex::new(Duration::from_secs(60)),
+            time: Mutex::new(Arc::clone(TrustedClock::global())),
             biometric: Mutex::new(Arc::new(NoBiometric)),
+            reset_sum: Mutex::new(None),
             rng: Mutex::new(Box::new(OsRand)),
             verifications: VerifyCounter::default(),
             lock_vault,
@@ -339,9 +531,20 @@ impl GateCore {
                 })
                 .map_err(|_| StorageError::Storage("A background timer could not start.".into()))?
         };
+        let leave_watcher = {
+            let inner = Arc::clone(&inner);
+            std::thread::Builder::new()
+                .name("hexis-leave".into())
+                .spawn(move || {
+                    let leave = Arc::clone(&inner.leave);
+                    leave.watch(|| inner.on_idle_expired());
+                })
+                .map_err(|_| StorageError::Storage("A background timer could not start.".into()))?
+        };
         Ok(Self {
             inner,
             watcher: Mutex::new(Some(watcher)),
+            leave_watcher: Mutex::new(Some(leave_watcher)),
         })
     }
 
@@ -359,6 +562,16 @@ impl GateCore {
 
     pub fn status(&self) -> GateStatus {
         let available = self.biometric_provider().available();
+        let closed = {
+            let s = self.inner.st();
+            s.cfg.is_some() && !s.open
+        };
+        let wait = if closed {
+            self.inner.current_wait()
+        } else {
+            Wait::Over
+        };
+        let utc_now = self.inner.time().deadline_utc_ms();
         let s = self.inner.st();
         let enabled = s.cfg.is_some();
         let open = !enabled || s.open;
@@ -376,6 +589,16 @@ impl GateCore {
             },
             attempts_left: (s.known.attempts > 0)
                 .then(|| MAX_ATTEMPTS.saturating_sub(s.known.attempts)),
+            locked_for_ms: match wait {
+                Wait::Left(ms) => Some(ms),
+                _ => None,
+            },
+            locked_until_ms: match (wait, utc_now) {
+                (Wait::Left(ms), Some(now)) => Some(now + ms),
+                _ => None,
+            },
+            clock_pending: wait == Wait::Unknown,
+            final_attempt: enabled && !open && s.known.attempts + 1 >= MAX_ATTEMPTS,
             streak: s.streak,
         }
     }
@@ -414,10 +637,40 @@ impl GateCore {
         Ok(())
     }
 
-    /// Run the expiry action now if the deadline has passed.
+    /// Run the expiry action now if a deadline has passed (the inactivity one, or the one that runs while the app
+    /// is in the background; the phone may have slept through either).
     pub fn enforce_idle(&self) {
-        if self.inner.idle.take_expired() {
+        let idle = self.inner.idle.take_expired();
+        let left = self.inner.leave.take_expired();
+        if idle || left {
             self.inner.on_idle_expired();
+        }
+    }
+
+    /// The app went to the background (a phone or tablet: the person switched away). The inactivity timer stops
+    /// and the "after leaving" timer starts; with 0 seconds the lock happens now. Native screens that sit on top of
+    /// the app (the camera, a file picker, a permission prompt) are not "leaving": the front end does not call this
+    /// for them.
+    pub fn app_leave(&self) {
+        self.inner.idle.disarm();
+        let period = self.inner.leave_period();
+        if period.is_zero() {
+            self.inner.leave.disarm();
+            self.inner.on_idle_expired();
+        } else {
+            self.inner.leave.touch();
+        }
+    }
+
+    /// The app is back on screen. If the time allowed away has run out the app locks now (the vault and, when it is
+    /// on, the gate); otherwise the timer stops and the inactivity timer starts again.
+    pub fn app_return(&self) {
+        let expired = self.inner.leave.take_expired();
+        self.inner.leave.disarm();
+        if expired {
+            self.inner.on_idle_expired();
+        } else if !self.is_closed() {
+            self.inner.idle.touch();
         }
     }
 
@@ -437,21 +690,38 @@ impl GateCore {
         settings::store(&self.inner.dir, &new)?;
         *relock(&self.inner.settings) = new;
         self.inner.idle.set_period(self.inner.period());
+        self.inner.leave.set_period(self.inner.leave_period());
         // Changing the timeout is activity too.
         self.ping();
         Ok(new)
+    }
+
+    /// Make one minute of every wait after wrong credentials last `unit` (production: 60 s; zero: no waits at all).
+    pub fn set_lock_unit(&self, unit: Duration) {
+        *relock(&self.inner.lock_unit) = unit;
+    }
+
+    /// Replace the clock the waits are measured on. For tests and the shim.
+    pub fn set_time(&self, time: Arc<TrustedClock>) {
+        *relock(&self.inner.time) = time;
+    }
+
+    /// The clock the waits are measured on.
+    pub fn time(&self) -> Arc<TrustedClock> {
+        self.inner.time()
     }
 
     /// Make one "minute" last `unit` (production: 60 s). For the shim's `--idle-unit-ms` and tests.
     pub fn set_idle_unit(&self, unit: Duration) {
         *relock(&self.inner.unit) = unit;
         self.inner.idle.set_period(self.inner.period());
+        self.inner.leave.set_period(self.inner.leave_period());
     }
 
     // ------------------------------------------------------------ the gate
 
     /// Typed text: 1 to 3 characters answer the decoy maths, 4 or more are a security attempt.
-    /// `wipe` erases the device (the panic and the 15th failure).
+    /// `wipe` erases the device (the panic and the 16th failure).
     pub fn submit(&self, input: &str, wipe: WipeFn<'_>) -> Result<GateOutcome, StorageError> {
         {
             let s = self.inner.st();
@@ -517,31 +787,82 @@ impl GateCore {
         let (cfg, known) = {
             let s = inner.st();
             match (&s.cfg, s.open) {
-                (Some(c), false) => (c.clone(), s.known),
+                (Some(c), false) => (c.clone(), s.known.clone()),
                 _ => return Ok(GateOutcome::Opened),
             }
         };
 
         // (1) read
-        let (base, file_epoch) = match counter::read_counter(&inner.dir, &cfg.install_key) {
-            CounterRead::Valid { attempts, epoch } if epoch >= known.epoch => (attempts, epoch),
-            // an older record than this process already wrote: a restored or replayed copy
-            CounterRead::Valid { attempts, epoch } => {
-                (penalised(attempts.max(known.attempts), None), epoch)
-            }
-            CounterRead::Damaged { hint } => (penalised(known.attempts, hint), 0),
-        };
+        let (base, file_epoch, file_lock) =
+            match counter::read_counter(&inner.dir, &cfg.install_key) {
+                CounterRead::Valid {
+                    attempts,
+                    epoch,
+                    lock,
+                } if epoch >= known.epoch => (attempts, epoch, lock),
+                // an older record than this process already wrote: a restored or replayed copy
+                CounterRead::Valid {
+                    attempts, epoch, ..
+                } => (
+                    penalised(attempts.max(known.attempts), None),
+                    epoch,
+                    known.lock.clone(),
+                ),
+                CounterRead::Damaged { hint } => {
+                    (penalised(known.attempts, hint), 0, known.lock.clone())
+                }
+            };
         let base = base.min(MAX_ATTEMPTS);
         if base >= MAX_ATTEMPTS {
-            // A record that says "15 failures" and a wipe that never finished: finish it.
+            // A record that says "16 failures" and a wipe that never finished: finish it.
             wipe()?;
             return Ok(GateOutcome::Wiped);
         }
+        // (1b) a wait is running: the attempt is neither counted nor looked at
+        let (w_file, w_known) = (inner.wait_left(&file_lock), inner.wait_left(&known.lock));
+        let (wait, keep) = match (w_file, w_known) {
+            (Wait::Over, Wait::Over) => (Wait::Over, None),
+            (Wait::Over, w) => (w, Some(known.lock.clone())),
+            (w, Wait::Over) => (w, Some(file_lock.clone())),
+            (a, b) => {
+                let known_is_longer = matches!((a, b), (Wait::Left(x), Wait::Left(y)) if y > x);
+                let lock = if known_is_longer {
+                    known.lock.clone()
+                } else {
+                    file_lock.clone()
+                };
+                (a.longest(b), Some(lock))
+            }
+        };
+        if wait != Wait::Over {
+            if let Some(lock) = keep {
+                inner.st().known.lock = lock;
+            }
+            return Ok(match wait {
+                Wait::Left(ms) => GateOutcome::Locked {
+                    retry_after_ms: ms,
+                    clock_pending: false,
+                },
+                _ => {
+                    inner.time().refresh_in_background();
+                    GateOutcome::Locked {
+                        retry_after_ms: 0,
+                        clock_pending: true,
+                    }
+                }
+            });
+        }
         let next = base + 1;
         let epoch = known.epoch.max(file_epoch) + 1;
+        // The wait that a wrong answer now would start is written together with the counter, so
+        // force-closing the app mid-attempt dodges neither the count nor the wait.
+        let wait_ms = lock_seconds_after(next)
+            .map(|secs| inner.lock_ms(secs))
+            .filter(|ms| *ms > 0);
+        let lock = wait_ms.map_or_else(Lock::none, |ms| inner.start_lock(ms));
 
         // (2) write-ahead: if it cannot be recorded, the input is not even looked at
-        if counter::store(&inner.dir, &cfg, next, epoch).is_err() {
+        if counter::store_locked(&inner.dir, &cfg, next, epoch, &lock).is_err() {
             return Err(StorageError::Storage(
                 "The attempt could not be recorded, so it was not checked.".into(),
             ));
@@ -549,6 +870,7 @@ impl GateCore {
         inner.st().known = Known {
             attempts: next,
             epoch,
+            lock,
         };
         #[cfg(test)]
         if inner
@@ -576,6 +898,7 @@ impl GateCore {
                     s.known = Known {
                         attempts: 0,
                         epoch: reset_epoch,
+                        lock: Lock::none(),
                     };
                 }
                 s.open = true;
@@ -599,6 +922,7 @@ impl GateCore {
                 Ok(GateOutcome::Failed {
                     attempts_left: MAX_ATTEMPTS - next,
                     equation: shown,
+                    locked_for_ms: wait_ms,
                 })
             }
         }
@@ -661,6 +985,27 @@ impl GateCore {
         self.inner.idle.disarm();
     }
 
+    /// A new long sum for the last step of "erase everything". Replaces any earlier one, so an answer worked out for
+    /// an old sum is worthless. Returns the text only.
+    pub fn reset_challenge(&self) -> String {
+        let eq = equation::generate_long(&mut **relock(&self.inner.rng));
+        let text = eq.text.clone();
+        *relock(&self.inner.reset_sum) = Some(eq);
+        text
+    }
+
+    /// Checks the typed answer to the current sum. The sum is used up either way: a wrong answer needs a new one.
+    pub fn check_reset_answer(&self, typed: &str) -> bool {
+        let Some(eq) = relock(&self.inner.reset_sum).take() else {
+            return false;
+        };
+        let typed = typed.trim();
+        !typed.is_empty()
+            && typed.len() <= 9
+            && typed.bytes().all(|b| b.is_ascii_digit())
+            && typed.parse::<u32>().is_ok_and(|n| n == eq.answer)
+    }
+
     /// Run `f` while no security attempt, configuration or other wipe is in progress.
     pub fn exclusive<T>(&self, f: impl FnOnce() -> T) -> T {
         let _serial = relock(&self.inner.attempt);
@@ -710,6 +1055,7 @@ impl GateCore {
             s.known = Known {
                 attempts: 0,
                 epoch: 0,
+                lock: Lock::none(),
             };
             drop(s);
             return Ok(self.status());
@@ -725,7 +1071,11 @@ impl GateCore {
             // you are inside the app while configuring it
             s.open = true;
             s.equation = None;
-            s.known = Known { attempts: 0, epoch };
+            s.known = Known {
+                attempts: 0,
+                epoch,
+                lock: Lock::none(),
+            };
         }
         Ok(self.status())
     }
@@ -827,11 +1177,14 @@ impl GateCore {
             s.known = Known {
                 attempts: 0,
                 epoch: 0,
+                lock: Lock::none(),
             };
         }
         *relock(&self.inner.settings) = AppSettings::default();
         self.inner.idle.set_period(self.inner.period());
         self.inner.idle.disarm();
+        self.inner.leave.set_period(self.inner.leave_period());
+        self.inner.leave.disarm();
     }
 
     /// Something the disguise slice (and others) must undo when everything is wiped, for example
@@ -877,6 +1230,12 @@ impl GateCore {
         self.inner.st().equation.as_ref().map(|e| e.answer)
     }
 
+    /// The answer of the sum that "erase everything" is waiting on (tests only).
+    #[cfg(test)]
+    pub(crate) fn reset_answer(&self) -> Option<u32> {
+        relock(&self.inner.reset_sum).as_ref().map(|e| e.answer)
+    }
+
     #[cfg(test)]
     pub(crate) fn idle_armed(&self) -> bool {
         self.inner.idle.is_armed()
@@ -886,7 +1245,11 @@ impl GateCore {
 impl Drop for GateCore {
     fn drop(&mut self) {
         self.inner.idle.shutdown();
+        self.inner.leave.shutdown();
         if let Some(handle) = relock(&self.watcher).take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = relock(&self.leave_watcher).take() {
             let _ = handle.join();
         }
     }

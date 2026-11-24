@@ -1327,4 +1327,5 @@ fn edit_password_over_ipc(h: &Harness, id: &str, password: &str) {
         }),
     );
 }
+mod device_ipc;
 mod gate_ipc;

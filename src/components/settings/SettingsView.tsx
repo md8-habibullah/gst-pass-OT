@@ -1,157 +1,177 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { ChevronRight, CloudUpload, Download, Files, KeyRound, Lock, Upload } from "lucide-react";
-import { BackendError } from "../../backend";
-import { app, be, lockVault, pushToast, setClipboardClear, setFilter, type ClipboardClear, type Filter } from "../../state/app";
+import { useEffect, type ReactNode } from "react";
+import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, LockKeyhole, Palette, ShieldCheck, Upload, UsersRound, type LucideIcon } from "lucide-react";
+import { plural } from "../../lib/format";
+import { useLayout } from "../../lib/layout";
+import { zoneLabel } from "../../lib/zones";
+import { app } from "../../state/app";
 import { backups, summarize } from "../../state/backup";
-import { useStore } from "../../state/store";
-import { StrengthMeter } from "../lock/StrengthMeter";
-import { VaultMark } from "../lock/VaultMark";
+import { useBackHandler } from "../../state/back";
 import { useBrandName } from "../../state/brand";
-import { Button } from "../ui/Button";
-import { Field, Segmented, TextInput } from "../ui/Inputs";
-import { Sheet } from "../ui/Sheet";
+import { useStore } from "../../state/store";
+import { setSettingsPage, ui, type SettingsPageId } from "../../state/ui";
+import { SETTINGS_CHILDREN } from "../shell/nav";
+import { IconButton } from "../ui/Button";
+import { AboutPage } from "./AboutPage";
 import { AccountsGroup } from "./Accounts";
 import { AppLockGroup } from "./AppLock";
+import { DateTimePage } from "./DateTimePage";
 import { DisguiseGroup } from "./Disguise";
+import { HelpPage } from "./HelpPage";
+import { Group, LinkRow } from "./parts";
+import { SecurityPage } from "./SecurityPage";
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
+interface Category {
+  id: SettingsPageId;
+  title: string;
+  icon: LucideIcon;
+  /** One line under the title on the page itself. */
+  about: string;
+}
+
+const CATEGORIES: Category[] = [
+  { id: "security", title: "Security", icon: ShieldCheck, about: "Your master password, the clipboard and locking the vault." },
+  { id: "applock", title: "App lock", icon: LockKeyhole, about: "A passcode before the account list, and when open vaults lock by themselves." },
+  { id: "accounts", title: "Accounts", icon: UsersRound, about: "The vaults on this device." },
+  { id: "time", title: "Date and time", icon: Clock, about: "Hexis saves every time in UTC and writes it in your zone. Changing the zone changes only how times look." },
+  { id: "appearance", title: "App icon and name", icon: Palette, about: "Change how the app looks in your launcher." },
+  { id: "data", title: "Backup and files", icon: CloudUpload, about: "Backups, encrypted files, import and export." },
+  { id: "help", title: "Help and shortcuts", icon: Keyboard, about: "Keyboard shortcuts and common questions." },
+  { id: "about", title: "About", icon: Info, about: "Version and how your data is protected." },
+];
+
+/** What each category says about its current state, shown in the list. */
+function useSummaries(): Record<SettingsPageId, string> {
+  const gate = useStore(app, (s) => s.gate);
+  const profiles = useStore(app, (s) => s.profiles);
+  const device = useStore(app, (s) => s.device);
+  const clipboardClear = useStore(app, (s) => s.clipboardClear);
+  const backup = summarize(useStore(backups, (s) => s.targets));
+  const name = useBrandName();
+  return {
+    security: `Clipboard clears after ${clipboardClear} seconds`,
+    applock: gate?.enabled ? "Passcode on" : "Passcode off",
+    accounts: plural(profiles.length, "account"),
+    time: device?.timeZone ? zoneLabel(device.timeZone) : "Not chosen",
+    appearance: `Shown as ${name}`,
+    data: backup.title,
+    help: "Press ? for shortcuts",
+    about: `Version ${typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev"}`,
+  };
+}
+
+function BackupPage() {
+  const backup = summarize(useStore(backups, (s) => s.targets));
+  const remember = () => setSettingsPage("data"); // coming back from Backup, Files, Import or Export lands here
   return (
-    <section aria-label={title} className="flex flex-col gap-2">
-      <h3 className="px-1 font-semibold">{title}</h3>
-      <div className="glass overflow-hidden rounded-lg">{children}</div>
+    <Group title="Backup and files" heading={false}>
+      <LinkRow before={remember} title="Backup" description={`${backup.title}. ${backup.detail}`} filter="backup" icon={<CloudUpload className="size-[18px]" />} />
+      <LinkRow before={remember} title="Files" description="Encrypted storage for images, PDFs and documents, up to 50 MB each." filter="files" icon={<Files className="size-[18px]" />} />
+      <LinkRow before={remember} title="Import" description="Bring in passwords from Bitwarden or a CSV file." filter="import" icon={<Download className="size-[18px]" />} />
+      <LinkRow before={remember} title="Export" description="Save an encrypted copy of this vault as a file." filter="export" icon={<Upload className="size-[18px]" />} />
+    </Group>
+  );
+}
+
+function PageContent({ id }: { id: SettingsPageId }): ReactNode {
+  switch (id) {
+    case "security": return <SecurityPage />;
+    case "applock": return <AppLockGroup heading={false} />;
+    case "accounts": return <AccountsGroup heading={false} />;
+    case "time": return <DateTimePage />;
+    case "appearance": return <DisguiseGroup heading={false} />;
+    case "data": return <BackupPage />;
+    case "help": return <HelpPage />;
+    case "about": return <AboutPage />;
+  }
+}
+
+function PageBox({ category, back, onBack }: { category: Category; back: boolean; onBack: () => void }) {
+  return (
+    <section aria-label={category.title} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+      <div className="mx-auto flex w-full max-w-[40rem] flex-col gap-6 px-5 pt-[calc(1rem+var(--safe-top))] pb-28 min-[720px]:mx-0 min-[720px]:pt-6 min-[720px]:pb-10">
+        <div className="flex items-start gap-2">
+          {back && (
+            <IconButton label="Back to settings" className="-ml-2 shrink-0" onClick={onBack}><ArrowLeft className="size-5" /></IconButton>
+          )}
+          <div className="min-w-0">
+            <h2 className="font-display text-[1.45rem] leading-[1.2] font-medium tracking-[-0.005em]">{category.title}</h2>
+            {!back && <p className="mt-1 text-[0.93em] text-mist">{category.about}</p>}
+          </div>
+        </div>
+        <PageContent id={category.id} />
+      </div>
     </section>
   );
 }
 
-function Row({ title, description, children }: { title: string; description?: string; children?: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-hairline px-4 py-3.5 last:border-b-0">
-      <div className="min-w-0 flex-1 basis-60">
-        <p className="font-medium">{title}</p>
-        {description && <p className="mt-0.5 text-[0.93em] text-mist">{description}</p>}
-      </div>
-      {children}
-    </div>
-  );
-}
+/**
+ * Settings, layer by layer. On a phone the categories are a list; a tap opens one full page and Back returns to the list.
+ * On a tablet or desktop the categories sit on the left and the chosen page on the right, so there is no long scroll
+ * and nothing to hunt for.
+ */
+export function SettingsView() {
+  const layout = useLayout();
+  const compact = layout === "compact";
+  const page = useStore(ui, (s) => s.settingsPage);
+  const summaries = useSummaries();
+  const active = CATEGORIES.find((c) => c.id === (page ?? (compact ? null : "security"))) ?? null;
 
-function LinkRow({ title, description, filter, icon }: { title: string; description: string; filter: Filter; icon: ReactNode }) {
-  return (
-    <button type="button" onClick={() => setFilter(filter)} className="pressable flex w-full items-center gap-4 border-b border-hairline px-4 py-3.5 text-left last:border-b-0 hover:bg-raised/60">
-      <span className="grid size-9 shrink-0 place-items-center rounded-sm bg-raised text-brass shadow-e1">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium">{title}</span>
-        <span className="block text-[0.93em] text-mist">{description}</span>
-      </span>
-      <ChevronRight className="size-4 shrink-0 text-fog" aria-hidden />
-    </button>
-  );
-}
+  // The Back button closes an open page before it leaves Settings.
+  useBackHandler(compact && page !== null, () => setSettingsPage(null));
+  // Leaving Settings for anywhere but one of its own sub-pages starts the next visit from the list.
+  useEffect(() => () => { if (!SETTINGS_CHILDREN.has(app.get().filter)) setSettingsPage(null); }, []);
 
-function ChangePassword({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [again, setAgain] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const reset = () => { setCurrent(""); setNext(""); setAgain(""); setError(null); setBusy(false); };
-  const close = () => { if (busy) return; reset(); onClose(); };
-  const valid = current.length > 0 && next.length >= 8 && next === again && next !== current;
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!valid || busy) return;
-    setBusy(true); setError(null);
-    try {
-      await be().changePassword(current, next);
-      reset(); onClose();
-      pushToast({ kind: "success", text: "Master password changed. Your items were not re-encrypted; only the key that guards them was." });
-    } catch (err) {
-      setBusy(false);
-      setError(err instanceof BackendError && err.code === "wrong_password" ? "That is not your current master password." : err instanceof Error ? err.message : "Could not change the password.");
-    }
+  if (compact) {
+    if (active) return <PageBox category={active} back onBack={() => setSettingsPage(null)} />;
+    return (
+      <section aria-label="Settings" className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+        <div className="mx-auto flex w-full max-w-[40rem] flex-col gap-4 px-5 pt-[calc(1rem+var(--safe-top))] pb-28">
+          <h2 className="font-display text-[1.45rem] leading-none font-medium">Settings</h2>
+          <ul className="surface overflow-hidden rounded-lg">
+            {CATEGORIES.map((c) => (
+              <li key={c.id} className="border-b border-hairline last:border-b-0">
+                <button type="button" onClick={() => setSettingsPage(c.id)} className="pressable flex min-h-16 w-full items-center gap-4 px-4 text-left hover:bg-raised/60">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-sm bg-raised text-brass"><c.icon className="size-[18px]" aria-hidden /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{c.title}</span>
+                    <span className="block truncate text-[0.93em] text-mist">{summaries[c.id]}</span>
+                  </span>
+                  <ChevronRight className="size-4 shrink-0 text-fog" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    );
   }
 
+  const current = active ?? CATEGORIES[0]!;
   return (
-    <Sheet open={open} onClose={close} title="Change master password" variant="dialog" size="sm" dismissible={!busy} titleIcon={<KeyRound className="size-5 text-brass" aria-hidden />}>
-      <form onSubmit={submit} className="flex flex-col gap-4 pt-1">
-        <Field label="Current master password" error={error}>
-          {({ id, describedBy, invalid }) => <TextInput id={id} data-autofocus type="password" autoComplete="current-password" value={current} invalid={invalid} aria-describedby={describedBy} disabled={busy} onChange={(e) => setCurrent(e.target.value)} />}
-        </Field>
-        <Field label="New master password" hint="At least 8 characters. There is no recovery if you forget it.">
-          {({ id, describedBy }) => <TextInput id={id} type="password" autoComplete="new-password" value={next} aria-describedby={describedBy} disabled={busy} onChange={(e) => setNext(e.target.value)} />}
-        </Field>
-        <StrengthMeter password={next} />
-        <Field label="Repeat the new password" error={again && again !== next ? "The passwords do not match yet." : null}>
-          {({ id, describedBy, invalid }) => <TextInput id={id} type="password" autoComplete="new-password" value={again} invalid={invalid} aria-describedby={describedBy} disabled={busy} onChange={(e) => setAgain(e.target.value)} />}
-        </Field>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
-          <Button type="submit" variant="key" busy={busy} disabled={!valid}>Change password</Button>
-        </div>
-      </form>
-    </Sheet>
-  );
-}
-
-export function SettingsView() {
-  const brandName = useBrandName();
-  const clipboardClear = useStore(app, (s) => s.clipboardClear);
-  const suite = useStore(app, (s) => s.suite);
-  const [changing, setChanging] = useState(false);
-  const backupSummary = summarize(useStore(backups, (s) => s.targets));
-  const preview = import.meta.env.DEV && be().kind === "preview";
-
-  return (
-    <section aria-label="Settings" className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
-      <div className="mx-auto flex w-full max-w-[40rem] flex-col gap-6 px-5 pt-[calc(1rem+var(--safe-top))] pb-28 min-[720px]:pt-5 min-[720px]:pb-10">
-        <h2 className="font-display text-[1.45rem] leading-none font-semibold">Settings</h2>
-
-        <Group title="Security">
-          <Row title="Clear copied secrets after" description="Passwords and other secrets are removed from the clipboard after this long.">
-            <Segmented<ClipboardClear> label="Clipboard clear time" value={clipboardClear} onChange={setClipboardClear} options={[{ value: 15, label: "15 s" }, { value: 30, label: "30 s" }, { value: 60, label: "60 s" }]} />
-          </Row>
-          <Row title="Master password" description="Re-encrypts only the key that guards your vault, so it is quick.">
-            <Button icon={<KeyRound className="size-4" />} onClick={() => setChanging(true)}>Change</Button>
-          </Row>
-          <Row title="Lock the vault" description="Wipes the vault key from memory. You will need your master password to open it again.">
-            <Button icon={<Lock className="size-4" />} onClick={() => void lockVault()}>Lock now</Button>
-          </Row>
-        </Group>
-
-        <AccountsGroup />
-
-        <AppLockGroup />
-
-        <DisguiseGroup />
-
-        <Group title="Backup and files">
-          <LinkRow title="Backup" description={`${backupSummary.title}. ${backupSummary.detail}`} filter="backup" icon={<CloudUpload className="size-[18px]" />} />
-          <LinkRow title="Files" description="Encrypted storage for images, PDFs and documents, up to 50 MB each." filter="files" icon={<Files className="size-[18px]" />} />
-          <LinkRow title="Import" description="Bring in passwords from Bitwarden or a CSV file." filter="import" icon={<Download className="size-[18px]" />} />
-          <LinkRow title="Export" description="Save an encrypted copy of this vault as a file." filter="export" icon={<Upload className="size-[18px]" />} />
-        </Group>
-
-        <Group title="About">
-          <div className="flex items-center gap-4 border-b border-hairline px-4 py-4">
-            <VaultMark size={44} />
-            <div className="min-w-0">
-              <p className="font-semibold">{brandName}</p>
-              <p className="mt-0.5 text-[0.93em] text-mist">Version {typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev"}. Your vaults stay on this device unless you set up a backup.</p>
-            </div>
-          </div>
-          {suite && (
-            <>
-              <Row title="Key protection" description={`${suite.kem}, so a future quantum computer cannot unwrap your keys from stored data.`} />
-              <Row title="Password hashing" description={`${suite.kdf}, ${suite.kdfDefaults.mCostKiB / 1024} MiB of memory, ${suite.kdfDefaults.tCost} passes, ${suite.kdfDefaults.pCost} lanes.`} />
-              <Row title="Encryption" description={`${suite.aead} with ${suite.keyBytes * 8}-bit keys and a fresh ${suite.nonceBytes * 8}-bit random nonce for every object.`} />
-              <Row title="Format" description={`Version ${suite.version}. Every item and every version is a separate authenticated envelope.`} />
-            </>
-          )}
-          {preview && <Row title="Preview backend" description="This build is talking to an in-memory demo, not the encrypted Rust core. Nothing here is secure." />}
-        </Group>
-      </div>
-      <ChangePassword open={changing} onClose={() => setChanging(false)} />
-    </section>
+    <div className="flex min-h-0 flex-1" role="region" aria-label="Settings">
+      <nav aria-label="Settings categories" className="w-[13.5rem] shrink-0 overflow-y-auto overscroll-contain border-r border-hairline px-3 pt-6 pb-6 min-[1100px]:w-[17rem]">
+        <h2 className="mb-3 px-3 font-display text-[1.45rem] leading-none font-medium">Settings</h2>
+        <ul className="flex flex-col gap-0.5">
+          {CATEGORIES.map((c) => {
+            const on = c.id === current.id;
+            return (
+              <li key={c.id}>
+                <button
+                  type="button" onClick={() => setSettingsPage(c.id)} aria-current={on ? "page" : undefined}
+                  className={`pressable flex min-h-11 w-full items-center gap-3 rounded-sm px-3 text-left ${on ? "bg-raised text-frost" : "text-mist hover:bg-raised/60 hover:text-frost"}`}
+                >
+                  <c.icon className={`size-[18px] shrink-0 ${on ? "text-brass" : ""}`} aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{c.title}</span>
+                    <span className="hidden truncate text-[0.8em] text-fog min-[1100px]:block">{summaries[c.id]}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+      <PageBox key={current.id} category={current} back={false} onBack={() => undefined} />
+    </div>
   );
 }

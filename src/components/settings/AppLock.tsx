@@ -2,13 +2,16 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Fingerprint, ScanFace, ShieldCheck } from "lucide-react";
 import { BackendError } from "../../backend";
 import type { AppSettings, GateConfigInput, GateMode, GateStatus } from "../../backend";
+import { LOCK_AFTER_LEAVE_SECONDS, LOCK_AFTER_MINUTES } from "../../backend/types";
+import { idleLabel, leaveLabel } from "../../lib/format";
 import { credentialProblem, panicProblems } from "../../lib/gateRules";
+import { isMobileShell } from "../../lib/platform";
 import { be, pushToast, refreshGate } from "../../state/app";
 import { app } from "../../state/app";
 import { useStore } from "../../state/store";
 import { GridPad } from "../gate/GridPad";
 import { Button } from "../ui/Button";
-import { Field, Segmented, Switch, TextInput } from "../ui/Inputs";
+import { Field, Segmented, Select, Switch, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 
 const MODE_LABEL: Record<GateMode, string> = { pin: "PIN", password: "Password", grid: "Number grid" };
@@ -170,36 +173,46 @@ function AppLockSheet({ open, onClose, gate }: { open: boolean; onClose: () => v
 }
 
 /** The "App lock" group: Stage 1 setup and the inactivity timer for open vaults. */
-export function AppLockGroup() {
+export function AppLockGroup({ heading = true }: { heading?: boolean }) {
   const gate = useStore(app, (s) => s.gate);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [open, setOpen] = useState(false);
   useEffect(() => { void be().appSettingsGet().then(setSettings).catch(() => undefined); }, []);
 
-  async function setMinutes(m: AppSettings["lockAfterMinutes"]) {
+  async function change(next: Partial<AppSettings>) {
     const prev = settings;
-    setSettings({ lockAfterMinutes: m });
-    try { setSettings(await be().appSettingsSet({ lockAfterMinutes: m })); } catch { setSettings(prev); pushToast({ kind: "error", text: "Could not change the lock timer." }); }
+    if (!prev) return;
+    const wanted = { ...prev, ...next };
+    setSettings(wanted);
+    try { setSettings(await be().appSettingsSet(wanted)); } catch { setSettings(prev); pushToast({ kind: "error", text: "Could not change the lock timer." }); }
   }
 
   return (
     <section aria-label="App lock" className="flex flex-col gap-2">
-      <h3 className="px-1 font-semibold">App lock</h3>
-      <div className="glass overflow-hidden rounded-lg">
+      {heading && <h3 className="px-1 font-semibold">App lock</h3>}
+      <div className="surface overflow-hidden rounded-lg">
         <Row
           title="Passcode before the account list"
           description={gate?.enabled ? `On, with a ${MODE_LABEL[gate.mode].toLowerCase()}${gate.biometric ? " or fingerprint" : ""}. Every vault still asks for its master password.` : "Off. Add a passcode or fingerprint that must be passed before anyone sees which vaults exist."}
         >
           <Button icon={<ScanFace className="size-4" />} onClick={() => setOpen(true)} disabled={!gate}>{gate?.enabled ? "Change" : "Set up"}</Button>
         </Row>
-        <Row title="Lock an open vault after" description="No input for this long and the vault key is wiped from memory. You will need the master password again.">
+        <Row title="Lock an open vault after" description="No taps or typing for this long and the vault key is wiped from memory. You will need the master password again.">
           {settings && (
-            <Segmented<AppSettings["lockAfterMinutes"]>
-              label="Lock after" value={settings.lockAfterMinutes} onChange={(m) => void setMinutes(m)}
-              options={[{ value: 1, label: "1 min" }, { value: 5, label: "5 min" }, { value: 15, label: "15 min" }, { value: 30, label: "30 min" }]}
-            />
+            <Select aria-label="Lock after no activity for" value={settings.lockAfterMinutes} onChange={(e) => void change({ lockAfterMinutes: Number(e.target.value) as AppSettings["lockAfterMinutes"] })}>
+              {LOCK_AFTER_MINUTES.map((m) => <option key={m} value={m}>{idleLabel(m)}</option>)}
+            </Select>
           )}
         </Row>
+        {isMobileShell() && (
+          <Row title="Lock after you leave the app" description="How long Hexis stays open while you use another app. Coming back after this time asks for the master password. “Right away” locks the moment you leave.">
+            {settings && (
+              <Select aria-label="Lock after leaving the app for" value={settings.lockAfterLeaveSeconds} onChange={(e) => void change({ lockAfterLeaveSeconds: Number(e.target.value) as AppSettings["lockAfterLeaveSeconds"] })}>
+                {LOCK_AFTER_LEAVE_SECONDS.map((s) => <option key={s} value={s}>{leaveLabel(s)}</option>)}
+              </Select>
+            )}
+          </Row>
+        )}
       </div>
       {gate && <AppLockSheet open={open} onClose={() => setOpen(false)} gate={gate} />}
     </section>

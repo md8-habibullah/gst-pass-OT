@@ -116,7 +116,7 @@ function Popover({ open, entries }: { open: Open; entries: Entry[] }) {
       ref={ref}
       role="menu"
       aria-label={`Actions for ${open.item.title}`}
-      className="glass-strong fixed z-[60] min-w-52 rounded-lg p-1.5"
+      className="surface-float fixed z-[60] min-w-52 rounded-lg p-1.5"
       style={{ left: pos.left, top: pos.top, visibility: pos.ready ? "visible" : "hidden" }}
     >
       {entries.map((e) => (

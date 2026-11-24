@@ -7,6 +7,7 @@ interface BwItem {
   name?: string | null;
   notes?: string | null;
   favorite?: boolean;
+  reprompt?: number;
   folderId?: string | null;
   deletedDate?: string | null;
   fields?: BwField[] | null;
@@ -123,6 +124,7 @@ export function parseBitwarden(text: string): ImportResult {
     draft.customFields = extra.slice(0, 50);
     if (extra.length > 50) out.warnings.push(`“${name}” has more than 50 custom fields; the extra ones were left out.`);
     draft.favorite = Boolean(it.favorite);
+    draft.reprompt = it.reprompt === 1;
     const folder = it.folderId ? folders.get(it.folderId) : null;
     draft.folder = folder ? folder.slice(0, 64) : null;
     out.drafts.push(draft);

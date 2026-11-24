@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { LayoutGroup } from "motion/react";
 import { Archive, Plus, Search, Star, X } from "lucide-react";
 import { recencyGroup, type RecencyGroup } from "../../lib/format";
@@ -7,6 +7,7 @@ import { app, select, setQuery, visibleItems, type Filter } from "../../state/ap
 import { useStore } from "../../state/store";
 import { openNewItem } from "../../state/ui";
 import { Button, IconButton } from "../ui/Button";
+import { Keycap } from "../ui/Keycap";
 import { TextInput } from "../ui/Inputs";
 import { FilterChips } from "../shell/FilterChips";
 import { FILTER_TYPE, TITLE } from "../shell/nav";
@@ -78,20 +79,6 @@ export function ListPane() {
     return GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({ name: g, items: map.get(g)! }));
   }, [visible]);
   
-  // "/" and Ctrl/Cmd+K focus search from anywhere that is not a text field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement | null)?.closest("input,textarea,[contenteditable]");
-      if ((e.key === "/" && !typing) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) {
-        e.preventDefault();
-        search.current?.focus();
-        search.current?.select();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   function onListKey(e: React.KeyboardEvent) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
@@ -120,6 +107,7 @@ export function ListPane() {
           <TextInput
             ref={search}
             type="search"
+            data-search
             aria-label="Search items"
             placeholder="Search"
             value={query}
@@ -127,7 +115,7 @@ export function ListPane() {
             className="pr-10 pl-9"
           />
           {!query && !compact && (
-            <kbd aria-hidden className="pointer-events-none absolute top-1/2 right-2.5 grid h-5 min-w-5 -translate-y-1/2 place-items-center rounded-sm border border-hairline-strong bg-raised px-1 font-mono text-[0.72rem] leading-none text-fog">/</kbd>
+            <Keycap className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2">/</Keycap>
           )}
           {query && (
             <IconButton label="Clear search" size="sm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => { setQuery(""); search.current?.focus(); }}>
@@ -146,7 +134,7 @@ export function ListPane() {
             <ul ref={list} role="listbox" aria-label={TITLE[filter]} className="flex flex-col gap-0.5">
               {groups.map((g) => (
                 <li key={g.name} role="presentation" className="contents">
-                  <p className="sticky top-0 z-10 bg-pane/90 px-3 pt-3 pb-1.5 text-[0.86em] font-medium text-fog backdrop-blur-sm">{g.name}</p>
+                  <p className="sticky top-0 z-10 bg-pane/90 px-3 pt-3 pb-1.5 text-[0.86em] font-medium text-fog">{g.name}</p>
                   <ul role="presentation" className="flex flex-col gap-0.5">
                     {g.items.map((i) => (
                       <ItemRow key={i.id} item={i} selected={i.id === selectedId} roomy={compact} showType={filter === "all" || filter === "favorites" || filter === "archive"} onSelect={() => select(i.id)} />

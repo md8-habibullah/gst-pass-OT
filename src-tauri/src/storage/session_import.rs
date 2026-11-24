@@ -367,6 +367,7 @@ impl Session {
                 BatchItem {
                     draft: c.draft,
                     created: c.created,
+                    updated: None,
                     warnings: c.warnings,
                 }
             });
@@ -396,6 +397,22 @@ impl Session {
                 attachments,
                 attachments_dropped,
             })
+        })
+    }
+
+    /// Put ready-made items into the open vault in one transaction (the demo vault; nothing is parsed).
+    /// Returns how many were saved.
+    pub fn seed_items(&self, items: Vec<BatchItem>) -> Result<usize> {
+        self.with_unlocked(|u| {
+            let outcome = u
+                .vault
+                .import_batch(items.into_iter(), ImportMode::ImportAll)?;
+            if outcome.failed > 0 {
+                return Err(StorageError::Storage(
+                    "The demo vault could not be filled.".into(),
+                ));
+            }
+            Ok(outcome.added)
         })
     }
 

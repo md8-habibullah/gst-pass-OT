@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 import { Eye, EyeOff, Plus, Trash2, Wand2, X } from "lucide-react";
 import { BackendError, FIELD_SCHEMA, TYPE_LABEL, type FieldSpec, type ItemDraft, type ItemType } from "../../backend";
 import { parseOtpInput, type OtpAccount } from "../../lib/otp";
-import { be, pushToast, refresh, select, setFilter } from "../../state/app";
+import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
 import { useStore } from "../../state/store";
 import { closeEditor, ui } from "../../state/ui";
 import { StrengthMeter } from "../lock/StrengthMeter";
@@ -14,7 +14,7 @@ import { TotpInput } from "./TotpInput";
 import { brandName } from "../../state/brand";
 import { TYPE_META, TYPE_ORDER } from "./typeMeta";
 
-const blank = (type: ItemType): ItemDraft => ({ type, title: "", favorite: false, tags: [], folder: null, fields: {}, customFields: [] });
+const blank = (type: ItemType): ItemDraft => ({ type, title: "", favorite: false, reprompt: false, tags: [], folder: null, fields: {}, customFields: [] });
 
 const TITLE_HINT: Record<ItemType, string> = {
   login: "GitHub",
@@ -98,6 +98,7 @@ function SecretField({ spec, value, onChange, itemType }: { spec: FieldSpec; val
 /** Add and edit sheet (right drawer on desktop, bottom sheet on Android). */
 export function ItemEditor() {
   const req = useStore(ui, (s) => s.editor);
+  const inDemo = useStore(app, (s) => s.profile?.demo === true);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [initial, setInitial] = useState("");
   const [busy, setBusy] = useState(false);
@@ -196,11 +197,14 @@ export function ItemEditor() {
   }
 
   const footer = (
-    <div className="flex items-center justify-end gap-2">
-      <Button variant="ghost" onClick={requestClose} disabled={busy}>Cancel</Button>
-      <Button variant="key" busy={busy} disabled={!draft || (editing && !dirty)} onClick={() => void save()}>
-        {editing ? "Save changes" : splitCount > 1 ? `Add ${splitCount} codes` : "Add item"}
-      </Button>
+    <div className="flex flex-col gap-3">
+      {inDemo && <p role="note" className="text-[0.86em] text-mist">This is the demo vault. Anyone who opens Hexis can read what you save here. Create your own vault to keep real data.</p>}
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" onClick={requestClose} disabled={busy}>Cancel</Button>
+        <Button variant="key" busy={busy} disabled={!draft || (editing && !dirty)} onClick={() => void save()}>
+          {editing ? "Save changes" : splitCount > 1 ? `Add ${splitCount} codes` : "Add item"}
+        </Button>
+      </div>
     </div>
   );
 
@@ -323,9 +327,18 @@ export function ItemEditor() {
             {({ id }) => <TextInput id={id} value={draft.folder ?? ""} onChange={(e) => set("folder", e.target.value || null)} maxLength={64} placeholder="Optional" />}
           </Field>
           {splitCount <= 1 && (
-            <div className="flex min-h-11 items-center justify-between gap-4 rounded-lg bg-pane/70 px-4 shadow-e1">
-              <span className="font-medium">Favorite</span>
-              <Switch label="Favorite" checked={draft.favorite} onChange={(v) => set("favorite", v)} />
+            <div className="flex flex-col gap-2">
+              <div className="flex min-h-11 items-center justify-between gap-4 rounded-lg bg-pane/70 px-4 shadow-e1">
+                <span className="font-medium">Favorite</span>
+                <Switch label="Favorite" checked={draft.favorite} onChange={(v) => set("favorite", v)} />
+              </div>
+              <div className="flex min-h-11 items-center justify-between gap-4 rounded-lg bg-pane/70 px-4 py-2.5 shadow-e1">
+                <span className="min-w-0">
+                  <span className="block font-medium">Ask for the master password again</span>
+                  <span className="block text-[0.86em] text-mist">Needed each time you show, copy, edit or clone this item, even while the vault is open.</span>
+                </span>
+                <Switch label="Ask for the master password again" checked={draft.reprompt} onChange={(v) => set("reprompt", v)} />
+              </div>
             </div>
           )}
           <button type="submit" hidden />

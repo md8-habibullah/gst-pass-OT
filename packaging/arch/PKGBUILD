@@ -3,7 +3,7 @@
 # Replace the maintainer line and, for an AUR upload, switch `source` to the release tarball and fill in its checksum.
 # Maintainer: you <you@example.com>
 pkgname=hexis
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Post-quantum zero-knowledge password vault with multi-S3 sync (works offline)'
 arch=('x86_64')

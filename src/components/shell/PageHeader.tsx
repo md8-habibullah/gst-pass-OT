@@ -2,11 +2,13 @@ import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useLayout } from "../../lib/layout";
 import { setFilter } from "../../state/app";
+import { useBackHandler } from "../../state/back";
 import { IconButton } from "../ui/Button";
 
 /** Title block for the full-width views. On the compact layout, sub-pages of Settings get a back button. */
 export function PageHeader({ title, subtitle, back, actions }: { title: string; subtitle?: string; back?: boolean; actions?: ReactNode }) {
   const compact = useLayout() === "compact";
+  useBackHandler(!!back && compact, () => setFilter("settings"));
   return (
     <div className="flex flex-wrap items-start gap-x-3 gap-y-3 pb-1">
       {back && compact && (

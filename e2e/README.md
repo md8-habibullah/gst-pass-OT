@@ -17,10 +17,13 @@ node e2e/real-import.mjs                            # import preview and commit,
 node e2e/real-disguise.mjs                          # app name and icon (writes a launcher entry in a temp XDG folder)
 node e2e/real-backup.mjs                            # backup targets against scripts/mock_s3.py
 node e2e/real-sync.mjs                              # two devices, pull and reconcile, no idle traffic
+node e2e/real-multi-s3.mjs                          # one primary and two secondary buckets on real S3-compatible servers (needs Docker)
 ```
 
 `scripts/verify_all.sh --e2e` runs all of them one after another (the machine this was written on has little RAM: never run two at once).
 
+* `real-multi-s3.mjs` starts two throw-away [Versity S3 Gateway](https://github.com/versity/versitygw) containers on loopback (v1.11.0, pinned by digest; random credentials; data in RAM) and removes them when it ends. It proves the multi-bucket behaviour against a real S3-compatible server. It does **not** prove any hosted provider (Amazon S3, Cloudflare R2, Backblaze B2).
+* `real-gate.mjs` starts the shim with `--idle-unit-ms` (scales the inactivity and the "after leaving the app" timers) and, in the steps that look at the waits after wrong passcodes, with `--lock-unit-ms` (one "minute" of waiting lasts that many milliseconds; 0 means no waits).
 * `real-import.mjs` also imports **your own** exports when you point it at them (read only, never copied):
   `REAL_BW=~/Downloads/bitwarden_export_….json REAL_ENTE=~/Downloads/ente-auth-codes-plaintext-….txt node e2e/real-import.mjs`.
   Without those variables it runs only the synthetic steps.

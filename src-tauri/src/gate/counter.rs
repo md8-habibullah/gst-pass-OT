@@ -1,9 +1,14 @@
 //! `gate.json`: the Stage 1 state file next to the account registry.
 //!
 //! It holds the mode and the switches, the Argon2id hashes (the credential, its reverse, the
-//! optional custom panic code) and the **attempt counter**. The counter record carries a MAC
-//! (HMAC-SHA-256 keyed with an HKDF of a random per-install key kept in the same file), so a
-//! casual edit (someone changing `attempts` to 0 in a text editor) is noticed.
+//! optional custom panic code) and the **attempt counter**, with the time until which further
+//! attempts are refused: `lockUntil` (checked UTC milliseconds, 0 = unknown or not locked) and a
+//! deadline on the boot clock (`lockBoot`, `lockBootId`, see `crate::clock`), so that changing the
+//! device date cannot shorten a wait. The counter
+//! record carries a MAC (HMAC-SHA-256 keyed with an HKDF of a random per-install key kept in the
+//! same file), so a casual edit (someone changing `attempts` to 0 or `lockUntil` to the past in a
+//! text editor) is noticed. Records written before the lock existed (no `lockUntil`, MAC "v1")
+//! still verify, as "not locked".
 //!
 //! Honest limit: the key sits in the same file, so this detects *casual* edits only. Whoever can
 //! write the file and read it can forge a record, delete the file (which switches the gate off) or
@@ -52,11 +57,39 @@ pub fn new_install_key() -> Result<Zeroizing<[u8; 32]>, crate::crypto::CryptoErr
     Ok(key)
 }
 
+/// The wait after wrong credentials, as two deadlines that must both be gone. Neither can be moved by
+/// changing the device date: the first is on the boot clock (valid until the device restarts), the second
+/// in checked UTC time (valid after a restart, once the time was checked again).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Lock {
+    /// Checked UTC milliseconds until which attempts are refused. 0 = not known (the time was not checked
+    /// when the wait started) or no wait.
+    pub until_utc: u64,
+    /// The boot the deadline below belongs to ("" = none).
+    pub boot_id: String,
+    /// Boot-clock milliseconds until which attempts are refused (0 = none).
+    pub boot_ms: u64,
+}
+
+impl Lock {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.until_utc == 0 && self.boot_ms == 0
+    }
+}
+
 /// What the counter record of the file says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CounterRead {
     /// A record whose MAC checks out.
-    Valid { attempts: u32, epoch: u64 },
+    Valid {
+        attempts: u32,
+        epoch: u64,
+        lock: Lock,
+    },
     /// Missing, unparsable or with a bad MAC. `hint` is the attempts value if one could be read.
     Damaged { hint: Option<u32> },
 }
@@ -97,7 +130,8 @@ fn mac_key(install_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     out
 }
 
-/// The tag over one counter record.
+/// The tag over one counter record **without** a lock time (what versions before the timed lock wrote).
+/// Kept so that an older `gate.json` still reads; new records are written with [`tag_locked`].
 pub fn tag(install_key: &[u8; 32], attempts: u32, epoch: u64) -> [u8; 32] {
     let key = mac_key(install_key);
     let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(&key[..]) else {
@@ -109,6 +143,76 @@ pub fn tag(install_key: &[u8; 32], attempts: u32, epoch: u64) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&mac.finalize().into_bytes());
     out
+}
+
+/// The tag over a counter record that carries a lock time (MAC "v2").
+pub fn tag_locked(install_key: &[u8; 32], attempts: u32, epoch: u64, lock_until: u64) -> [u8; 32] {
+    let key = mac_key(install_key);
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(&key[..]) else {
+        return [0u8; 32];
+    };
+    mac.update(b"v2");
+    mac.update(&attempts.to_le_bytes());
+    mac.update(&epoch.to_le_bytes());
+    mac.update(&lock_until.to_le_bytes());
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&mac.finalize().into_bytes());
+    out
+}
+
+/// The tag over a record that also carries the boot-clock deadline (MAC "v3").
+pub fn tag_v3(install_key: &[u8; 32], attempts: u32, epoch: u64, lock: &Lock) -> [u8; 32] {
+    let key = mac_key(install_key);
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(&key[..]) else {
+        return [0u8; 32];
+    };
+    mac_v3_input(&mut mac, attempts, epoch, lock);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&mac.finalize().into_bytes());
+    out
+}
+
+fn mac_v3_input(mac: &mut Hmac<Sha256>, attempts: u32, epoch: u64, lock: &Lock) {
+    mac.update(b"v3");
+    mac.update(&attempts.to_le_bytes());
+    mac.update(&epoch.to_le_bytes());
+    mac.update(&lock.until_utc.to_le_bytes());
+    mac.update(&lock.boot_ms.to_le_bytes());
+    mac.update(&(lock.boot_id.len() as u64).to_le_bytes());
+    mac.update(lock.boot_id.as_bytes());
+}
+
+fn verify_tag_v3(
+    install_key: &[u8; 32],
+    attempts: u32,
+    epoch: u64,
+    lock: &Lock,
+    presented: &[u8],
+) -> bool {
+    let key = mac_key(install_key);
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(&key[..]) else {
+        return false;
+    };
+    mac_v3_input(&mut mac, attempts, epoch, lock);
+    mac.verify_slice(presented).is_ok()
+}
+
+fn verify_tag_locked(
+    install_key: &[u8; 32],
+    attempts: u32,
+    epoch: u64,
+    lock_until: u64,
+    presented: &[u8],
+) -> bool {
+    let key = mac_key(install_key);
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(&key[..]) else {
+        return false;
+    };
+    mac.update(b"v2");
+    mac.update(&attempts.to_le_bytes());
+    mac.update(&epoch.to_le_bytes());
+    mac.update(&lock_until.to_le_bytes());
+    mac.verify_slice(presented).is_ok()
 }
 
 fn verify_tag(install_key: &[u8; 32], attempts: u32, epoch: u64, presented: &[u8]) -> bool {
@@ -134,12 +238,49 @@ fn read_record(install_key: &[u8; 32], counter: Option<&Value>) -> CounterRead {
         .get("tag")
         .and_then(Value::as_str)
         .and_then(|t| B64.decode(t).ok());
-    match (attempts, epoch, tag_bytes) {
-        (Some(a), Some(e), Some(t)) if a <= u64::from(u32::MAX) => {
-            if verify_tag(install_key, a as u32, e, &t) {
+    // A record with `lockBoot` is MAC "v3"; one with only `lockUntil` is "v2"; one without either is an older
+    // record (MAC "v1", never locked).
+    let lock_until = match map.get("lockUntil") {
+        None => Some(None),
+        Some(v) => v.as_u64().map(Some),
+    };
+    let v3 = map.contains_key("lockBoot") || map.contains_key("lockBootId");
+    let boot = if v3 {
+        match (
+            map.get("lockBoot").and_then(Value::as_u64),
+            map.get("lockBootId").and_then(Value::as_str),
+        ) {
+            (Some(ms), Some(id)) if id.len() <= 128 => Some((ms, id.to_string())),
+            _ => return CounterRead::Damaged { hint },
+        }
+    } else {
+        None
+    };
+    match (attempts, epoch, tag_bytes, lock_until) {
+        (Some(a), Some(e), Some(t), Some(lock)) if a <= u64::from(u32::MAX) => {
+            let (ok, found) = match (&boot, lock) {
+                (Some((ms, id)), l) => {
+                    let found = Lock {
+                        until_utc: l.unwrap_or(0),
+                        boot_id: id.clone(),
+                        boot_ms: *ms,
+                    };
+                    (verify_tag_v3(install_key, a as u32, e, &found, &t), found)
+                }
+                (None, Some(l)) => (
+                    verify_tag_locked(install_key, a as u32, e, l, &t),
+                    Lock {
+                        until_utc: l,
+                        ..Lock::none()
+                    },
+                ),
+                (None, None) => (verify_tag(install_key, a as u32, e, &t), Lock::none()),
+            };
+            if ok {
                 CounterRead::Valid {
                     attempts: a as u32,
                     epoch: e,
+                    lock: found,
                 }
             } else {
                 CounterRead::Damaged { hint }
@@ -230,9 +371,20 @@ pub fn read_counter(dir: &Path, install_key: &[u8; 32]) -> CounterRead {
     read_record(install_key, doc.get("counter"))
 }
 
-/// Write the whole file atomically (0600, file and folder fsynced) with this counter record.
+/// Write the whole file atomically (0600, file and folder fsynced) with this counter record and no lock.
 pub fn store(dir: &Path, p: &Persist, attempts: u32, epoch: u64) -> std::io::Result<()> {
-    let t = tag(&p.install_key, attempts, epoch);
+    store_locked(dir, p, attempts, epoch, &Lock::none())
+}
+
+/// Like [`store`], with attempts refused until `lock` is over.
+pub fn store_locked(
+    dir: &Path,
+    p: &Persist,
+    attempts: u32,
+    epoch: u64,
+    lock: &Lock,
+) -> std::io::Result<()> {
+    let t = tag_v3(&p.install_key, attempts, epoch, lock);
     let doc = OnDisk {
         version: FILE_VERSION,
         mode: p.mode,
@@ -246,6 +398,9 @@ pub fn store(dir: &Path, p: &Persist, attempts: u32, epoch: u64) -> std::io::Res
         counter: Some(json!({
             "attempts": attempts,
             "epoch": epoch,
+            "lockUntil": lock.until_utc,
+            "lockBoot": lock.boot_ms,
+            "lockBootId": lock.boot_id,
             "tag": B64.encode(t),
         })),
     };
@@ -328,7 +483,8 @@ mod tests {
             counter,
             CounterRead::Valid {
                 attempts: 4,
-                epoch: 11
+                epoch: 11,
+                lock: Lock::none()
             }
         );
         assert_eq!(back.mode, GateMode::Pin);
@@ -417,6 +573,144 @@ mod tests {
             read_counter(dir.path(), &[1u8; 32]),
             CounterRead::Damaged { hint: Some(2) }
         ));
+    }
+
+    fn some_lock() -> Lock {
+        Lock {
+            until_utc: 1_700_000_090_000,
+            boot_id: "boot-a".into(),
+            boot_ms: 5_090_000,
+        }
+    }
+
+    #[test]
+    fn the_lock_is_stored_and_covered_by_the_mac() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = persist();
+        let key = *p.install_key;
+        store_locked(dir.path(), &p, 3, 7, &some_lock()).unwrap();
+        assert_eq!(
+            read_counter(dir.path(), &key),
+            CounterRead::Valid {
+                attempts: 3,
+                epoch: 7,
+                lock: some_lock()
+            }
+        );
+        // someone moves either deadline into the past, or names another boot, to skip the wait
+        for edit_one in [
+            |v: &mut Value| v["counter"]["lockUntil"] = json!(1),
+            |v: &mut Value| v["counter"]["lockBoot"] = json!(1),
+            |v: &mut Value| v["counter"]["lockBootId"] = json!("boot-b"),
+            |v: &mut Value| v["counter"]["lockBoot"] = json!("soon"),
+            |v: &mut Value| v["counter"]["lockBootId"] = json!(7),
+        ] {
+            store_locked(dir.path(), &p, 3, 7, &some_lock()).unwrap();
+            edit(dir.path(), edit_one);
+            assert!(
+                matches!(
+                    read_counter(dir.path(), &key),
+                    CounterRead::Damaged { hint: Some(3) }
+                ),
+                "an edited lock must not verify"
+            );
+        }
+        // removing the fields is no way round it either
+        store_locked(dir.path(), &p, 3, 7, &some_lock()).unwrap();
+        edit(dir.path(), |v| {
+            let c = v["counter"].as_object_mut().unwrap();
+            c.remove("lockBoot");
+            c.remove("lockBootId");
+        });
+        assert!(matches!(
+            read_counter(dir.path(), &key),
+            CounterRead::Damaged { hint: Some(3) }
+        ));
+        store_locked(dir.path(), &p, 3, 7, &some_lock()).unwrap();
+        edit(dir.path(), |v| {
+            let c = v["counter"].as_object_mut().unwrap();
+            c.remove("lockBoot");
+            c.remove("lockBootId");
+            c.remove("lockUntil");
+        });
+        assert!(matches!(
+            read_counter(dir.path(), &key),
+            CounterRead::Damaged { hint: Some(3) }
+        ));
+        // the tag depends on every part of the lock
+        let base = some_lock();
+        let moved = [
+            Lock {
+                until_utc: 2,
+                ..base.clone()
+            },
+            Lock {
+                boot_ms: 2,
+                ..base.clone()
+            },
+            Lock {
+                boot_id: "boot-b".into(),
+                ..base.clone()
+            },
+        ];
+        for other in moved {
+            assert_ne!(tag_v3(&key, 3, 7, &base), tag_v3(&key, 3, 7, &other));
+        }
+        assert_ne!(tag(&key, 3, 7), tag_v3(&key, 3, 7, &Lock::none()));
+    }
+
+    #[test]
+    fn a_record_with_only_a_utc_deadline_still_reads() {
+        // what the build before the boot clock wrote ("v2")
+        let dir = tempfile::tempdir().unwrap();
+        let p = persist();
+        let key = *p.install_key;
+        store(dir.path(), &p, 3, 7).unwrap();
+        edit(dir.path(), |v| {
+            let c = v["counter"].as_object_mut().unwrap();
+            c.remove("lockBoot");
+            c.remove("lockBootId");
+            c.insert("lockUntil".into(), json!(1_700_000_090_000u64));
+            c.insert(
+                "tag".into(),
+                json!(B64.encode(tag_locked(&key, 3, 7, 1_700_000_090_000))),
+            );
+        });
+        assert_eq!(
+            read_counter(dir.path(), &key),
+            CounterRead::Valid {
+                attempts: 3,
+                epoch: 7,
+                lock: Lock {
+                    until_utc: 1_700_000_090_000,
+                    ..Lock::none()
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn a_record_written_before_the_lock_existed_still_reads_as_not_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = persist();
+        let key = *p.install_key;
+        store(dir.path(), &p, 5, 9).unwrap();
+        edit(dir.path(), |v| {
+            let old = tag(&key, 5, 9);
+            let c = v["counter"].as_object_mut().unwrap();
+            c.remove("lockUntil");
+            c.remove("lockBoot");
+            c.remove("lockBootId");
+            c.insert("tag".into(), json!(B64.encode(old)));
+        });
+        assert_eq!(
+            read_counter(dir.path(), &key),
+            CounterRead::Valid {
+                attempts: 5,
+                epoch: 9,
+                lock: Lock::none()
+            }
+        );
     }
 
     #[test]

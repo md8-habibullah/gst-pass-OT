@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 import { cancelCameraScan, scanState } from "../../lib/scan";
+import { useBackHandler } from "../../state/back";
 import { useStore } from "../../state/store";
 import { Button } from "../ui/Button";
 
@@ -10,6 +11,7 @@ import { Button } from "../ui/Button";
  */
 export function ScanOverlay() {
   const active = useStore(scanState, (s) => s.active);
+  useBackHandler(active, () => void cancelCameraScan());
 
   useEffect(() => {
     if (!active) return;
@@ -22,7 +24,7 @@ export function ScanOverlay() {
   const corner = "absolute size-9 border-brass";
   return (
     <div data-scan-overlay role="dialog" aria-modal="true" aria-label="Scan a QR code" className="fixed inset-0 z-[90] flex flex-col items-center justify-between px-6 pt-[calc(1.5rem+var(--safe-top))] pb-[calc(1.5rem+var(--safe-bottom))]">
-      <p className="rounded-full bg-marine/80 px-5 py-2.5 text-center backdrop-blur-sm">Point the camera at the QR code from the website or app.</p>
+      <p className="rounded-full bg-marine/80 px-5 py-2.5 text-center">Point the camera at the QR code from the website or app.</p>
       <div aria-hidden className="relative size-[min(68vw,18rem)]">
         <span className={`${corner} top-0 left-0 rounded-tl-lg border-t-[3px] border-l-[3px]`} />
         <span className={`${corner} top-0 right-0 rounded-tr-lg border-t-[3px] border-r-[3px]`} />

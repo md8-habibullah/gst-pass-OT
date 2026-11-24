@@ -1,0 +1,72 @@
+package __PACKAGE__
+
+import android.os.Build
+import android.os.Bundle
+import android.view.View
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+
+/**
+ * The app's one activity. Written by scripts/android_patch_manifest.py from scripts/android/MainActivity.kt.tmpl
+ * (the Tauri template's own MainActivity only turns on edge-to-edge). Two things were wrong on a real phone:
+ *
+ * 1. Pressing Back on the first screen finished the activity. The disguise patch moves the LAUNCHER filter from this
+ *    activity to the launcher aliases, so Android 12+ no longer treats it as a launcher root and no longer sends it
+ *    to the background. Finishing the activity runs the Rust runtime's shutdown while other threads still run, and the
+ *    process died with "pthread_mutex_lock called on a destroyed mutex". Back now asks the page first (it closes a
+ *    sheet or steps back to the list, see src/state/back.ts) and otherwise sends the app to the background.
+ * 2. With edge-to-edge (forced on Android 15+ for apps that target API 35 or higher) the window is no longer resized
+ *    when the keyboard opens, so a sheet fixed to the bottom of the page ended up behind the keyboard. The content
+ *    view is padded by the keyboard's height instead, which shrinks the page exactly like "adjustResize" used to.
+ */
+class MainActivity : TauriActivity() {
+  private var page: WebView? = null
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()
+    super.onCreate(savedInstanceState)
+
+    // The recent-apps card must not show what is on screen: with "lock after leaving the app" set to more than a few
+    // seconds the vault is still open there. (Android 13 and newer; this does not block screenshots, unlike FLAG_SECURE.)
+    if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+
+    val content = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+      view.setPadding(0, 0, 0, keyboard)
+      if (keyboard > 0) {
+        // The keyboard already covers the gesture bar, so the page must not add its height a second time.
+        val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+        WindowInsetsCompat.Builder(insets)
+          .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(bars.left, bars.top, bars.right, 0))
+          .build()
+      } else {
+        insets
+      }
+    }
+
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        val view = page
+        if (view == null) {
+          moveTaskToBack(true)
+          return
+        }
+        view.evaluateJavascript(
+          "(function(){try{return typeof window.__hexisBack==='function'&&window.__hexisBack()===true}catch(e){return false}})()"
+        ) { handled ->
+          if (handled != "true") moveTaskToBack(true)
+        }
+      }
+    })
+  }
+
+  override fun onWebViewCreate(webView: WebView) {
+    super.onWebViewCreate(webView)
+    page = webView
+  }
+}

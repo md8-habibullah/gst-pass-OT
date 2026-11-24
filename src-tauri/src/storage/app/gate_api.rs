@@ -106,15 +106,35 @@ impl AppCore {
         self.gate.ping();
     }
 
+    /// The app went to the background: start the "after leaving" timer (see `GateCore::app_leave`).
+    pub fn app_leave(&self) {
+        self.gate.app_leave();
+    }
+
+    /// The app is back on screen: lock now if the allowed time away has passed (see `GateCore::app_return`).
+    pub fn app_return(&self) {
+        self.gate.app_return();
+    }
+
     // ------------------------------------------------------------------ the wipe
 
-    /// `app_reset`: the manual "erase this device" (three confirmations in the UI). Allowed with
-    /// the gate closed. Waits for a security attempt in flight instead of racing it.
-    pub fn app_reset(&self, confirmed_steps: u64) -> Result<()> {
+    /// `app_reset_challenge`: a long sum for the last confirmation of "erase everything". Allowed with the gate
+    /// closed (the reset itself is). The answer stays here; only the text goes to the screen.
+    pub fn app_reset_challenge(&self) -> String {
+        self.gate.reset_challenge()
+    }
+
+    /// `app_reset`: the manual "erase this device" (three confirmations in the UI, the last one a long sum).
+    /// Allowed with the gate closed. Waits for a security attempt in flight instead of racing it.
+    /// `wrong_answer` when the sum was answered wrongly (it is used up: ask for a new one).
+    pub fn app_reset(&self, confirmed_steps: u64, answer: &str) -> Result<()> {
         if confirmed_steps != 3 {
             return Err(StorageError::invalid(
                 "Confirm all three steps to erase this device.",
             ));
+        }
+        if !self.gate.check_reset_answer(answer) {
+            return Err(StorageError::WrongAnswer);
         }
         self.gate.exclusive(|| self.wipe_unserialised())
     }
@@ -148,6 +168,8 @@ impl AppCore {
             .map_err(|_| StorageError::Storage("This device could not be erased.".into()))?;
         self.gate.forget_everything();
         *self.reg() = Registry::empty(&self.dir);
+        // `device.json` stays (time zone, "setup was done", the time-check switch); only the demo vault's id goes.
+        self.forget_demo_if_any();
         // The launcher entry, its icons and the window title live outside the vaults (Q2): put the
         // original look back. It cannot fail the wipe; a launcher problem only leaves a stale entry.
         let _ = self.disguise_wipe();

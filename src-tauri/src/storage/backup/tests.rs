@@ -180,6 +180,7 @@ pub(super) fn login(title: &str, password: &str) -> ItemDraft {
         item_type: ItemType::Login,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: [("username", "ana@example.com"), ("password", password)]
@@ -191,7 +192,7 @@ pub(super) fn login(title: &str, password: &str) -> ItemDraft {
 }
 
 pub(super) fn edit_password(app: &AppCore, id: &str, password: &str) {
-    let b = app.item_begin_edit(id, PW.into()).unwrap();
+    let b = app.item_begin_edit(id, Some(PW.into())).unwrap();
     let mut d = b.draft.clone();
     d.fields.insert("password".into(), password.into());
     app.item_update(id, &b.token, b.version, d).unwrap();
@@ -1087,7 +1088,7 @@ fn unreachable() -> RemoteError {
 }
 
 fn edit(fx: &Fx, id: &str, change: impl FnOnce(&mut ItemDraft)) {
-    let b = fx.app.item_begin_edit(id, PW.into()).unwrap();
+    let b = fx.app.item_begin_edit(id, Some(PW.into())).unwrap();
     let mut d = b.draft.clone();
     change(&mut d);
     fx.app.item_update(id, &b.token, b.version, d).unwrap();
@@ -1296,7 +1297,7 @@ fn every_way_of_changing_the_vault_queues_its_upload_and_wakes_the_worker() {
     synced(&fx, &x);
     assert_eq!(versions_of(&x), 7);
     // restore from an old version
-    fx.app.history_restore(&x, 1, PW.into()).unwrap();
+    fx.app.history_restore(&x, 1, Some(PW.into())).unwrap();
     synced(&fx, &x);
     assert_eq!(versions_of(&x), 8);
     // trash and restore from the trash
@@ -1306,7 +1307,7 @@ fn every_way_of_changing_the_vault_queues_its_upload_and_wakes_the_worker() {
     synced(&fx, &x);
     assert_eq!(versions_of(&x), 10);
     // clone is a new item
-    let y = fx.app.item_clone(&x, PW.into()).unwrap().id;
+    let y = fx.app.item_clone(&x, Some(PW.into())).unwrap().id;
     synced(&fx, &y);
     // purge: the remote copies go and the tombstone is left
     fx.app.item_trash(&y).unwrap();
@@ -1398,7 +1399,10 @@ fn restoring_into_a_fresh_profile_brings_back_items_history_trash_and_shared_tar
     assert_eq!(items[0].id, src.kept);
     assert_eq!(items[0].version, 2);
     assert_eq!(
-        fx.app.item_reveal(&src.kept, PW.into()).unwrap().fields["password"],
+        fx.app
+            .item_reveal(&src.kept, Some(PW.into()))
+            .unwrap()
+            .fields["password"],
         "k2"
     );
     assert_eq!(

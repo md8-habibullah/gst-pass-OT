@@ -4,7 +4,7 @@
 // and an object that fails authentication (ignored, counted, local data untouched).
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, unlockUi, addLogin, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, unlockUi, addLogin, runSteps } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const S3_PORT = 9335, S3_DATA = freshDir("s-s3"), DATA_A = freshDir("s-data-a"), DATA_B = freshDir("s-data-b");
@@ -58,7 +58,7 @@ const bucketItemFiles = () => walkFiles(S3_DATA).filter((f) => /vault\/items\/.+
 const steps = []; const step = (name, fn) => steps.push({ name, fn });
 
 step("device A: account with two logins and a master backup", async (p) => {
-  await p.goto(A.ui); await waitText(p, "Welcome to");
+  await p.goto(A.ui); await firstStart(p);
   await createAccount(p, NAME, PW);
   await addLogin(p, [["Title", "GitHub"], ["Username", "marlowe-dev"], ["Password", "Tr0ub4dor&3-horse"]]);
   await addLogin(p, [["Title", "Cloudflare"], ["Username", "ops@marlowe.example"], ["Password", "Zk9-plain-secret-77"]]);
@@ -71,13 +71,14 @@ step("device A: account with two logins and a master backup", async (p) => {
 
 step("device B: restore from the bucket", async (p) => {
   await B.start();
-  await p.goto(B.ui); await waitText(p, "Welcome to");
+  await p.goto(B.ui); await firstStart(p);
   await btn(p, "Restore from a backup"); await waitText(p, "Restore from a backup");
   await p.typeLabel("Account name", "Device B");
   await fillTarget(p, { name: "" });
   await btn(p, "Restore vault"); await waitText(p, "Master password", 30000);
   await unlockUi(p, PW);
   await p.waitFor(`!!document.querySelector('nav[aria-label="Main"]')`, { timeout: 20000 });
+  check("the restored vault is the one that is open, not the demo", await p.eval(`!!document.querySelector('button[aria-label^="Account: Device B"]')`));
   await waitText(p, "GitHub"); await waitText(p, "Cloudflare");
   check("device B has both items", true);
   const st = await ok(B, "vault_status");

@@ -275,7 +275,7 @@ function homeBody() {
   </div>
   <div>
     <h2>Your own storage, one bucket or several</h2>
-    <p>Add S3-compatible buckets: a master that your other devices sync from, and any number of mirrors that receive every change. The app talks to them directly from your device, only when you unlock, save a change or leave the app. No timers, no background service, no notifications. Everything also works with no network at all.</p>
+    <p>Add S3-compatible buckets: a master that your other devices sync from, and any number of mirrors that receive every change. The app talks to them directly from your device, only when you unlock, save a change or leave the app. No timers, no background service, no notifications. Everything also works with no network at all. The one other request is a small time check that keeps lock waits honest; you can switch it off.</p>
   </div>
   <div>
     <h2>Honest about its limits</h2>
@@ -293,6 +293,9 @@ function homeBody() {
     <div><dt>Encrypted drive</dt><dd>Files up to 50 MB, chunked and authenticated, attachable to items.</dd></div>
     <div><dt>Gate and panic</dt><dd>An optional PIN, password or number grid behind a maths exercise, a panic credential, an attempt limit and a wipe.</dd></div>
     <div><dt>Disguise</dt><dd>Rename and re-icon the app, including its launcher icon on Android.</dd></div>
+    <div><dt>Time you can trust</dt><dd>Times are saved in UTC and shown in the time zone you choose on the first page. The waits after wrong passcodes use a clock that changing the device date cannot move.</dd></div>
+    <div><dt>A demo vault to start with</dt><dd>A first start, or an erase, opens a ready-made vault full of invented items, so the app never opens on an empty create screen.</dd></div>
+    <div><dt>Keyboard shortcuts</dt><dd>About thirty of them, from search and new item to copy and trash, and settings arranged in pages on every screen size.</dd></div>
     <div><dt>Import and export</dt><dd>About 25 formats recognised by content, with a preview before anything is saved; a readable copy on request.</dd></div>
   </dl>
 </section>

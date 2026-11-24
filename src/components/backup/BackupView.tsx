@@ -137,7 +137,7 @@ export function BackupView() {
       {targets === null ? (
         <p className="text-mist" aria-busy>Loading.</p>
       ) : targets.length === 0 ? (
-        <div className="glass rounded-lg px-6 py-10 text-center">
+        <div className="surface rounded-lg px-6 py-10 text-center">
           <Cloud className="mx-auto size-9 text-fog" aria-hidden strokeWidth={1.4} />
           <p className="mt-3 font-display text-xl">No backups yet</p>
           <p className="mx-auto mt-2 max-w-md text-mist">Your vault lives on this device only. Add an S3 bucket (Amazon, Cloudflare R2, Backblaze B2, MinIO and others) and every change is copied there, already encrypted.</p>
@@ -153,7 +153,7 @@ export function BackupView() {
             </div>
             <Button icon={<RefreshCw className="size-4" />} busy={running === "all"} onClick={() => void run(null)}>Back up everything now</Button>
           </div>
-          <ul className="glass overflow-hidden rounded-lg" aria-label="Backup targets">
+          <ul className="surface overflow-hidden rounded-lg" aria-label="Backup targets">
             {targets.map((t) => (
               <Row key={t.id} t={t} busy={running === t.id || running === "all"} onRun={() => void run(t.id)} onEdit={() => setSheet({ kind: "edit", t })} onRemove={() => setSheet({ kind: "remove", t })} />
             ))}

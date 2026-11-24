@@ -19,6 +19,33 @@ export interface ProfileInfo {
   displayName: string;
   createdAt: number;
   lastUsedAt: number | null;
+  /** The built-in demo vault ("Hexis123"). Absent for every other account. */
+  demo?: boolean;
+}
+
+/** What the core keeps about this install in `device.json` (not secret; survives an erase). */
+export interface DeviceInfo {
+  /** IANA name chosen on the first screen; `null` until then. */
+  timeZone: string | null;
+  /** The first-run welcome was seen. */
+  setupDone: boolean;
+  /** Ask a few HTTPS servers for the real time. */
+  timeCheck: boolean;
+}
+
+/** The core's clock: UTC checked online, not the device date. */
+export interface ClockStatus {
+  /** The time was checked online since this device started. */
+  verified: boolean;
+  enabled: boolean;
+  /** Checked UTC minus this device's own clock, in milliseconds (positive: the device is behind). */
+  skewMs: number | null;
+  checkedAgoMs: number | null;
+  sources: number;
+  /** Why the last check failed, in words. */
+  problem: string | null;
+  /** UTC milliseconds the core uses as "now". */
+  nowMs: number;
 }
 
 export interface ProfileList {
@@ -54,6 +81,8 @@ export interface ItemSummary {
   updatedAt: number;
   version: number;
   archived: boolean;
+  /** Revealing, copying, editing or cloning this item asks for the master password every time. */
+  reprompt: boolean;
 }
 
 export interface FieldView {
@@ -83,6 +112,7 @@ export interface ItemView {
   type: ItemType;
   title: string;
   favorite: boolean;
+  reprompt: boolean;
   tags: string[];
   folder: string | null;
   fields: FieldView[];
@@ -105,6 +135,8 @@ export interface ItemDraft {
   type: ItemType;
   title: string;
   favorite: boolean;
+  /** Ask for the master password again before this item is shown, copied, edited or cloned. */
+  reprompt: boolean;
   tags: string[];
   folder: string | null;
   fields: Record<string, string>;
@@ -161,6 +193,10 @@ export type ErrorCode =
   | "unsupported_file"
   | "network"
   | "remote"
+  /** The item asks for the master password again and none was sent. */
+  | "password_required"
+  /** The answer to the sum on the last "erase everything" step was wrong. */
+  | "wrong_answer"
   | "unknown";
 
 export class BackendError extends Error {
@@ -232,14 +268,25 @@ export interface GateStatus {
   panicButton: boolean;
   /** The decoy equation to show while the gate is closed, for example "(48 + 27) - 19". */
   equation: string | null;
-  /** `null` until a failed attempt; then 15 minus the attempts used. */
+  /** `null` until a failed attempt; then 16 minus the attempts used. */
   attemptsLeft: number | null;
+  /** Milliseconds until a passcode may be typed again, while a wait after wrong attempts is running. */
+  lockedForMs: number | null;
+  /** The same moment as checked UTC milliseconds ("try again at 14:35" without trusting the device date). `null` while unchecked. */
+  lockedUntilMs: number | null;
+  /** A wait is running but its end cannot be judged until the time was checked online since the device restarted. */
+  clockPending: boolean;
+  /** The next wrong passcode erases the device: the screen warns before it is sent. */
+  finalAttempt: boolean;
   streak: number;
 }
 export type GateOutcome =
   | { kind: "math"; correct: boolean; equation: string; streak: number }
   | { kind: "opened" }
-  | { kind: "failed"; attemptsLeft: number; equation: string }
+  /** `lockedForMs` is set when this failure started a wait. */
+  | { kind: "failed"; attemptsLeft: number; equation: string; lockedForMs: number | null }
+  /** A wait is running: the attempt was neither counted nor checked. */
+  | { kind: "locked"; retryAfterMs: number; clockPending: boolean }
   | { kind: "wiped" };
 export interface GateConfigInput {
   enabled: boolean;
@@ -252,8 +299,14 @@ export interface GateConfigInput {
   panicButton: boolean;
   masterPassword: string;
 }
+/** The inactivity choices, in minutes. */
+export const LOCK_AFTER_MINUTES = [1, 5, 15, 30, 60, 240] as const;
+/** The "after leaving the app" choices, in seconds (0 = at once). */
+export const LOCK_AFTER_LEAVE_SECONDS = [0, 15, 30, 60, 300, 900, 1800, 3600, 14400] as const;
 export interface AppSettings {
-  lockAfterMinutes: 1 | 5 | 15 | 30;
+  lockAfterMinutes: (typeof LOCK_AFTER_MINUTES)[number];
+  /** Phones and tablets: how long the app may stay open after the person leaves it. */
+  lockAfterLeaveSeconds: (typeof LOCK_AFTER_LEAVE_SECONDS)[number];
 }
 export interface DisguiseInput {
   /** `null` is the original icon and name. */
@@ -317,8 +370,9 @@ export interface Backend {
 
   listItems(): Promise<ItemSummary[]>;
   getItem(id: string): Promise<ItemView>;
-  revealItem(id: string, password: string): Promise<ItemDraft>;
-  beginEdit(id: string, password: string): Promise<EditSession>;
+  /** The master password is needed only when the item has `reprompt` (otherwise leave it out); without it `password_required`. */
+  revealItem(id: string, password?: string): Promise<ItemDraft>;
+  beginEdit(id: string, password?: string): Promise<EditSession>;
   createItem(draft: ItemDraft): Promise<ItemSummary>;
   updateItem(id: string, token: string, expectedVersion: number, draft: ItemDraft): Promise<ItemSummary>;
   trashItem(id: string): Promise<void>;
@@ -327,15 +381,16 @@ export interface Backend {
   purgeItem(id: string, password: string, confirmation: string): Promise<void>;
   archiveItem(id: string): Promise<ItemSummary>;
   unarchiveItem(id: string): Promise<ItemSummary>;
-  cloneItem(id: string, password: string): Promise<ItemSummary>;
+  cloneItem(id: string, password?: string): Promise<ItemSummary>;
   /** Dismisses the "changed on another device" note after the person has looked at it. */
   reviewOtherDevice(id: string): Promise<void>;
 
   listHistory(id: string): Promise<VersionEntry[]>;
-  getVersion(id: string, version: number, password: string): Promise<ItemDraft>;
-  restoreVersion(id: string, version: number, password: string): Promise<ItemSummary>;
+  getVersion(id: string, version: number, password?: string): Promise<ItemDraft>;
+  restoreVersion(id: string, version: number, password?: string): Promise<ItemSummary>;
 
-  totpNow(id: string): Promise<TotpNow>;
+  /** An item with `reprompt` needs the master password for its one-time code too. */
+  totpNow(id: string, password?: string): Promise<TotpNow>;
 
   // backups
   listBackups(): Promise<BackupTargetView[]>;
@@ -361,12 +416,18 @@ export interface Backend {
   /** Back to Stage 1 and lock the open vault. */
   gateClose(): Promise<void>;
   gateConfigure(input: GateConfigInput): Promise<GateStatus>;
-  /** The manual reset, after the third confirmation. */
-  appReset(): Promise<void>;
+  /** A long sum for the last "erase everything" step. The answer stays in the core. */
+  appResetChallenge(): Promise<string>;
+  /** The manual reset, after the third confirmation and the answer to the sum (`wrong_answer`; ask for a new sum). */
+  appReset(answer: string): Promise<void>;
   appSettingsGet(): Promise<AppSettings>;
   appSettingsSet(input: AppSettings): Promise<AppSettings>;
   /** Tells the core the person is active, so the inactivity timer restarts. */
   activityPing(): Promise<void>;
+  /** Phones and tablets: the app went to the background (starts the "after leaving the app" timer). */
+  appLeave(): Promise<void>;
+  /** The app is back on screen (locks now when the time away ran out). */
+  appReturn(): Promise<void>;
   /** Android: blocks screenshots and screen recording while a decrypted file is on screen (FLAG_SECURE). No-op elsewhere. */
   screenSecure(on: boolean): Promise<void>;
   // import / export
@@ -392,6 +453,20 @@ export interface Backend {
   fileSaveCopy(id: string, password: string): Promise<{ path: string } | null>;
   disguiseGet(): Promise<DisguiseView>;
   disguiseSet(input: DisguiseInput): Promise<DisguiseView>;
+
+  // device settings, the trusted clock and the demo vault
+  deviceGet(): Promise<DeviceInfo>;
+  deviceSetTimeZone(zone: string): Promise<DeviceInfo>;
+  /** The first-run welcome was seen. */
+  deviceFinishSetup(): Promise<DeviceInfo>;
+  deviceSetTimeCheck(on: boolean): Promise<DeviceInfo>;
+  clockStatus(): Promise<ClockStatus>;
+  /** Checks the time online now (up to about ten seconds). A failure is in `problem`, not an error. */
+  clockSync(): Promise<ClockStatus>;
+  /** Makes the demo vault when the app holds no vault; leaves it selected and unlocked. */
+  demoSpawn(): Promise<ProfileInfo>;
+  /** Selects and unlocks the demo vault with no typed password. */
+  demoOpen(): Promise<void>;
 }
 
 /** Field schemas per item type (must match the contract and the Rust validation). */

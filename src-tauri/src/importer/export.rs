@@ -328,7 +328,7 @@ fn bw_item<'a>(
             .and_then(|n| folders.get(n))
             .map(String::as_str),
         kind: 1,
-        reprompt: 0,
+        reprompt: u8::from(d.reprompt),
         name: &d.title,
         notes: None,
         favorite: d.favorite,
@@ -580,7 +580,7 @@ pub fn bitwarden_csv(records: &[ExportRecord]) -> Result<SecretBuf> {
                 &d.title,
                 &notes,
                 &cell,
-                "0",
+                if d.reprompt { "1" } else { "0" },
                 &uri,
                 &user,
                 &pass,
@@ -604,6 +604,7 @@ mod tests {
             item_type,
             title: title.into(),
             favorite: false,
+            reprompt: false,
             tags: Vec::new(),
             folder: None,
             fields: fields

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::State;
 
+pub mod device;
 pub mod disguise;
 pub mod gate;
 // The importer / exporter commands (slice Q4).
@@ -406,7 +407,7 @@ pub async fn item_get(state: State<'_, AppState>, id: String) -> CmdResult<ItemV
 pub async fn item_reveal(
     state: State<'_, AppState>,
     id: String,
-    password: String,
+    password: Option<String>,
 ) -> CmdResult<ItemDraft> {
     run(&state, move |c| c.item_reveal(&id, password)).await
 }
@@ -415,7 +416,7 @@ pub async fn item_reveal(
 pub async fn item_begin_edit(
     state: State<'_, AppState>,
     id: String,
-    password: String,
+    password: Option<String>,
 ) -> CmdResult<BeginEdit> {
     run(&state, move |c| c.item_begin_edit(&id, password)).await
 }
@@ -470,7 +471,7 @@ pub async fn item_unarchive(state: State<'_, AppState>, id: String) -> CmdResult
 pub async fn item_clone(
     state: State<'_, AppState>,
     id: String,
-    password: String,
+    password: Option<String>,
 ) -> CmdResult<ItemSummary> {
     run(&state, move |c| c.item_clone(&id, password)).await
 }
@@ -502,7 +503,7 @@ pub async fn history_get(
     state: State<'_, AppState>,
     id: String,
     version: u64,
-    password: String,
+    password: Option<String>,
 ) -> CmdResult<ItemDraft> {
     run(&state, move |c| c.history_get(&id, version, password)).await
 }
@@ -512,7 +513,7 @@ pub async fn history_restore(
     state: State<'_, AppState>,
     id: String,
     version: u64,
-    password: String,
+    password: Option<String>,
 ) -> CmdResult<ItemSummary> {
     run(&state, move |c| c.history_restore(&id, version, password)).await
 }
@@ -520,8 +521,12 @@ pub async fn history_restore(
 // ------------------------------------------------------------------ one-time codes
 
 #[tauri::command]
-pub async fn totp_now(state: State<'_, AppState>, id: String) -> CmdResult<TotpNow> {
-    run(&state, move |c| c.totp_now(&id)).await
+pub async fn totp_now(
+    state: State<'_, AppState>,
+    id: String,
+    password: Option<String>,
+) -> CmdResult<TotpNow> {
+    run(&state, move |c| c.totp_now(&id, password)).await
 }
 
 // ------------------------------------------------------------------ backup targets (Phase 4a)
@@ -658,6 +663,14 @@ pub fn invoke_handler<R: tauri::Runtime>(
         profile_restore_from_backup,
         sync_flush,
         open_url,
+        device::device_get,
+        device::device_set_time_zone,
+        device::device_finish_setup,
+        device::device_set_time_check,
+        device::clock_status,
+        device::clock_sync,
+        device::demo_spawn,
+        device::demo_open,
         disguise::disguise_get,
         disguise::disguise_set,
         gate::gate_status,
@@ -667,6 +680,9 @@ pub fn invoke_handler<R: tauri::Runtime>(
         gate::gate_close,
         gate::gate_configure,
         gate::app_reset,
+        gate::app_reset_challenge,
+        gate::app_leave,
+        gate::app_return,
         gate::app_settings_get,
         gate::app_settings_set,
         gate::activity_ping,

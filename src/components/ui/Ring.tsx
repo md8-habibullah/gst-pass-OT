@@ -35,7 +35,7 @@ export function CountdownRing({
           initial={{ pathLength: start }}
           animate={{ pathLength: 0 }}
           transition={{ duration: Math.max(0.05, remainingMs / 1000), ease: "linear" }}
-          style={{ stroke: color, transition: "stroke 300ms" }}
+          style={{ stroke: color, transition: "stroke 120ms" }}
         />
       </svg>
       {children}

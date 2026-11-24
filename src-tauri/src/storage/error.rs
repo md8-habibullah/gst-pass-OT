@@ -18,6 +18,12 @@ pub enum StorageError {
     VaultExists,
     #[error("Wrong master password.")]
     WrongPassword,
+    /// The item is marked "ask for the master password again" and the call carried none.
+    #[error("This item asks for your master password.")]
+    PasswordRequired,
+    /// The answer to the sum that guards "erase everything" was wrong.
+    #[error("That answer is not right.")]
+    WrongAnswer,
     #[error("That item no longer exists.")]
     NotFound,
     #[error("This item is in the trash. Restore it first.")]
@@ -56,6 +62,8 @@ impl StorageError {
             Self::NoVault => "no_vault",
             Self::VaultExists => "vault_exists",
             Self::WrongPassword => "wrong_password",
+            Self::PasswordRequired => "password_required",
+            Self::WrongAnswer => "wrong_answer",
             Self::NotFound => "not_found",
             Self::InTrash => "in_trash",
             Self::NotInTrash => "not_in_trash",

@@ -10,7 +10,7 @@ export function StrengthMeter({ password }: { password: string }) {
     <div aria-live="polite" className="flex flex-col gap-1.5">
       <div className="flex gap-1.5" aria-hidden>
         {[1, 2, 3, 4].map((n) => (
-          <span key={n} className={`h-1 flex-1 rounded-full transition-colors duration-200 ${n <= lit ? TONE[s.score] : "bg-raised"}`} />
+          <span key={n} className={`h-1 flex-1 rounded-full transition-colors duration-100 ${n <= lit ? TONE[s.score] : "bg-raised"}`} />
         ))}
       </div>
       <p className="text-[0.86em] text-fog">

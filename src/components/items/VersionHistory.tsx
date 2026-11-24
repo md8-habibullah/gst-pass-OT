@@ -4,7 +4,7 @@ import { ChevronDown, Eye, History, RotateCcw } from "lucide-react";
 import { FIELD_SCHEMA, type ItemDraft, type VersionEntry } from "../../backend";
 import { EVENT_LABEL, exactTime, fieldName, plural, relativeTime } from "../../lib/format";
 import { be, pushToast, refresh } from "../../state/app";
-import { reprompt } from "../reprompt/Reprompt";
+import { withItemPassword } from "../reprompt/Reprompt";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import { PasswordText } from "./FieldRows";
@@ -91,12 +91,12 @@ export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }
   }, [openSignal]);
 
   async function view(v: number) {
-    const draft = await reprompt({ reason: `Show version ${v} of “${title}”, including its passwords.`, confirmLabel: "Show version", run: (pw) => be().getVersion(id, v, pw) });
+    const draft = await withItemPassword({ reason: `Show version ${v} of “${title}”, including its passwords.`, confirmLabel: "Show version", run: (pw) => be().getVersion(id, v, pw) });
     if (draft) setSnap({ draft, version: v });
   }
 
   async function restore(v: number) {
-    const res = await reprompt({ reason: `Make version ${v} of “${title}” the newest version. Nothing is deleted; the timeline keeps every version.`, confirmLabel: "Restore version", run: (pw) => be().restoreVersion(id, v, pw) });
+    const res = await withItemPassword({ reason: `Make version ${v} of “${title}” the newest version. Nothing is deleted; the timeline keeps every version.`, confirmLabel: "Restore version", run: (pw) => be().restoreVersion(id, v, pw) });
     if (res) {
       setSnap(null);
       await refresh();
@@ -118,11 +118,11 @@ export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }
         <History className="size-[18px] text-mist" aria-hidden />
         <span className="flex-1 font-semibold">Version history</span>
         <span className="text-[0.86em] text-fog">{entries ? plural(entries.length, "version") : `Version ${version}`}</span>
-        <ChevronDown className={`size-4 text-mist transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden />
+        <ChevronDown className={`size-4 text-mist transition-transform duration-100 ${open ? "rotate-180" : ""}`} aria-hidden />
       </button>
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }} className="overflow-hidden">
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }} className="overflow-hidden">
             {error && <p role="alert" className="px-4 py-3 text-ember">{error}</p>}
             {!entries && !error && <p className="px-4 py-3 text-mist">Loading the timeline.</p>}
             {entries && (

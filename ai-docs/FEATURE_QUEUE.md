@@ -4,6 +4,8 @@ Six specs arrived after the Phase 2 UI and the accounts/backup work. They build 
 
 Order: **Q0** event-driven sync (adapts the backup work already in flight) → **Q1** Stage 1 gate + strict lock separation + wipe/panic → **Q2** disguise (names, icons, launcher) → **Q3** encrypted drive → **Q4** importer/exporter.
 
+**Q5 (2026-11-24, from the phone-QA round): built.** See the last section.
+
 **Status (2026-11-24): Q0, Q1, Q2, Q3 and Q4 are all built, merged into one tree and verified** (what was and was not verified is in `CHANGELOG_AND_STATE.md`; the finished contracts are in `IPC_CONTRACT.md` §7 to §10 and `STORAGE_AND_SYNC.md` §11 to §14). The sections below stay as the record of what was asked and of the decisions that sharpen the spec text; where they say "queued" or "not built", read "built". Still open: running the Android build on a device (toolchain not complete yet), the Android `content://` file pickers, and real-vendor checks listed under "NOT verified".
 
 ---
@@ -32,7 +34,7 @@ Three modes, default **Numeric PIN**: **A** numeric PIN, **B** alphanumeric pass
 ### Decoy math and the 3-character rule (Rust decides, the webview never sees the answer)
 * The core generates the equation (2 or 3 integers 1–100, operators `+ - * /`, brackets, all divisions exact, result always 1–999) and keeps the answer. The UI only sends what was typed.
 * Input of **1–3 characters**: a math attempt. Never checks a credential, never touches the attempt counter. Right answer: subtle "Correct!" and a casual-streak counter; wrong: "Incorrect, try again"; either way a new equation.
-* Input of **≥ 4 characters**: a security attempt, in this order: real credential → open the vault list; panic credential (reversed credential or custom panic code) → silent wipe and a clean empty app; otherwise → persistent failed counter +1, banner "N attempts left before this device is erased" (`15 − attempts`), new equation. The **15th** failure wipes.
+* Input of **≥ 4 characters**: a security attempt, in this order: real credential → open the vault list; panic credential (reversed credential or custom panic code) → silent wipe and a clean empty app; otherwise → persistent failed counter +1, banner "N attempts left before this device is erased" (`16 − attempts`), new equation. The **16th** failure wipes. After the 3rd, 6th, 9th, 12th and 15th wrong attempt a wait starts (1.5 min, 5 min, 45 min, 8 h, 3 days); while it runs, input of 4 or more characters is neither counted nor checked and the screen shows a countdown. After the 15th, before the last attempt, the screen shows a danger warning and asks "Send your last attempt?" with the number of digits typed; a wrong passcode then erases the whole device.
 * Submit is explicit (Enter or the submit key) because the length of the real credential must not be guessable from the UI. Flexible length (4, 5, 6, 7 or any) therefore falls out of the ≥ 4 rule.
 
 ### Counter
@@ -43,7 +45,7 @@ Stored in a small state file next to the registry, written and fsynced **before*
 * Trigger B, an optional **custom panic code** (≥ 4, may not equal the real credential or its reverse).
 * Trigger C, an optional discreet lock-screen trigger (Settings toggle "Show subtle Panic trigger on Lock Screen"): long-press (≥ 1.2 s) **or** deliberate double-tap on a low-profile mark.
 * Result of any trigger: `secure_wipe_all_local_data()`, then the UI goes straight to the first-run state. **No** banner, toast, log line or animation that says anything happened. Panic hashes live next to the credential hash, so a wrong guess costs the same time as a right one (both are always computed).
-* Manual reset: a discreet icon / long-press on the equation header runs a **3-step confirmation** ("Forgot passcode" / "Reset app data"), each step a different warning, then the wipe. This one is allowed to say what it does.
+* Manual reset: a discreet icon / long-press on the equation header runs a **3-step confirmation** ("Forgot passcode" / "Reset app data"), each step a different warning. The **last step is a long sum** that the core makes and keeps the answer to; only the right answer erases, and any answer uses that sum up (a wrong one gets a new sum). This one is allowed to say what it does.
 
 ### `secure_wipe_all_local_data()` (Rust)
 Deletes **only known Hexis paths under the configured data directory** (never `rm -rf <dir>` blindly, and refuses to run on a directory that does not look like a Hexis data directory): every `vaults/<id>/` (SQLite, WAL, SHM, attachments), `profiles.json`, S3 credentials (inside the vaults), Stage 1 hashes, counters, app settings, disguise state and temp files. Files are overwritten (zeros) and fsynced before unlinking; the in-memory session is dropped and zeroized; the backup worker is stopped first; directories are removed; the app resets to "welcome". **Honest limit:** on SSDs, flash and copy-on-write file systems an overwrite cannot be proven to reach the old physical blocks. That is why vault contents are encrypted and why the key bundle (the only thing needed to read them) is destroyed first: the wipe is a cryptographic erase plus a best-effort overwrite. **Remote S3 copies are not touched** (that is also your recovery path; the local S3 credentials are gone, so restoring needs them again).
@@ -110,19 +112,23 @@ interface GateStatus {
   biometric: boolean;          // available on this device AND switched on
   panicButton: boolean;        // show the discreet trigger on the lock screen
   equation: string | null;     // decoy math to show while closed, e.g. "(48 + 27) - 19"
-  attemptsLeft: number | null; // null until the first failed attempt of this streak; otherwise 15 - attempts
+  attemptsLeft: number | null; // null until the first failed attempt of this streak; otherwise 16 - attempts
+  lockedForMs: number | null;  // time left of a wait after wrong passcodes; null when none runs
+  finalAttempt: boolean;       // the next wrong passcode erases the device
   streak: number;              // casual math streak (cosmetic)
 }
 type GateOutcome =
   | { kind: "math"; correct: boolean; equation: string; streak: number }   // input was 1..3 characters
   | { kind: "opened" }                                                     // real credential (or biometric)
-  | { kind: "failed"; attemptsLeft: number; equation: string }             // 4+ characters, wrong
-  | { kind: "wiped" };                                                     // panic or 15th failure: the UI goes straight to first run, says nothing
+  | { kind: "failed"; attemptsLeft: number; equation: string; lockedForMs: number | null }  // 4+ characters, wrong; lockedForMs when this started a wait
+  | { kind: "locked"; retryAfterMs: number }                               // a wait is running: nothing was counted or checked
+  | { kind: "wiped" };                                                     // panic or 16th failure: the UI goes straight to first run, says nothing
 // gate_status() -> GateStatus
 // gate_submit(input: string) -> GateOutcome       (typed text, keypad digits, or a serialised pattern such as "12589")
 // gate_biometric() -> GateOutcome                  (Android only; never counts as a failed attempt; "invalid_input" elsewhere)
 // gate_close() -> void                             (back to Stage 1 and lock the open vault; "Lock app")
-// app_reset(confirmedSteps: 3) -> void             (manual 3-step reset; same wipe as panic; allowed with the gate closed)
+// app_reset_challenge() -> string                  (the long sum for the last step; the core keeps the answer)
+// app_reset(confirmedSteps: 3, answer: string) -> void   (manual reset; same wipe as panic; allowed with the gate closed; `wrong_answer` erases nothing and uses the sum up)
 interface GateConfigInput {
   enabled: boolean; mode: GateMode;
   credential: string | null;       // new credential; null keeps the stored one (required when enabling or changing mode)
@@ -137,7 +143,8 @@ interface GateConfigInput {
 //   credential or its reverse; wrong_password when the master password is wrong.
 
 // ---- Q1 inactivity lock (replaces the preview-only PIN / biometric quick unlock of the vault) ----
-interface AppSettings { lockAfterMinutes: 1 | 5 | 15 | 30 }
+interface AppSettings { lockAfterMinutes: 1 | 5 | 15 | 30 | 60 | 240; lockAfterLeaveSeconds: 0 | 15 | 30 | 60 | 300 | 900 | 1800 | 3600 | 14400 }
+// app_leave() / app_return() -> void   (phones: the page went to the background / came back; the core's own timer does the locking)
 // app_settings_get() -> AppSettings    app_settings_set(input: AppSettings) -> AppSettings
 // activity_ping() -> void   (the UI calls it on input, at most every 10 s; the core enforces the timer and emits "vault-locked")
 ```
@@ -183,3 +190,21 @@ interface ImportPreview { entries: number; totpSeeds: number; attachments: numbe
 // export_vault_file(password)  (existing) is the native encrypted archive
 ```
 Deviation from the spec text: `inspect_csv_headers` takes the picker `handle`, not a path, so a compromised webview cannot ask the core to read arbitrary files.
+
+---
+
+## Q5 — Trusted time, time zones, a demo vault, shortcuts, layered settings, a calmer look (built 2026-11-24)
+
+The request, in six parts (the decisions are D27 to D30 in `ARCHITECTURE.md`; the contract is `IPC_CONTRACT.md` §11; the files are `STORAGE_AND_SYNC.md` §13):
+
+1. **Keyboard shortcuts and a Help area.** One table (`src/lib/shortcuts.ts`, 33 entries in four groups) drives the handler, the `?` overlay and Settings > Help and shortcuts.
+2. **Layered settings.** Eight pages instead of one long scroll: a list with drill-down on phones, a left column of pages beside the page on tablets and desktops.
+3. **Less "AI" look.** Done with the `unslop` method: flat surfaces, no glass blur, lattice, glow or pulse, plain copy, one signature (key plus keycaps). The logo's gradient is a brand asset and stays.
+4. **Faster, quieter motion.** Every transition 80 to 180 ms on one easing; the number grid (`GridPad`) no longer fades or dims, so it cannot look like loading.
+5. **Trusted time.** The first page asks for a time zone (mandatory, changeable in Settings). Everything stored is UTC; the screen shows the zone. Lock waits cannot be shortened by changing the device date: boot clock plus checked UTC from three HTTPS servers, failing closed while a wait cannot be judged. The check is switchable.
+6. **Demo vault.** An app with no vault makes "Hexis123" (password "Hexis123") with believable items for one person (about two dozen: Google, Microsoft, GitHub, Amazon and more, with codes, cards, an identity, notes and an SSH key). A first start, an erase and a forgotten-password reset all land in it.
+
+**Interpretations (the request left room):** "settings category pages" means the eight pages above; the erase keeps `device.json` (zone, welcome seen, check switch) so a reset does not announce itself; the demo is never deleted automatically and opens without a typed password (its password is public and shown on the screen while the first-run sheet is up); an install that already had vaults gets the zone page once and no demo.
+
+**Verified:** Rust unit and IPC tests (the clock, the waits with the check on and off, the demo, the device settings and the allow-list); front-end unit tests; and these headless end-to-end runs against the real core: the main run (88 checks, including the zone page, the Date and time page and the shortcuts) and `real-gate`, `real-disguise`, `real-import`, `real-drive`, `real-backup`, `real-sync`, `real-multi-s3`, `gate-ui`, `mobile-ui`, `sync-ui`, `files-ui`, `import-ui`. **Not verified:** the time servers from inside the app (only checked with `curl`; the live test in `clock/net.rs` is `#[ignore]`), Android's `/proc` readability for the boot clock, a real phone, and a real desktop window.
+

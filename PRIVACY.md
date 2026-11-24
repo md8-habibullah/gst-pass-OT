@@ -9,10 +9,19 @@ library, which Google documents as able to send technical usage metrics (see "An
 
 * **Your vault** is a file on your device. Every item is encrypted on the device before it is written; the master
   password and keys exist only in memory while the vault is unlocked.
-* **Network.** The app contacts the internet only when you add an S3-compatible backup target, and then only that
-  endpoint, over HTTPS (plain HTTP is accepted for the loopback address only, for testing). What leaves the device is
+* **Not encrypted, next to the vaults:** the list of account names, the app lock's settings and hashes, the icon and name you chose
+  for the disguise, and `device.json` (your time zone, whether the first-run welcome was seen, the time-check switch and the id of the
+  demo vault). None of them holds an item, a key or a password. Erasing everything removes all of them except `device.json`'s zone and
+  switches, so that an erased app can open without asking again.
+* **Network.** Two things reach the internet. (1) **Your S3-compatible backup targets**, only when you add one, and then only
+  that endpoint, over HTTPS (plain HTTP is accepted for the loopback address only, for testing). What leaves the device is
   ciphertext plus the object names, sizes and timestamps the storage provider sees by nature. Sync runs on three
   triggers only: unlock, a saved change, and leaving or backgrounding the app. There are no timers and no background services.
+  (2) **The time check**, on by default and switchable in Settings, Date and time. To keep the waits after wrong passcodes
+  honest when someone changes the device date, the app sends a `HEAD` request to `google.com`, `cloudflare.com` and
+  `aws.amazon.com` and reads the `Date` header of the reply: at most once every six hours after a good check, and again
+  after the device restarts. Nothing of yours is sent; those sites see your IP address and the request, as with any website.
+  Switched off, no such request is made, and after a restart a wait is judged by the device clock.
 * **Links** in your items open in your default browser only when you click them, and only `http` and `https` links.
 * **Clipboard.** Copied passwords and codes are cleared after 15, 30 or 60 seconds (your choice). The timer runs inside
   the app, so it only works while the app is open; if the app is closed first, the copied value stays on the clipboard
@@ -26,7 +35,7 @@ library, which Google documents as able to send technical usage metrics (see "An
 The Android app asks for only what its features need. It declares no notification permission, no foreground
 service and no vibration permission (a build check and the manifest patch enforce this).
 
-* `INTERNET` and `ACCESS_NETWORK_STATE`: to reach the backup endpoint you configure.
+* `INTERNET` and `ACCESS_NETWORK_STATE`: to reach the backup endpoint you configure and, unless you switch it off, the time check.
 * `CAMERA` (asked at the moment you scan): to read an `otpauth://` QR code. Scanning is optional; you can type the setup key. The camera is not required to install the app.
 * `USE_BIOMETRIC` and `USE_FINGERPRINT`: the optional fingerprint for the Stage 1 gate. It never opens a vault; the master password always does.
 * The screen is protected from screenshots and the recent-apps preview while a decrypted file is open.

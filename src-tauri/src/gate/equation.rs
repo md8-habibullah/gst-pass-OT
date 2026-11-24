@@ -236,6 +236,58 @@ pub fn generate(rng: &mut dyn Rand) -> Equation {
     }
 }
 
+/// The largest answer of a long sum ([`generate_long`]): five digits.
+pub const LONG_MAX_RESULT: u32 = 99_999;
+
+/// A long sum for the last step of "erase everything": two ordinary expressions (two or three numbers each, so five or
+/// six numbers in all) joined by `+`, `-` or `*`, with a whole-number answer from 100 to 99,999. It exists so that nobody
+/// erases a device by tapping through three screens without thinking: the keypad must be used with a calculation that
+/// takes a moment. Built forwards from exact integers like [`generate`]; the answer stays in Rust.
+pub fn generate_long(rng: &mut dyn Rand) -> Equation {
+    for _ in 0..512 {
+        let left = three_numbers(rng);
+        let right = if rng.below(2) == 0 {
+            three_numbers(rng)
+        } else {
+            let op = op_char(rng.below(4));
+            pair(rng, op)
+        };
+        let join = ['+', '-', '*'][rng.below(3) as usize];
+        // for a difference the larger side goes first, so the result is positive
+        let (first, second) = if join == '-' && left.value < right.value {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        let value = match join {
+            '+' => first.value.checked_add(second.value),
+            '-' => first.value.checked_sub(second.value),
+            _ => first.value.checked_mul(second.value),
+        };
+        let Some(value) = value.filter(|v| (100..=LONG_MAX_RESULT).contains(v)) else {
+            continue;
+        };
+        let node = Node::Op(join, Box::new(first.node), Box::new(second.node));
+        let mut text = String::new();
+        show(&node, true, &mut text);
+        return Equation {
+            text,
+            answer: value,
+        };
+    }
+    // Not reachable in practice (a try or two is enough); keeps the function total without a panic.
+    let a = three_numbers(rng);
+    let b = three_numbers(rng);
+    let value = a.value + b.value;
+    let node = Node::Op('+', Box::new(a.node), Box::new(b.node));
+    let mut text = String::new();
+    show(&node, true, &mut text);
+    Equation {
+        text,
+        answer: value,
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use super::Rand;
@@ -409,6 +461,57 @@ mod tests {
             "about half have three numbers, got {three} of 6000"
         );
         assert_eq!(ops.len(), 4, "all four operators appear: {ops:?}");
+    }
+
+    #[test]
+    fn the_long_sum_is_exact_long_and_in_range() {
+        let mut counts = std::collections::BTreeMap::new();
+        let mut ops = std::collections::BTreeSet::new();
+        for seed in 0..4000u64 {
+            let e = generate_long(&mut SeededRand(seed));
+            let (value, numbers, steps) = evaluate(&e.text);
+            assert_eq!(value, i64::from(e.answer), "{} (seed {seed})", e.text);
+            assert!(
+                (100..=i64::from(LONG_MAX_RESULT)).contains(&value),
+                "{} = {value}",
+                e.text
+            );
+            assert!(
+                (4..=6).contains(&numbers.len()),
+                "{} has {} numbers",
+                e.text,
+                numbers.len()
+            );
+            assert!(numbers.iter().all(|n| (1..=100).contains(n)), "{}", e.text);
+            assert!(
+                steps
+                    .iter()
+                    .all(|s| *s >= 1 && *s <= i64::from(LONG_MAX_RESULT)),
+                "{}: {steps:?}",
+                e.text
+            );
+            assert_eq!(e.text.matches('(').count(), e.text.matches(')').count());
+            *counts.entry(numbers.len()).or_insert(0u32) += 1;
+            for c in e.text.chars().filter(|c| "+-*/".contains(*c)) {
+                ops.insert(c);
+            }
+        }
+        assert!(
+            counts.keys().any(|n| *n >= 5),
+            "long sums appear: {counts:?}"
+        );
+        assert_eq!(ops.len(), 4, "{ops:?}");
+    }
+
+    #[test]
+    fn the_long_sum_is_longer_than_an_ordinary_one() {
+        let mut long = 0usize;
+        let mut short = 0usize;
+        for seed in 0..500u64 {
+            long += generate_long(&mut SeededRand(seed)).text.len();
+            short += generate(&mut SeededRand(seed)).text.len();
+        }
+        assert!(long > short * 2, "long {long} vs short {short}");
     }
 
     #[test]

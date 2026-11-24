@@ -36,7 +36,13 @@
 //!   retried at the next trigger, that is unlock, a committed change, "Back up now" or the flush.)
 //!   Backup targets are reached with the real S3 client, e.g. `scripts/mock_s3.py` on loopback.
 //! * `--idle-unit-ms <n>` makes one "minute" of the inactivity lock last `n` milliseconds, so the
-//!   1/5/15/30 minute timer can be tested in seconds (production: 60 000). The Stage 1 gate
+//!   1/5/15/30 minute timer can be tested in seconds (production: 60 000). The "after leaving the
+//!   app" timer (`app_leave` / `app_return`) is scaled the same way: one "second" is a sixtieth of
+//!   that unit.
+//! * `--lock-unit-ms <n>` does the same for the waits after wrong passcodes (3 wrong: 1.5 minutes,
+//!   6: 5, 9: 45 minutes, 12: 8 hours, 15: 3 days). One "minute" of waiting lasts `n` milliseconds
+//!   (0 = no waits at all, the default here; production: 60 000), so the whole ladder can be walked
+//!   through in seconds. Leave it out of a test that does not look at the waits. The Stage 1 gate
 //!   (`gate_*`, `app_reset`, `app_settings_*`, `activity_ping`) is served like every other
 //!   command; with the gate off nothing changes. A wipe here only ever touches `--data-dir`.
 //! * Encrypted drive (`file_*`): `file_read` answers the file's raw bytes with
@@ -175,10 +181,14 @@ struct Options {
     xdg_data_home: Option<PathBuf>,
     /// How long one "minute" of the inactivity timer lasts (production: 60 000 ms).
     idle_unit_ms: Option<u64>,
+    /// How long one "minute" of the wait after wrong passcodes lasts (production: 60 000 ms; 0: no waits).
+    lock_unit_ms: u64,
+    /// Switch the online time check off (saved in `device.json` like the Settings switch), so a run makes no network request.
+    no_time_check: bool,
 }
 
 fn usage() -> String {
-    "usage: e2e_server --data-dir <folder> [--port <n>] [--fast-kdf] [--fast-backup] [--xdg-data-home <folder>] [--idle-unit-ms <n>]"
+    "usage: e2e_server --data-dir <folder> [--port <n>] [--fast-kdf] [--fast-backup] [--xdg-data-home <folder>] [--idle-unit-ms <n>] [--lock-unit-ms <n>] [--no-time-check]"
         .into()
 }
 
@@ -189,6 +199,8 @@ fn parse_args() -> Result<Options, String> {
     let mut fast_backup = false;
     let mut xdg_data_home = None;
     let mut idle_unit_ms = None;
+    let mut lock_unit_ms = 0;
+    let mut no_time_check = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -213,6 +225,14 @@ fn parse_args() -> Result<Options, String> {
                         .ok_or("--idle-unit-ms needs a number of milliseconds from 1 to 60000")?,
                 );
             }
+            "--lock-unit-ms" => {
+                lock_unit_ms = args
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .filter(|n| *n <= 60_000)
+                    .ok_or("--lock-unit-ms needs a number of milliseconds from 0 to 60000")?;
+            }
+            "--no-time-check" => no_time_check = true,
             "--help" | "-h" => return Err(usage()),
             other => return Err(format!("unknown argument {other:?}\n{}", usage())),
         }
@@ -224,6 +244,8 @@ fn parse_args() -> Result<Options, String> {
         fast_backup,
         xdg_data_home,
         idle_unit_ms,
+        lock_unit_ms,
+        no_time_check,
     })
 }
 
@@ -427,6 +449,8 @@ fn build_backend(
     fast_backup: bool,
     xdg_data_home: Option<&Path>,
     idle_unit_ms: Option<u64>,
+    lock_unit_ms: u64,
+    no_time_check: bool,
 ) -> Result<Backend, String> {
     let mut cfg = SessionConfig::default();
     if fast_kdf {
@@ -452,6 +476,14 @@ fn build_backend(
     if let Some(ms) = idle_unit_ms {
         // test hook: one "minute" of the inactivity lock lasts `ms` milliseconds
         core.gate().set_idle_unit(Duration::from_millis(ms));
+    }
+    // test hook: one "minute" of the wait after wrong passcodes lasts `lock_unit_ms` milliseconds (0: none)
+    core.gate()
+        .set_lock_unit(Duration::from_millis(lock_unit_ms));
+    if no_time_check {
+        // test hook: no request leaves the machine; waits rest on the boot clock and the device date
+        core.device_set_time_check(false)
+            .map_err(|e| e.to_string())?;
     }
     let app = mock_builder()
         .manage(AppState::new(core))
@@ -836,6 +868,8 @@ fn main() {
         opts.fast_backup,
         opts.xdg_data_home.as_deref(),
         opts.idle_unit_ms,
+        opts.lock_unit_ms,
+        opts.no_time_check,
     ) {
         Ok(b) => b,
         Err(msg) => {

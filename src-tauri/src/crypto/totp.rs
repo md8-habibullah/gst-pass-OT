@@ -5,7 +5,6 @@
 
 use super::error::{CryptoError, Result};
 use serde::Serialize;
-use std::time::{SystemTime, UNIX_EPOCH};
 use totp_rs::{Algorithm, Builder, Secret, Totp};
 use zeroize::Zeroizing;
 
@@ -95,10 +94,12 @@ fn normalize_base32(input: &str) -> Result<Zeroizing<String>> {
 }
 
 fn unix_now() -> Result<u64> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .map_err(|_| CryptoError::Totp("system clock is set before 1970"))
+    // Real time matters here: a code is only right if it matches the service's clock, so use the checked time.
+    let secs = super::now_millis() / 1000;
+    if secs == 0 {
+        return Err(CryptoError::Totp("system clock is set before 1970"));
+    }
+    Ok(secs)
 }
 
 impl TotpAccount {

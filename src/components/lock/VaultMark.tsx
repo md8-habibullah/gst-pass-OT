@@ -2,12 +2,13 @@ import { useId } from "react";
 import { motion } from "motion/react";
 import { disguiseTile } from "../../lib/disguise";
 import { brand } from "../../state/brand";
+import { DUR, tween } from "../../lib/motion";
 import { useStore } from "../../state/store";
 
 /**
  * The Hexis mark: two solid pillars and a crossbar of two slanted layers, a silver one over a glass cyan one. The same
  * drawing as `src/assets/logo-mark.svg` (a test keeps the two in step). The unlock moment (UI_DESIGN_SYSTEM.md §6) closes
- * the gap between the layers; `busy` pulses the mark.
+ * the gap between the layers. `busy` marks the screen as working for assistive tech; the mark itself stays still.
  * With a disguise icon chosen, the mark is that icon instead, so the Hexis H never shows on a renamed app.
  */
 export function VaultMark({ size = 64, open = false, busy = false }: { size?: number; open?: boolean; busy?: boolean }) {
@@ -18,8 +19,8 @@ export function VaultMark({ size = 64, open = false, busy = false }: { size?: nu
     return (
       <motion.img
         src={tile} width={size} height={size} alt={name} draggable={false}
-        animate={{ scale: open ? 1.06 : 1 }} transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
-        className={busy ? "animate-pulse" : ""}
+        animate={{ scale: open ? 1.06 : 1 }} transition={tween(DUR.base)}
+        aria-busy={busy || undefined}
       />
     );
   }
@@ -32,8 +33,8 @@ export function VaultMark({ size = 64, open = false, busy = false }: { size?: nu
       role="img"
       aria-label={name}
       animate={{ scale: open ? 1.05 : 1 }}
-      transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
-      className={busy ? "animate-pulse" : ""}
+      transition={tween(DUR.base)}
+      aria-busy={busy || undefined}
     >
       <defs>
         <linearGradient id={face} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#FFFFFF" /><stop offset="1" stopColor="#CBD5E1" /></linearGradient>
@@ -47,7 +48,7 @@ export function VaultMark({ size = 64, open = false, busy = false }: { size?: nu
         <rect x="172" y="48" width="44" height="160" fill={`url(#${face})`} />
         <polygon points="172,48 216,48 228,40 184,40" fill="#FFFFFF" />
         <polygon points="216,48 228,40 228,200 216,208" fill={`url(#${side})`} />
-        <motion.g animate={{ y: open ? -14 : 0 }} transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}>
+        <motion.g animate={{ y: open ? -14 : 0 }} transition={tween(DUR.base)}>
           <polygon points="84,140 172,124 172,160 84,176" fill={`url(#${accent})`} fillOpacity="0.92" />
           <polygon points="84,140 172,124 172,127 84,143" fill="#FFFFFF" fillOpacity="0.45" />
         </motion.g>

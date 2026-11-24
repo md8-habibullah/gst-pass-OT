@@ -430,6 +430,53 @@ class KotlinTests(Base):
         self.assertTrue(self.kt().is_file())
 
 
+class ActivityAndKeepRuleTests(Base):
+    """The two fixes found on a real phone on 2026-11-24: the release build crashed on the first camera frame
+    (R8 removed the constructors ML Kit needs), Back finished the app (a native abort) and the keyboard hid sheets."""
+
+    def activity(self):
+        return self.project / "app" / "src" / "main" / "java" / "dev" / "habibullah" / "hexis" / "MainActivity.kt"
+
+    def test_main_activity_sends_back_to_the_background_and_resizes_for_the_keyboard(self):
+        self.apply()
+        src = self.activity().read_text(encoding="utf-8")
+        self.assertIn("package dev.habibullah.hexis\n", src)
+        self.assertNotIn("__PACKAGE__", src)
+        for needle in (
+            "class MainActivity : TauriActivity()", "enableEdgeToEdge()", "moveTaskToBack(true)",
+            "window.__hexisBack", "WindowInsetsCompat.Type.ime()", "OnBackPressedCallback", "override fun onWebViewCreate(webView: WebView)",
+        ):
+            self.assertIn(needle, src)
+        self.assertEqual(src.count("{"), src.count("}"))
+
+    def test_the_activity_follows_the_namespace(self):
+        shutil.rmtree(self.project)
+        self.project = make_project(self.root, namespace="com.example.notes")
+        self.manifest = self.project / "app" / "src" / "main" / "AndroidManifest.xml"
+        self.apply()
+        src = (self.project / "app/src/main/java/com/example/notes/MainActivity.kt").read_text(encoding="utf-8")
+        self.assertIn("package com.example.notes\n", src)
+
+    def test_the_keep_rules_protect_the_ml_kit_registrars_and_sit_where_gradle_looks(self):
+        self.apply()
+        rules = (self.project / "app" / apm.KEEP_RULES_NAME).read_text(encoding="utf-8")
+        self.assertTrue(apm.KEEP_RULES_NAME.endswith(".pro"), "the Gradle template only passes *.pro files to R8")
+        self.assertIn("-keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }", rules)
+        self.assertIn("-keep class com.google.mlkit.** { <init>(); }", rules)
+        for line in rules.splitlines():
+            if line.strip() and not line.startswith("#"):
+                self.assertTrue(line.startswith("-keep"), line)
+
+    def test_a_stale_activity_or_rules_file_is_brought_up_to_date(self):
+        self.apply()
+        self.activity().write_text("package dev.habibullah.hexis\n\nclass MainActivity : TauriActivity()\n", encoding="utf-8")
+        code, out, _ = self.run_script("--check")
+        self.assertEqual(code, 1)
+        self.assertIn("MainActivity", out)
+        self.apply()
+        self.assertIn("moveTaskToBack", self.activity().read_text(encoding="utf-8"))
+
+
 class IdempotencyTests(Base):
     def test_the_second_run_changes_nothing_byte_for_byte(self):
         self.apply()

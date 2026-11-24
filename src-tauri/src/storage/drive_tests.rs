@@ -114,6 +114,7 @@ fn note(title: &str) -> ItemDraft {
         item_type: ItemType::SecureNote,
         title: title.into(),
         favorite: false,
+        reprompt: false,
         tags: vec![],
         folder: None,
         fields: BTreeMap::from([("body".to_string(), "text".to_string())]),
@@ -401,7 +402,7 @@ fn cloning_an_item_does_not_copy_its_files() {
     let fx = Fx::new();
     let item = fx.item("Passport");
     fx.add_one(Some(&item), "scan.png", b"png");
-    let copy = fx.app.item_clone(&item, PW.into()).unwrap();
+    let copy = fx.app.item_clone(&item, Some(PW.into())).unwrap();
     assert!(fx.app.item_get(&copy.id).unwrap().attachments.is_empty());
     assert_eq!(fx.app.item_get(&item).unwrap().attachments.len(), 1);
     assert_eq!(fx.app.file_list(Some(&copy.id)).unwrap(), vec![]);

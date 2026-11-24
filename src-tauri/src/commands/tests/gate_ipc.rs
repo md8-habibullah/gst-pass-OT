@@ -70,9 +70,12 @@ fn the_gate_commands_exist_with_the_names_the_front_end_calls() {
         "gate_close",
         "gate_configure",
         "app_reset",
+        "app_reset_challenge",
         "app_settings_get",
         "app_settings_set",
         "activity_ping",
+        "app_leave",
+        "app_return",
     ] {
         assert!(names.contains(cmd), "{cmd} is not registered");
     }
@@ -88,12 +91,13 @@ fn with_no_gate_everything_works_exactly_as_before() {
         json!({
             "enabled": false, "open": true, "mode": "pin", "biometricAvailable": false,
             "biometric": false, "panicButton": false, "equation": null, "attemptsLeft": null,
-            "streak": 0
+            "lockedForMs": null, "lockedUntilMs": null, "clockPending": false,
+            "finalAttempt": false, "streak": 0
         })
     );
     assert_eq!(
         h.ok("app_settings_get", json!({})),
-        json!({"lockAfterMinutes": 15})
+        json!({"lockAfterMinutes": 15, "lockAfterLeaveSeconds": 300})
     );
     h.ok(
         "profile_create",
@@ -215,9 +219,15 @@ fn a_closed_gate_answers_locked_to_every_command_that_is_not_on_the_allow_list()
         passed,
         [
             "activity_ping",
+            "app_leave",
             "app_reset",
+            "app_reset_challenge",
+            "app_return",
             "app_settings_get",
+            "clock_status",
+            "clock_sync",
             "crypto_suite_info",
+            "device_get",
             "disguise_get",
             "gate_biometric",
             "gate_panic",
@@ -234,6 +244,9 @@ fn a_closed_gate_answers_locked_to_every_command_that_is_not_on_the_allow_list()
     assert!(h.call("crypto_suite_info", json!({})).is_ok());
     h.ok("app_settings_get", json!({}));
     h.ok("activity_ping", json!({}));
+    h.ok("app_leave", json!({}));
+    h.ok("app_return", json!({}));
+    assert!(h.ok("app_reset_challenge", json!({})).is_string());
     // while open, an unknown command is just unknown (and not `locked`)
     h.ok("gate_submit", json!({"input": PIN}));
     let unknown = h
@@ -300,10 +313,11 @@ fn submit_over_ipc_follows_the_three_character_rule_and_counts_attempts() {
     // 4 or more: a security attempt
     let out = h.ok("gate_submit", json!({"input": "1111"}));
     assert_eq!(out["kind"], "failed");
-    assert_eq!(out["attemptsLeft"], 14);
+    assert_eq!(out["attemptsLeft"], 15);
     assert!(out["equation"].is_string());
-    assert_eq!(out.as_object().unwrap().len(), 3);
-    assert_eq!(h.ok("gate_status", json!({}))["attemptsLeft"], 14);
+    assert_eq!(out["lockedForMs"], Value::Null, "no wait yet");
+    assert_eq!(out.as_object().unwrap().len(), 4);
+    assert_eq!(h.ok("gate_status", json!({}))["attemptsLeft"], 15);
     // nothing typed is ever echoed back
     assert!(!out.to_string().contains("1111"));
     let out = h.ok("gate_submit", json!({"input": PIN}));
@@ -325,7 +339,7 @@ fn a_fingerprint_is_invalid_input_on_a_desktop_and_counts_nothing() {
     assert_eq!(h.err_code("gate_biometric", json!({})), "invalid_input");
     let st = h.ok("gate_status", json!({}));
     assert_eq!(st["biometricAvailable"], false);
-    assert_eq!(st["attemptsLeft"], 14, "neither counted nor reset");
+    assert_eq!(st["attemptsLeft"], 15, "neither counted nor reset");
     assert_eq!(st["open"], false);
 }
 
@@ -346,7 +360,7 @@ fn the_reversed_pin_wipes_over_ipc_with_exactly_the_wiped_outcome() {
     assert_eq!(h.ok("vault_status", json!({}))["exists"], false);
     assert_eq!(
         h.ok("app_settings_get", json!({})),
-        json!({"lockAfterMinutes": 15})
+        json!({"lockAfterMinutes": 15, "lockAfterLeaveSeconds": 300})
     );
     // and the app starts over
     h.ok(
@@ -386,10 +400,12 @@ fn the_panic_mark_works_only_while_it_is_on_and_the_gate_is_closed() {
 }
 
 #[test]
-fn the_fifteenth_failure_wipes_over_ipc() {
+fn the_sixteenth_failure_wipes_over_ipc() {
     let h = harness();
     gated(&h);
-    for left in (1..=14).rev() {
+    // (the waits after 3, 6, 9, 12 and 15 wrong ones are covered by the gate tests; here they last no time)
+    core(&h).gate().set_lock_unit(Duration::ZERO);
+    for left in (1..=15).rev() {
         let out = h.ok(
             "gate_submit",
             json!({"input": format!("{:04}", 5000 + left)}),
@@ -429,40 +445,101 @@ fn app_reset_needs_exactly_three_confirmed_steps_and_works_with_the_gate_closed(
     assert!(h.call("app_reset", json!({})).is_err());
     assert!(files(&h).contains(&"profiles.json".to_string()));
     assert!(h.ok("gate_status", json!({}))["enabled"].as_bool().unwrap());
+    // the last step is a long sum: no sum asked for, a wrong answer and an answer to a used-up sum all fail and erase nothing
+    assert_eq!(
+        h.err_code("app_reset", json!({"confirmedSteps": 3})),
+        "wrong_answer"
+    );
+    assert_eq!(
+        h.err_code("app_reset", json!({"confirmedSteps": 3, "answer": "100"})),
+        "wrong_answer"
+    );
+    let sum = h.ok("app_reset_challenge", json!({}));
+    assert!(sum.as_str().is_some_and(|s| s.len() > 12), "{sum}");
+    let answer = core(&h).gate().reset_answer().unwrap();
+    // (a number instead of text is a malformed call, not an answer)
+    h.ok("app_reset_challenge", json!({}));
+    assert!(h
+        .call("app_reset", json!({"confirmedSteps": 3, "answer": answer}))
+        .is_err());
+    for wrong in [json!((answer + 1).to_string()), json!(null), json!("")] {
+        // (a wrong answer uses the sum up, so ask again each time)
+        h.ok("app_reset_challenge", json!({}));
+        assert_eq!(
+            h.err_code("app_reset", json!({"confirmedSteps": 3, "answer": wrong})),
+            "wrong_answer",
+            "{wrong}"
+        );
+        assert!(files(&h).contains(&"profiles.json".to_string()));
+    }
+    let used_up = core(&h).gate().reset_answer();
+    assert!(used_up.is_none(), "a wrong answer used the sum up");
     // the gate is closed and `app_reset` is allowed anyway (the UI's "erase this device")
-    assert_eq!(h.ok("app_reset", json!({"confirmedSteps": 3})), Value::Null);
+    let erase = |h: &Harness| {
+        h.ok("app_reset_challenge", json!({}));
+        let answer = core(h).gate().reset_answer().unwrap();
+        h.ok(
+            "app_reset",
+            json!({"confirmedSteps": 3, "answer": answer.to_string()}),
+        )
+    };
+    assert_eq!(erase(&h), Value::Null);
     assert!(files(&h).is_empty());
     assert_eq!(h.ok("profile_list", json!({}))["profiles"], json!([]));
     // a second reset is not an error
-    h.ok("app_reset", json!({"confirmedSteps": 3}));
+    erase(&h);
 }
 
 #[test]
-fn the_timeout_setting_has_four_values_and_a_default_over_ipc() {
+fn the_lock_settings_have_listed_values_and_defaults_over_ipc() {
     let h = harness();
     assert_eq!(
         h.ok("app_settings_get", json!({})),
-        json!({"lockAfterMinutes": 15})
+        json!({"lockAfterMinutes": 15, "lockAfterLeaveSeconds": 300})
     );
-    for m in [1, 5, 15, 30] {
+    for m in [1, 5, 15, 30, 60, 240] {
         let out = h.ok(
             "app_settings_set",
-            json!({"input": {"lockAfterMinutes": m}}),
+            json!({"input": {"lockAfterMinutes": m, "lockAfterLeaveSeconds": 300}}),
         );
-        assert_eq!(out, json!({"lockAfterMinutes": m}));
+        assert_eq!(
+            out,
+            json!({"lockAfterMinutes": m, "lockAfterLeaveSeconds": 300})
+        );
         assert_eq!(
             h.ok("app_settings_get", json!({})),
-            json!({"lockAfterMinutes": m})
+            json!({"lockAfterMinutes": m, "lockAfterLeaveSeconds": 300})
         );
     }
-    for bad in [
-        json!(0),
-        json!(2),
-        json!(10),
-        json!(45),
-        json!(60),
-        json!(100000),
-    ] {
+    for secs in [0, 15, 30, 60, 300, 900, 1800, 3600, 14400] {
+        let out = h.ok(
+            "app_settings_set",
+            json!({"input": {"lockAfterMinutes": 15, "lockAfterLeaveSeconds": secs}}),
+        );
+        assert_eq!(
+            out,
+            json!({"lockAfterMinutes": 15, "lockAfterLeaveSeconds": secs})
+        );
+    }
+    for bad in [json!(1), json!(10), json!(45), json!(86400)] {
+        assert_eq!(
+            h.err_code(
+                "app_settings_set",
+                json!({"input": {"lockAfterMinutes": 15, "lockAfterLeaveSeconds": bad}})
+            ),
+            "invalid_input",
+            "{bad}"
+        );
+    }
+    // leaving out the second value gives its default (an older caller)
+    assert_eq!(
+        h.ok(
+            "app_settings_set",
+            json!({"input": {"lockAfterMinutes": 30}})
+        ),
+        json!({"lockAfterMinutes": 30, "lockAfterLeaveSeconds": 300})
+    );
+    for bad in [json!(0), json!(2), json!(10), json!(45), json!(100000)] {
         assert_eq!(
             h.err_code(
                 "app_settings_set",
@@ -484,7 +561,7 @@ fn the_timeout_setting_has_four_values_and_a_default_over_ipc() {
     assert!(h.call("app_settings_set", json!({"input": {}})).is_err());
     assert_eq!(
         h.ok("app_settings_get", json!({})),
-        json!({"lockAfterMinutes": 30})
+        json!({"lockAfterMinutes": 30, "lockAfterLeaveSeconds": 300})
     );
     let text = std::fs::read_to_string(h.dir.path().join("app-settings.json")).unwrap();
     assert!(text.contains("30"));

@@ -246,7 +246,7 @@ fn backup_and_restore_with_real_signed_requests() {
     ids.sort();
     assert_eq!(restored, ids);
     assert_eq!(
-        app.item_reveal(&edited, PW.into()).unwrap().fields["password"],
+        app.item_reveal(&edited, Some(PW.into())).unwrap().fields["password"],
         "pw-2"
     );
     let targets = app.backup_list().unwrap();
@@ -544,7 +544,7 @@ fn a_pull_works_over_real_signed_requests() {
     assert_eq!(v.health.state, HealthState::Healthy, "{v:?}");
     assert_eq!(app.item_get(&x).unwrap().version, 2);
     assert_eq!(
-        app.item_reveal(&x, PW.into()).unwrap().fields["password"],
+        app.item_reveal(&x, Some(PW.into())).unwrap().fields["password"],
         "from-B"
     );
     assert!(!app.item_get(&x).unwrap().changed_elsewhere);
@@ -566,7 +566,7 @@ fn a_pull_works_over_real_signed_requests() {
     let v = app.backup_run(None).unwrap().remove(0);
     assert_eq!(v.health.state, HealthState::Healthy, "{v:?}");
     assert_eq!(
-        app.item_reveal(&ids[1], PW.into()).unwrap().fields["password"],
+        app.item_reveal(&ids[1], Some(PW.into())).unwrap().fields["password"],
         "a-again"
     );
     assert!(app.item_get(&ids[1]).unwrap().changed_elsewhere);
@@ -577,7 +577,7 @@ fn a_pull_works_over_real_signed_requests() {
         .find(|e| e.other_device)
         .expect("the other device's state is kept");
     assert_eq!(
-        app.history_get(&ids[1], copy.version, PW.into())
+        app.history_get(&ids[1], copy.version, Some(PW.into()))
             .unwrap()
             .fields["password"],
         "b-again"

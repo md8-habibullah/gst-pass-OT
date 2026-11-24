@@ -1,10 +1,10 @@
 // What a person can do with one item, shared by the detail pane, the row menu and the Codes view.
-// Every secret read goes through the re-prompt guard; non-secret reads do not.
+// Secret reads need the master password only for items set to ask for it (see withItemPassword); non-secret reads never do.
 import { BackendError, type ItemSummary, type ItemType, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
 import { openEditor } from "../../state/ui";
-import { reprompt } from "../reprompt/Reprompt";
+import { withItemPassword } from "../reprompt/Reprompt";
 import { ITEM_FILTERS } from "../shell/nav";
 
 export type Target = Pick<ItemSummary, "id" | "type" | "title" | "archived" | "favorite">;
@@ -69,7 +69,7 @@ export async function copyQuick(item: Target, q: QuickCopy): Promise<void> {
   try {
     let value: string | undefined;
     if (q.secret) {
-      const draft = await reprompt({
+      const draft = await withItemPassword({
         reason: `Copy the ${q.label} for “${item.title}”. It leaves the clipboard again after ${clear} seconds.`,
         confirmLabel: "Copy",
         run: (pw) => be().revealItem(item.id, pw),
@@ -100,7 +100,7 @@ export function viewItem(item: Target): void {
 
 export async function editItem(item: Target): Promise<void> {
   try {
-    const session = await reprompt({ reason: `Edit “${item.title}”. Earlier versions stay in the history.`, confirmLabel: "Edit item", run: (pw) => be().beginEdit(item.id, pw) });
+    const session = await withItemPassword({ reason: `Edit “${item.title}”. Earlier versions stay in the history.`, confirmLabel: "Edit item", run: (pw) => be().beginEdit(item.id, pw) });
     if (session) openEditor(item.id, session);
   } catch (e) {
     pushToast({ kind: "error", text: reason(e, "Could not start editing.") });
@@ -109,7 +109,7 @@ export async function editItem(item: Target): Promise<void> {
 
 export async function cloneItem(item: Target): Promise<void> {
   try {
-    const copy = await reprompt({ reason: `Make a copy of “${item.title}”. Its secrets are duplicated inside the vault.`, confirmLabel: "Clone", run: (pw) => be().cloneItem(item.id, pw) });
+    const copy = await withItemPassword({ reason: `Make a copy of “${item.title}”. Its secrets are duplicated inside the vault.`, confirmLabel: "Clone", run: (pw) => be().cloneItem(item.id, pw) });
     if (!copy) return;
     await refresh();
     viewItem(copy);

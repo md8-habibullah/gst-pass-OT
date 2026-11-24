@@ -16,6 +16,8 @@ import { Sheet } from "../ui/Sheet";
 export interface RepromptOptions<T> {
   /** What the person is about to do, in plain words: "Reveal the password for GitHub". */
   reason: string;
+  /** Why this item asks at all, shown quietly under the reason. */
+  because?: string;
   confirmLabel?: string;
   tone?: "key" | "danger";
   run: (password: string) => Promise<T>;
@@ -27,6 +29,21 @@ interface Pending {
 }
 
 const store = createStore<Pending | null>(null);
+
+/**
+ * Runs a command on ONE item the way the core wants it. Most items work without the master password while the vault is
+ * open, so the command is sent without one first. An item that is set to "ask for the master password again" answers
+ * `password_required` (no Argon2id run, nothing changed), and only then does the sheet open and the command run again
+ * with the password. Resolves with the command's result, or `undefined` when the person cancels the sheet.
+ */
+export async function withItemPassword<T>(opts: Omit<RepromptOptions<T>, "run"> & { run: (password?: string) => Promise<T> }): Promise<T | undefined> {
+  try {
+    return await opts.run(undefined);
+  } catch (e) {
+    if (!(e instanceof BackendError && e.code === "password_required")) throw e;
+  }
+  return reprompt({ because: "This item is set to ask for the master password every time.", ...opts, run: (pw) => opts.run(pw) });
+}
 
 /** Opens the guard. Resolves with the result of `run`, or `undefined` when the person cancels. */
 export function reprompt<T>(opts: RepromptOptions<T>): Promise<T | undefined> {
@@ -92,7 +109,10 @@ export function RepromptHost() {
       titleIcon={tone === "danger" ? <ShieldAlert className="size-5 text-ember" aria-hidden /> : <KeyRound className="size-5 text-brass" aria-hidden />}
     >
       <form onSubmit={submit} className="flex flex-col gap-4 pt-1">
-        <p className="text-mist">{pending?.opts.reason}</p>
+        <div className="flex flex-col gap-1.5">
+          <p className="text-mist">{pending?.opts.reason}</p>
+          {pending?.opts.because && <p className="text-[0.86em] text-fog">{pending.opts.because}</p>}
+        </div>
         <div key={shake} className={shake > 0 ? "animate-shake" : ""}>
           <Field label="Master password" error={error}>
             {({ id, describedBy, invalid }) => (

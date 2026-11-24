@@ -16,6 +16,8 @@ pub mod app;
 mod app_disguise;
 pub mod backup;
 pub mod db;
+pub mod demo;
+pub mod device;
 pub mod drive;
 pub mod error;
 pub mod files;
@@ -28,6 +30,8 @@ pub mod uuid;
 pub mod vault;
 mod vault_drive;
 
+#[cfg(test)]
+mod app_demo_tests;
 #[cfg(test)]
 mod app_tests;
 #[cfg(test)]

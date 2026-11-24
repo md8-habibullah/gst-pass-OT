@@ -4,7 +4,22 @@ import type { GateMode } from "../backend/types";
 
 export const MIN_CREDENTIAL = 4;
 export const MAX_CREDENTIAL = 64;
-export const MAX_ATTEMPTS = 15;
+/** The 16th wrong passcode erases the device. */
+export const MAX_ATTEMPTS = 16;
+/**
+ * The wait after the Nth wrong passcode in a row: `[wrong attempts, seconds]`. Mirrors `gate::LOCK_STEPS` in the core
+ * (which stays the authority). Attempt 16 is the last chance, so there is no step for it.
+ */
+export const LOCK_STEPS: ReadonlyArray<readonly [number, number]> = [
+  [3, 90],
+  [6, 5 * 60],
+  [9, 45 * 60],
+  [12, 8 * 3600],
+  [15, 3 * 24 * 3600],
+];
+/** The sum as people read it: real multiplication, division and minus signs. */
+export const prettyEquation = (t: string): string => t.replace(/\*/g, "×").replace(/\//g, "÷").replace(/-/g, "−");
+export const lockSecondsAfter = (attempts: number): number | null => LOCK_STEPS.find(([n]) => n === attempts)?.[1] ?? null;
 /** Input of at most this many characters is a casual math answer and is never checked as a credential. */
 export const MATH_MAX_LENGTH = 3;
 
@@ -13,6 +28,11 @@ export const reverseOf = (s: string) => chars(s).reverse().join("");
 export const isPalindrome = (s: string) => s.length > 0 && s === reverseOf(s);
 
 const NOUN: Record<GateMode, string> = { pin: "digits", password: "characters", grid: "dots" };
+/** "4 digits", "9 characters", "1 dot": how many the person typed, in the words of their passcode type. */
+export function typedCount(mode: GateMode, n: number): string {
+  const noun = NOUN[mode];
+  return `${n} ${n === 1 ? noun.replace(/s$/, "") : noun}`;
+}
 
 export function credentialProblem(mode: GateMode, value: string): string | null {
   const n = chars(value).length;

@@ -36,7 +36,7 @@ export function TrashList() {
               const on = t.id === selectedId;
               return (
                 <li key={t.id} role="presentation">
-                  <button type="button" role="option" aria-selected={on} data-item-row onClick={() => select(t.id)} className={`pressable relative flex min-h-[3.75rem] w-full items-center gap-3 rounded-lg px-3 text-left pointer-coarse:min-h-[4.5rem] ${on ? "bg-raised shadow-e2" : "hover:bg-raised/60"}`}>
+                  <button type="button" role="option" aria-selected={on} data-item-row data-item-id={t.id} onClick={() => select(t.id)} className={`pressable relative flex min-h-[3.75rem] w-full items-center gap-3 rounded-lg px-3 text-left pointer-coarse:min-h-[4.5rem] ${on ? "bg-raised shadow-e2" : "hover:bg-raised/60"}`}>
                     {on && <motion.span layoutId="row-edge" aria-hidden className="absolute top-3 bottom-3 left-0 w-[3px] rounded-full bg-brass" />}
                     <Avatar title={t.title} size={38} dim />
                     <span className="min-w-0 flex-1">
@@ -91,7 +91,7 @@ export function TrashDetail({ id, onBack }: { id: string; onBack?: () => void })
         </div>
       </header>
 
-      <div className="glass flex items-start gap-3.5 rounded-lg px-4 py-4">
+      <div className="surface flex items-start gap-3.5 rounded-lg px-4 py-4">
         <LockKeyhole className="mt-0.5 size-5 shrink-0 text-mist" aria-hidden />
         <p className="text-mist">The contents stay sealed while an item is in the trash. Restore it to open, copy or edit it.</p>
       </div>

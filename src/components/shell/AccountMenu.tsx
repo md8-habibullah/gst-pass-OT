@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronsUpDown, Lock, LockKeyhole, Plus, UserRound } from "lucide-react";
-import { app, lockApp, lockVault, selectProfile, showPicker } from "../../state/app";
+import { app, isLabelledDemo, lockApp, lockVault, selectProfile, showPicker } from "../../state/app";
 import { useStore } from "../../state/store";
 import { setLockIntent } from "../../state/ui";
 import { Avatar } from "../ui/Avatar";
@@ -12,10 +12,11 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
   const profiles = useStore(app, (s) => s.profiles);
   const current = useStore(app, (s) => s.profile);
   const gateOn = useStore(app, (s) => s.gate?.enabled ?? false);
+  const device = useStore(app, (s) => s.device);
 
   async function switchTo(id: string) {
     onClose();
-    if (id === current?.id) { await lockVault(); return; }
+    if (id === current?.id) { if (!current.demo) await lockVault(); return; }
     await showPicker();
     await selectProfile(id);
   }
@@ -37,7 +38,7 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
                 <Avatar title={p.displayName} size={38} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold">{p.displayName}</span>
-                  <span className="block text-[0.86em] text-mist">{on ? "Open now. Choose to lock it." : "Lock this vault and open it"}</span>
+                  <span className="block text-[0.86em] text-mist">{isLabelledDemo(device, p) ? (on ? "Demo vault, open now" : "Demo vault") : on ? "Open now. Choose to lock it." : "Lock this vault and open it"}</span>
                 </span>
               </button>
             </li>
@@ -46,7 +47,7 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
       </ul>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button icon={<Plus className="size-4" />} onClick={() => void add()}>Add account</Button>
-        <Button icon={<Lock className="size-4" />} onClick={() => { onClose(); void lockVault(); }}>Lock now</Button>
+        {!current?.demo && <Button icon={<Lock className="size-4" />} onClick={() => { onClose(); void lockVault(); }}>Lock now</Button>}
         {gateOn && <Button icon={<LockKeyhole className="size-4" />} onClick={() => { onClose(); void lockApp(); }}>Lock app</Button>}
       </div>
     </Sheet>

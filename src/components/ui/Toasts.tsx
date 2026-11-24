@@ -21,7 +21,7 @@ function ToastItem({ toast }: { toast: Toast }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.98 }}
       transition={{ type: "spring", stiffness: 480, damping: 36 }}
-      className="glass-strong pointer-events-auto flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg py-2.5 pr-2.5 pl-3.5"
+      className="surface-float pointer-events-auto flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-lg py-2.5 pr-2.5 pl-3.5"
     >
       {toast.countdownMs ? (
         <CountdownRing totalMs={toast.countdownMs} remainingMs={toast.countdownMs} windowKey={toast.id} color="var(--color-brass)" size={26} stroke={2.5}>

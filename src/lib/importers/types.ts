@@ -29,6 +29,7 @@ export const blankDraft = (type: ItemDraft["type"], title: string): ItemDraft =>
   type,
   title: (title.trim() || "(no name)").slice(0, MAX_TITLE),
   favorite: false,
+  reprompt: false,
   tags: [],
   folder: null,
   fields: {},
