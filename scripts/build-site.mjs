@@ -228,7 +228,7 @@ ${body}
 </main>
 </div>`}
 <footer class="foot">
-  <p>Hexis is MIT-licensed and pre-1.0; it has not been independently audited. This site sets no cookies and loads nothing from other hosts.</p>
+  <p>Hexis is MIT-licensed and has not been independently audited. This site sets no cookies and loads nothing from other hosts.</p>
   <p><a href="${relative(page.slug, "project/privacy")}">Privacy</a> · <a href="${relative(page.slug, "project/security")}">Security policy</a> · <a href="${relative(page.slug, "project/license")}">Licence</a> · <a href="${REPO}/issues" rel="noopener noreferrer">Issues</a></p>
 </footer>
 </body>
@@ -247,7 +247,7 @@ function homeBody() {
     <p class="actions"><a class="btn primary" href="${dl}">Download Hexis</a><a class="btn" href="${arch}">How it is built</a></p>
     <p class="cmd-label">Linux, any distribution: one command detects your system and installs.</p>
     <pre class="cmd"><code>${esc(INSTALL_CMD)}</code></pre>
-    <p class="fine">Linux and Android. Pre-1.0, not independently audited. <a href="${dl}#what-the-installer-does">What it does</a>.</p>
+    <p class="fine">Linux and Android. Not independently audited. <a href="${dl}#what-the-installer-does">What it does</a>.</p>
   </div>
   <figure class="seen" aria-labelledby="seen-cap">
     <figcaption id="seen-cap">What your storage provider sees</figcaption>
@@ -318,7 +318,7 @@ function downloadBody() {
   return `
 <article class="prose">
 <h1>Download Hexis</h1>
-<p>Hexis runs on Linux and Android. It is pre-1.0 and has had no independent security review: keep a separate copy of anything you cannot lose. Windows, macOS and iOS are not targets; the code has never been built or tested there.</p>
+<p>Hexis runs on Linux and Android. It has had no independent security review: keep a separate copy of anything you cannot lose. Windows, macOS and iOS are not targets; the code has never been built or tested there.</p>
 
 <h2 id="linux-one-command">Linux: one command</h2>
 <p>This works on any 64-bit Linux with glibc. It finds out which system it is on and does the right thing:</p>
@@ -390,7 +390,7 @@ ${sh(`curl -fsS ${SITE_BASE}/hexis-archive-keyring.asc | sudo pacman-key --add -
 <p>Every line you downloaded must say <code>OK</code>. The installer does this check for you.</p>
 
 <h2 id="before-you-trust-it-with-anything-important">Before you trust it with anything important</h2>
-<p>Hexis is pre-1.0 and has had no independent security review. The <a href="${relative("download", "docs/state")}">project state page</a> lists what has and has not been verified, including that the Android build has had limited testing on real devices.</p>
+<p>Hexis has had no independent security review. The <a href="${relative("download", "docs/state")}">project state page</a> lists what has and has not been verified, including that the Android build has had limited testing on real devices.</p>
 </article>
 `;
 }

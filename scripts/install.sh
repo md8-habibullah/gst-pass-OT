@@ -1055,7 +1055,7 @@ main() {
         *) say "Update it later with: curl -fsS $SITE/install.sh | sh -s -- --update" ;;
     esac
     say "Remove it with:       curl -fsS $SITE/install.sh | sh -s -- --uninstall   (lists everything it removes, asks first; nothing is kept)"
-    say "Pre-1.0 and not independently audited: keep a separate backup of anything you cannot lose."
+    say "Not independently audited: keep a separate backup of anything you cannot lose."
 }
 
 main "$@"
