@@ -53,7 +53,7 @@ Linux bundles and the Android APK, so a change that only breaks packaging is cau
 
 ### Before you push: what CI checks that your machine may not
 
-A green `scripts/verify_all.sh` on a developer machine has twice not been a green CI run (2026-11-25, two red pushes in a row). The causes were
+A green `scripts/verify_all.sh` on a developer machine has three times not been a green CI run (2026-11-25, three red pushes). The causes were
 all avoidable, so each is now a rule:
 
 1. **Use CI's tool versions, not the newest local ones.** CI runs on `ubuntu-22.04`. Its `shellcheck` is 0.8.0 and flags `A && B || C` (SC2015);
@@ -74,7 +74,11 @@ all avoidable, so each is now a rule:
 4. **A test fixture is a copy of what the real tool writes.** The Android label test used `<string name="app_name">Hexis</string>`, but Tauri
    writes `"Hexis"` (with quoting marks that aapt removes), so the build copied the marks as text and the launcher showed `"Hexis"` with quotes
    until a phone showed it. Take fixtures from a real generated project (`src-tauri/gen/android/...`), not from what you expect it to look like.
-5. **Say exactly what was run.** "Verified" means it ran with CI's versions and shells. A tool that was newer than CI's, or a container that was not
+5. **A test never reads the real clock when it asserts an exact time.** `mockGate.test.ts` compared `retryAfterMs` with `90_000` while the mock
+   gate used `Date.now()`; on a slower CI runner a millisecond ticked over between two calls and it got `89999` (2026-11-25, the push of 0.4.0 was
+   red because of it, though 203 tests had passed locally). Pin the clock (`g.now = () => t`, `vi.useFakeTimers()`, a `FixedClock` in Rust), and
+   a test that cannot pin it asserts a range, not a number. Run a time-based test in a loop (`for i in 1 2 3 4 5 6 7 8; do ...; done`) before you trust it.
+6. **Say exactly what was run.** "Verified" means it ran with CI's versions and shells. A tool that was newer than CI's, or a container that was not
    started, is reported as "not run", and a cheap check is run instead of being listed as a gap. After a push, read the CI result (`gh run view`)
    and fix a red job before moving on.
 

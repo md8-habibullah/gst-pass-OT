@@ -91,6 +91,7 @@ describe("gate rules (preview mirror of the core)", () => {
   });
   it("looks at nothing during a wait, not even the panic codes", () => {
     const g = gate();
+    const t = 5_000_000; g.now = () => t; // a fixed clock: the real one can tick over between the attempts on a slow machine
     for (let i = 0; i < 3; i++) g.submit("11111");
     expect(g.submit("97531")).toEqual({ kind: "locked", retryAfterMs: 90_000, clockPending: false }); // refused like any attempt: nothing is looked at
   });
