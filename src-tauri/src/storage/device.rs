@@ -8,6 +8,8 @@
 //! * `demoProfile`: the id of the demo vault while one exists (`storage/demo.rs`).
 //! * `theme`: `system` (follow the device's light or dark setting), `light` or `dark`.
 //! * `clipboardClear`: how many seconds a copied secret stays on the clipboard (15, 30 or 60).
+//! * `openInSearch`: after the vault opens, put the cursor in the search box (the keyboard comes up on a phone).
+//! * `listSort`: how the item list is ordered until the person picks another order (one of [`SORT_CHOICES`]).
 //!
 //! The last two used to live in the web view's own storage. They are here so the web view can run without
 //! writing anything to disk (`storage/webview_data.rs`), and so the lock screen, which is shown before any
@@ -39,6 +41,20 @@ pub enum Theme {
 pub const CLIPBOARD_CHOICES: [u32; 3] = [15, 30, 60];
 pub const DEFAULT_CLIPBOARD_CLEAR: u32 = 30;
 
+/// The orders the item list offers. The core only keeps the name; the screen does the sorting.
+pub const SORT_CHOICES: [&str; 9] = [
+    "updated-desc",
+    "updated-asc",
+    "created-desc",
+    "created-asc",
+    "title-asc",
+    "title-desc",
+    "type",
+    "versions-desc",
+    "versions-asc",
+];
+pub const DEFAULT_SORT: &str = "updated-desc";
+
 fn lenient_theme<'de, D: Deserializer<'de>>(d: D) -> Result<Theme, D::Error> {
     // an unknown word is "system", not a reason to forget the zone and the other settings
     let v = serde_json::Value::deserialize(d)?;
@@ -47,6 +63,10 @@ fn lenient_theme<'de, D: Deserializer<'de>>(d: D) -> Result<Theme, D::Error> {
 
 fn thirty() -> u32 {
     DEFAULT_CLIPBOARD_CLEAR
+}
+
+fn default_sort() -> String {
+    DEFAULT_SORT.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +84,10 @@ pub struct DeviceSettings {
     pub theme: Theme,
     #[serde(default = "thirty")]
     pub clipboard_clear: u32,
+    #[serde(default)]
+    pub open_in_search: bool,
+    #[serde(default = "default_sort")]
+    pub list_sort: String,
 }
 
 fn yes() -> bool {
@@ -79,6 +103,8 @@ impl Default for DeviceSettings {
             demo_profile: None,
             theme: Theme::System,
             clipboard_clear: DEFAULT_CLIPBOARD_CLEAR,
+            open_in_search: false,
+            list_sort: default_sort(),
         }
     }
 }
@@ -94,6 +120,10 @@ pub struct DeviceInfo {
     pub theme: Theme,
     /// Seconds a copied secret stays on the clipboard: 15, 30 or 60.
     pub clipboard_clear: u32,
+    /// Open the vault with the cursor in the search box.
+    pub open_in_search: bool,
+    /// The list's default order (one of [`SORT_CHOICES`]).
+    pub list_sort: String,
 }
 
 impl From<&DeviceSettings> for DeviceInfo {
@@ -104,6 +134,8 @@ impl From<&DeviceSettings> for DeviceInfo {
             time_check: s.time_check,
             theme: s.theme,
             clipboard_clear: s.clipboard_clear,
+            open_in_search: s.open_in_search,
+            list_sort: s.list_sort.clone(),
         }
     }
 }
@@ -147,7 +179,21 @@ pub fn load(dir: &Path) -> DeviceSettings {
     if !CLIPBOARD_CHOICES.contains(&s.clipboard_clear) {
         s.clipboard_clear = DEFAULT_CLIPBOARD_CLEAR;
     }
+    if !SORT_CHOICES.contains(&s.list_sort.as_str()) {
+        s.list_sort = default_sort();
+    }
     s
+}
+
+/// Is `order` one of the list orders the screen offers?
+pub fn validate_sort(order: &str) -> Result<String, StorageError> {
+    if SORT_CHOICES.contains(&order) {
+        Ok(order.to_string())
+    } else {
+        Err(StorageError::invalid(
+            "Choose one of the orders in the list.",
+        ))
+    }
 }
 
 /// Is `seconds` one of the clipboard choices?
@@ -212,6 +258,8 @@ mod tests {
             demo_profile: Some("abc".into()),
             theme: Theme::Dark,
             clipboard_clear: 60,
+            open_in_search: true,
+            list_sort: "title-desc".into(),
         };
         store(dir.path(), &s).unwrap();
         assert_eq!(load(dir.path()), s);

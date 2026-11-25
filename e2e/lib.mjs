@@ -54,6 +54,12 @@ export function scanFor(files, markers) {
   return hits;
 }
 
+// ---- sums (the app asks for one before a permanent delete, a reset and a removal) ----
+/** The sum on screen (the dialog's `aria-label="What is ...?"`), or null. */
+export const equationOf = (p) => p.eval(`(()=>{const e=document.querySelector('[aria-label^="What is "]'); return e? e.getAttribute('aria-label').slice(8,-1):null})()`);
+/** Works out a sum written with + - * / × ÷ − and brackets. Refuses anything else, so a page cannot make the script run code. */
+export const solve = (eq) => { if (!/^[\d+\-*/() ×÷−]+$/.test(eq)) throw new Error("unexpected equation " + eq); return Function(`"use strict";return (${eq.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-")})`)(); };
+
 // ---- UI helpers ----
 export const text = (p) => p.eval("document.body.innerText");
 export const has = async (p, s) => (await text(p)).includes(s);

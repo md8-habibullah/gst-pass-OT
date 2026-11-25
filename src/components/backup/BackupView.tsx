@@ -33,7 +33,7 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
       const secret = await reprompt({ reason: `Copy the secret access key of “${t.name}”.`, confirmLabel: "Copy", run: (pw) => be().revealBackupSecret(t.id, pw) });
       if (!secret) return;
       await copyText(secret, clear);
-      pushToast({ kind: "success", text: `The secret key was copied. The clipboard clears in ${clear} seconds.`, countdownMs: clear * 1000 });
+      pushToast({ kind: "success", text: `The secret key was copied. The clipboard clears in ${clear} seconds.` });
     } catch (e) {
       pushToast({ kind: "error", text: e instanceof Error ? e.message : "Could not copy the key." });
     }

@@ -19,6 +19,7 @@ use super::model::{
     BeginEdit, ItemDraft, ItemSummary, ItemView, TotpNow, TrashEntry, VaultStatus, VersionEntry,
 };
 use super::uuid;
+use super::vault::search::SearchHit;
 use super::vault::Vault;
 use crate::crypto::{self, now_millis, rng, KdfParams, MasterPassword};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -38,12 +39,19 @@ pub const MIN_PASSWORD_CHARS: usize = 8;
 /// How long an edit token stays valid (`IPC_CONTRACT.md` §1).
 pub const EDIT_TOKEN_TTL: Duration = Duration::from_secs(600);
 const MAX_OUTSTANDING_TOKENS: usize = 16;
+/// An item that has been in the trash for less than this (about six months) cannot be erased for good without solving
+/// a sum as well as typing the master password. Older ones need the password alone.
+pub const PURGE_GRACE: Duration = Duration::from_secs(183 * 24 * 60 * 60);
+/// How long the sum for a permanent delete stays valid once it has been shown.
+const PURGE_SUM_TTL: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
     /// Argon2id parameters used when creating a vault or changing its password.
     pub kdf: KdfParams,
     pub edit_token_ttl: Duration,
+    /// See [`PURGE_GRACE`]. Tests that purge at once set it to zero.
+    pub purge_grace: Duration,
 }
 
 impl Default for SessionConfig {
@@ -51,8 +59,30 @@ impl Default for SessionConfig {
         Self {
             kdf: KdfParams::default(),
             edit_token_ttl: EDIT_TOKEN_TTL,
+            purge_grace: PURGE_GRACE,
         }
     }
+}
+
+/// What the screen needs to show before an item is erased for good.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgePlan {
+    /// When the item went to the trash (milliseconds since 1970, UTC).
+    pub deleted_at: u64,
+    /// It was trashed less than six months ago: the sum must be solved as well as the password typed.
+    pub recent: bool,
+    /// When the six months are over (milliseconds since 1970, UTC).
+    pub older_at: u64,
+    /// The sum, as text, when `recent`. The answer stays in the core.
+    pub sum: Option<String>,
+}
+
+/// The sum that guards the permanent delete of one recently trashed item.
+struct PurgeSum {
+    item_id: String,
+    answer: u32,
+    expires: Instant,
 }
 
 /// Single-use permission to save one edit of one item at one version.
@@ -68,6 +98,8 @@ struct Unlocked {
     tokens: Vec<EditToken>,
     /// Picked import files and parsed previews; wiped with everything else at lock.
     imports: ImportStash,
+    /// The sum made for the last permanent delete that asked for one (one at a time; a new one replaces it).
+    purge_sum: Option<PurgeSum>,
 }
 
 impl Unlocked {
@@ -76,6 +108,26 @@ impl Unlocked {
             vault,
             tokens: Vec::new(),
             imports: ImportStash::default(),
+            purge_sum: None,
+        }
+    }
+
+    /// Use up the sum for `id`: `Ok` only for the right answer, and the sum is gone either way.
+    fn take_purge_sum(&mut self, id: &str, typed: &str) -> Result<()> {
+        let Some(sum) = self.purge_sum.take() else {
+            return Err(StorageError::WrongAnswer);
+        };
+        let typed = typed.trim();
+        let right = sum.item_id == id
+            && sum.expires > Instant::now()
+            && !typed.is_empty()
+            && typed.len() <= 9
+            && typed.bytes().all(|b| b.is_ascii_digit())
+            && typed.parse::<u32>().is_ok_and(|n| n == sum.answer);
+        if right {
+            Ok(())
+        } else {
+            Err(StorageError::WrongAnswer)
         }
     }
 
@@ -580,13 +632,89 @@ impl Session {
         self.with_unlocked(|u| u.vault.restore_item(id))
     }
 
-    /// Permanent deletion: in trash + confirmation text + master password, then erase.
-    pub fn item_purge(&self, id: &str, password: String, confirmation: &str) -> Result<()> {
+    /// What it takes to erase this trashed item for good: its age, and (for one trashed less than six months ago) a
+    /// freshly made sum. Asking again replaces the sum, so an answer worked out for an old one is worthless.
+    pub fn item_purge_plan(&self, id: &str) -> Result<PurgePlan> {
+        let grace = self.cfg.purge_grace;
+        self.with_unlocked(|u| {
+            let deleted_at = u.vault.trashed_at(id)?;
+            let recent = Self::is_recent(deleted_at, grace);
+            let sum = if recent {
+                let eq = crate::gate::equation::generate_long(&mut crate::gate::equation::OsRand);
+                u.purge_sum = Some(PurgeSum {
+                    item_id: id.to_string(),
+                    answer: eq.answer,
+                    expires: Instant::now() + PURGE_SUM_TTL,
+                });
+                Some(eq.text.clone())
+            } else {
+                u.purge_sum = None;
+                None
+            };
+            Ok(PurgePlan {
+                deleted_at,
+                recent,
+                older_at: deleted_at.saturating_add(grace.as_millis() as u64),
+                sum,
+            })
+        })
+    }
+
+    /// "Recent" is judged on the core's clock (checked UTC when it was checked, the device's otherwise), and anything
+    /// that cannot be placed in the past (a trash time ahead of the clock) counts as recent: the stricter rule.
+    fn is_recent(deleted_at: u64, grace: Duration) -> bool {
+        let now = crate::clock::TrustedClock::global().now_ms();
+        now.saturating_sub(deleted_at) < grace.as_millis() as u64
+    }
+
+    /// Permanent deletion. Always the master password; an item trashed less than six months ago also needs the answer
+    /// to its sum (`item_purge_plan` made it). The password is checked first, then the sum, and the sum is used up
+    /// by a wrong answer, so another sum is needed after one. Then the item and its history are erased.
+    pub fn item_purge(&self, id: &str, password: String, answer: &str) -> Result<()> {
+        let grace = self.cfg.purge_grace;
         self.gated(
             password,
-            |u| u.vault.purge_checks(id, confirmation),
-            |u| u.vault.purge_item(id, confirmation),
+            |u| u.vault.require_trashed(id),
+            |u| {
+                let deleted_at = u.vault.trashed_at(id)?;
+                if Self::is_recent(deleted_at, grace) {
+                    u.take_purge_sum(id, answer)?;
+                }
+                u.vault.purge_item(id)
+            },
         )
+    }
+
+    /// Search the items (see `vault_search.rs` for what is and is not looked at).
+    pub fn item_search(&self, query: &str, old_versions: bool) -> Result<Vec<SearchHit>> {
+        self.with_unlocked(|u| u.vault.search(query, old_versions))
+    }
+
+    // ------------------------------------------------------------------ folders
+
+    pub fn folder_create(&self, path: &str) -> Result<(String, PrefsView)> {
+        self.with_unlocked(|u| {
+            let spelled = u.vault.folder_create(path)?;
+            Ok((spelled, u.vault.prefs().into()))
+        })
+    }
+
+    pub fn folder_rename(&self, from: &str, to: &str) -> Result<(usize, PrefsView)> {
+        self.with_unlocked(|u| {
+            let n = u.vault.folder_rename(from, to)?;
+            Ok((n, u.vault.prefs().into()))
+        })
+    }
+
+    pub fn folder_remove(&self, path: &str) -> Result<(usize, PrefsView)> {
+        self.with_unlocked(|u| {
+            let n = u.vault.folder_dissolve(path)?;
+            Ok((n, u.vault.prefs().into()))
+        })
+    }
+
+    pub fn item_move(&self, ids: &[String], folder: Option<&str>) -> Result<usize> {
+        self.with_unlocked(|u| u.vault.items_move(ids, folder))
     }
 
     /// "Got it": the person has looked at the copy another device sent for this item.
@@ -677,6 +805,15 @@ impl Session {
         }
     }
 
+    /// Trigger 4 (the device came back online): pull what other devices changed and send what is queued. Returns at
+    /// once. A locked vault is a no-op.
+    pub fn sync_request(&self) {
+        let _ = self.with_unlocked(|u| {
+            u.vault.request_sync();
+            Ok(())
+        });
+    }
+
     /// The stored secret access key, after the master password is verified again.
     pub fn backup_reveal_secret(&self, id: &str, password: String) -> Result<String> {
         self.gated(
@@ -706,6 +843,12 @@ impl Session {
     /// with the database.
     pub(crate) fn test_vault<T>(&self, f: impl FnOnce(&mut Vault) -> T) -> T {
         self.with_unlocked(|u| Ok(f(&mut u.vault))).unwrap()
+    }
+
+    /// The answer to the sum made for the last permanent delete that asked for one.
+    pub(crate) fn test_purge_answer(&self) -> Option<u32> {
+        self.with_unlocked(|u| Ok(u.purge_sum.as_ref().map(|s| s.answer)))
+            .unwrap()
     }
 
     pub(crate) fn test_token_count(&self) -> usize {

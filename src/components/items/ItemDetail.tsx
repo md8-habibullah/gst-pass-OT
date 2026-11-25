@@ -3,6 +3,7 @@ import { ArchiveRestore, ArrowLeft, EyeOff, ExternalLink, KeyRound, MoreHorizont
 import { TYPE_LABEL, type ItemDraft, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { exactTime, relativeTime } from "../../lib/format";
+import { shortUrl, urlsOf } from "../../lib/urls";
 import { be, pushToast, app } from "../../state/app";
 import { useStore } from "../../state/store";
 import { withItemPassword } from "../reprompt/Reprompt";
@@ -67,7 +68,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
   async function copySecret(label: string, value: string) {
     try {
       await copyText(value, clearAfter);
-      pushToast({ kind: "success", text: `${label} copied. The clipboard clears in ${clearAfter} seconds.`, countdownMs: clearAfter * 1000 });
+      pushToast({ kind: "success", text: `${label} copied. The clipboard clears in ${clearAfter} seconds.` });
     } catch {
       pushToast({ kind: "error", text: "Copying was blocked. Reveal the value and copy it by hand." });
     }
@@ -120,7 +121,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
           <Button icon={<Pencil className="size-4" />} onClick={() => void editItem(target)}>
             Edit
           </Button>
-          <IconButton label="More actions" aria-haspopup="menu" onClick={(e) => openItemMenu(target, e.currentTarget)}>
+          <IconButton label="More actions" aria-haspopup="menu" onClick={(e) => openItemMenu({ ...target, folder: view.folder }, e.currentTarget)}>
             <MoreHorizontal className="size-[18px]" />
           </IconButton>
         </div>
@@ -135,7 +136,7 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
 
       {view.changedElsewhere && (
         <div role="status" className="frosted flex flex-wrap items-center gap-3 rounded-lg border border-brass-ink/30 px-4 py-2.5">
-          <p className="min-w-0 flex-1 text-[0.93em]">Changed on another device. Your version stays current. The other device’s version is saved in the history, so nothing was lost.</p>
+          <p className="min-w-0 flex-1 text-[0.93em]">Changed on another device. Where you each changed different things, the changes were combined here. The other device’s own version is saved in the history, so nothing was lost.</p>
           <div className="flex gap-1.5">
             <Button className="min-h-8" onClick={() => setShowHistory((n) => n + 1)}>Show history</Button>
             <Button variant="ghost" className="min-h-8" onClick={() => void be().reviewOtherDevice(id).then(() => be().getItem(id)).then(setView).catch(() => undefined)}>Got it</Button>
@@ -155,6 +156,26 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
         {view.fields.filter((f) => f.hasValue).map((f) => {
           const shown = secrets?.fields[f.key];
           if (f.kind === "totp") return <TotpValue key={f.key} id={id} title={title} onCopy={(c) => copyPlain("One-time code", c)} />;
+          // Several web addresses: a row each, so any one can be opened or copied.
+          if (f.kind === "url" && f.value && urlsOf(f.value).length > 1) {
+            const urls = urlsOf(f.value);
+            return urls.map((u, n) => (
+              <FieldRow
+                key={`${f.key}-${n}`}
+                label={`${f.label} ${n + 1}`}
+                actions={
+                  <>
+                    <IconButton label={`Open ${shortUrl(u)} in your browser`} onClick={() => void openLink(u)}>
+                      <ExternalLink className="size-[18px]" />
+                    </IconButton>
+                    <CopyButton label={`Copy ${f.label.toLowerCase()} ${n + 1}`} onCopy={() => copyPlain(f.label, u)} />
+                  </>
+                }
+              >
+                <span className="block break-all text-brass-ink-hi">{u}</span>
+              </FieldRow>
+            ));
+          }
           if (!f.secret) {
             return (
               <FieldRow

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
-import { Eye, EyeOff, Plus, Trash2, Wand2, X } from "lucide-react";
+import { ChevronUp, Eye, EyeOff, Plus, Trash2, Wand2, X } from "lucide-react";
 import { BackendError, FIELD_SCHEMA, TYPE_LABEL, type FieldSpec, type ItemDraft, type ItemType } from "../../backend";
 import { parseOtpInput, type OtpAccount } from "../../lib/otp";
 import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
@@ -9,8 +9,10 @@ import { StrengthMeter } from "../lock/StrengthMeter";
 import { Button, IconButton } from "../ui/Button";
 import { Field, Switch, TextArea, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
+import { FolderField } from "./FolderSheets";
 import { PasswordGenerator } from "./PasswordGenerator";
 import { TotpInput } from "./TotpInput";
+import { UrlListInput } from "./UrlListInput";
 import { brandName } from "../../state/brand";
 import { TYPE_META, TYPE_ORDER } from "./typeMeta";
 
@@ -75,7 +77,7 @@ function SecretField({ spec, value, onChange, itemType }: { spec: FieldSpec; val
         trailing={
           generate ? (
             <button type="button" onClick={() => setGen((g) => !g)} aria-expanded={gen} className="pressable inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-[0.86em] font-semibold text-brass-ink hover:text-brass-ink-hi pointer-coarse:min-h-10">
-              <Wand2 className="size-3.5" aria-hidden /> Generate
+              {gen ? <ChevronUp className="size-3.5" aria-hidden /> : <Wand2 className="size-3.5" aria-hidden />} {gen ? "Hide" : "Generate"}
             </button>
           ) : undefined
         }
@@ -90,7 +92,7 @@ function SecretField({ spec, value, onChange, itemType }: { spec: FieldSpec; val
         )}
       </Field>
       {generate && value && <StrengthMeter password={value} />}
-      {gen && <PasswordGenerator onUse={(p) => { onChange(p); setShow(true); setGen(false); }} />}
+      {gen && <PasswordGenerator onUse={(p) => { onChange(p); setShow(true); setGen(false); }} onClose={() => setGen(false)} />}
     </div>
   );
 }
@@ -223,9 +225,11 @@ export function ItemEditor() {
         </Field>
       );
     }
+    // Web addresses: one box each and a button for another (a login can have several).
+    if (s.kind === "url") return <UrlListInput key={s.key} label={s.label} value={value} placeholder={s.placeholder} onChange={(v) => setField(s.key, v)} />;
     return (
       <Field key={s.key} label={s.label}>
-        {({ id, describedBy }) => <TextInput id={id} aria-describedby={describedBy} type={s.kind === "url" ? "url" : "text"} inputMode={s.kind === "url" ? "url" : undefined} value={value} placeholder={s.placeholder} onChange={(e) => setField(s.key, e.target.value)} maxLength={65536} />}
+        {({ id, describedBy }) => <TextInput id={id} aria-describedby={describedBy} value={value} placeholder={s.placeholder} onChange={(e) => setField(s.key, e.target.value)} maxLength={65536} />}
       </Field>
     );
   };
@@ -323,9 +327,7 @@ export function ItemEditor() {
           ) : null}
 
           <Field label="Tags">{() => <TagInput tags={draft.tags} onChange={(t) => set("tags", t)} />}</Field>
-          <Field label="Folder">
-            {({ id }) => <TextInput id={id} value={draft.folder ?? ""} onChange={(e) => set("folder", e.target.value || null)} maxLength={64} placeholder="Optional" />}
-          </Field>
+          <FolderField value={draft.folder ?? ""} onChange={(path) => set("folder", path || null)} />
           {splitCount <= 1 && (
             <div className="flex flex-col gap-2">
               <div className="flex min-h-11 items-center justify-between gap-4 rounded-lg bg-pane/70 px-4 shadow-e1">

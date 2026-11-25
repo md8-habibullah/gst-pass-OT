@@ -5,10 +5,13 @@ import { DISGUISES } from "../lib/disguise";
 import { MAX_FILE_BYTES, MAX_FILE_LABEL, mimeFor } from "../lib/files";
 import { ImportError, parseImport, type ImportResult } from "../lib/importers";
 import { checkDisplayName } from "../lib/profileName";
+import { joinUrls, MAX_URLS, urlsOf } from "../lib/urls";
 import { DEMO_NAME, DEMO_PASSWORD, demoSeeds } from "./mockDemo";
-import { MockGate } from "./mockGate";
+import { cleanFolder, folderProblem, FOLDER_SEP, isInside } from "../lib/folders";
+import { MockGate, makeLongEquation } from "./mockGate";
 import {
   BackendError,
+  LIST_SORTS,
   FIELD_SCHEMA,
   isSecretKind,
   type AppSettings,
@@ -33,6 +36,10 @@ import {
   type ItemType,
   type ItemView,
   type PrefsView,
+  type FolderChange,
+  type PurgePlan,
+  type SearchHit,
+  type FieldKind,
   type ProfileInfo,
   type TotpNow,
   type VersionEntry,
@@ -76,6 +83,8 @@ interface MockProfile {
   files: Map<string, { entry: FileEntry; bytes: Uint8Array }>;
   /** The generator's last settings (the core keeps them sealed in the vault and syncs them). */
   generator?: GeneratorPrefs;
+  /** Folders made on purpose (the core keeps them with the preferences and syncs them). */
+  folders?: string[];
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -123,6 +132,62 @@ function active(id: string): Stored {
   if (s.deleted) err("in_trash", "Restore this item from the trash to open it.");
   return s;
 }
+/** Six months, as the core counts them (183 days). */
+const PURGE_GRACE_MS = 183 * 24 * 60 * MIN;
+const isRecent = (deletedAt: number) => Date.now() - deletedAt < PURGE_GRACE_MS;
+/** The sum shown for one trashed item; the answer stays here, never on the screen. */
+let purgeSum: { id: string; answer: number } | null = null;
+
+const prefsOf = (p: MockProfile): PrefsView => ({ generator: p.generator ? { ...p.generator } : null, folders: [...(p.folders ?? [])] });
+
+/** Every folder that exists: made on purpose, with items in it, or a parent of those. */
+function knownFolders(p: MockProfile): string[] {
+  const set = new Set<string>();
+  const add = (raw: string | null | undefined) => {
+    const path = cleanFolder(raw); if (!path) return;
+    const parts = path.split(FOLDER_SEP);
+    for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join(FOLDER_SEP));
+  };
+  (p.folders ?? []).forEach(add);
+  for (const s of p.store.values()) if (!s.deleted) add(s.draft.folder);
+  return [...set].sort();
+}
+
+/** Rename `from` to `to` for the folder, everything inside it, and the empty folders made on purpose. */
+function remapFolders(p: MockProfile, from: string, to: string): number {
+  const map = (f: string) => (f === from ? to : to + f.slice(from.length));
+  let moved = 0;
+  for (const s of p.store.values()) {
+    if (s.deleted || !s.draft.folder || !isInside(s.draft.folder, from)) continue;
+    setFolder(s, map(s.draft.folder)); moved += 1;
+  }
+  p.folders = [...new Set((p.folders ?? []).map((f) => (isInside(f, from) ? map(f) : f)))].sort();
+  if (moved) touchQueue();
+  return moved;
+}
+
+const NOTE_KEYS = ["notes", "body", "description"];
+/** Which fields of this state hold every word, or `null`. Never compares a password, a code, a card number or a hidden value. */
+function matchPieces(d: ItemDraft, words: string[], reprompt = d.reprompt): string[] | null {
+  const pieces: { label: string; hay: string }[] = [{ label: "Title", hay: d.title.toLowerCase() }, { label: "Type", hay: d.type.toLowerCase() }];
+  if (d.folder) pieces.push({ label: "Folder", hay: d.folder.toLowerCase() });
+  for (const t of d.tags) pieces.push({ label: "Tag", hay: t.toLowerCase() });
+  for (const spec of FIELD_SCHEMA[d.type]) {
+    const value = d.fields[spec.key];
+    if (value === undefined || value === "") continue;
+    const kind: FieldKind = spec.kind;
+    const searchable = kind === "text" || kind === "url" || kind === "paragraph" || (kind === "note" && NOTE_KEYS.includes(spec.key) && !reprompt);
+    pieces.push({ label: spec.label, hay: `${spec.label}\n${searchable ? value : ""}`.toLowerCase() });
+  }
+  for (const c of d.customFields) pieces.push({ label: `Custom field: ${c.name}`, hay: `${c.name}\n${c.hidden ? "" : c.value}`.toLowerCase() });
+  const labels: string[] = [];
+  for (const w of words) {
+    const found = pieces.find((p) => p.hay.includes(w));
+    if (!found) return null;
+    if (labels.length < 3 && !labels.includes(found.label)) labels.push(found.label);
+  }
+  return labels;
+}
 let syncRevision = 0;
 /** DEV deep link only: pretends another device saved a different version of this item (what a diverged pull leaves behind). */
 export function simulateOtherDeviceEdit(id: string): void {
@@ -139,7 +204,8 @@ function touchQueue() {
   for (const t of selected().targets) if (t.enabled) t.queued += 1;
 }
 
-function hostOf(url: string): string | null {
+function hostOf(urls: string): string | null {
+  const url = urlsOf(urls)[0] ?? ""; // with several addresses, the first one
   try {
     return new URL(url.includes("://") ? url : `https://${url}`).hostname.replace(/^www\./, "");
   } catch {
@@ -179,6 +245,7 @@ function summarize(s: Stored): ItemSummary {
     tags: d.tags,
     folder: d.folder,
     hasTotp: Boolean(d.fields.totp),
+    createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     version: s.version,
     archived: s.archived,
@@ -209,15 +276,27 @@ function cleanDraft(d: ItemDraft): ItemDraft {
     if (!allowed.has(k)) err("invalid_input", `Unknown field “${k}”.`);
     if (v.trim() !== "") fields[k] = v;
   }
+  if (fields.url !== undefined) {
+    if (urlsOf(fields.url).length > MAX_URLS) err("invalid_input", `Use at most ${MAX_URLS} web addresses.`);
+    const joined = joinUrls([fields.url]);
+    if (joined) fields.url = joined; else delete fields.url;
+  }
   if (fields.totp) parseTotp(fields.totp); // throws invalid_input when unusable
   if (fields.number && !/^[\d\s-]{8,23}$/.test(fields.number)) err("invalid_input", "A card number has 8 to 23 digits (spaces and dashes are fine).");
   if (fields.expMonth && !(Number(fields.expMonth) >= 1 && Number(fields.expMonth) <= 12)) err("invalid_input", "The expiry month is 1 to 12.");
   if (fields.expYear && !/^\d{4}$/.test(fields.expYear)) err("invalid_input", "The expiry year has four digits.");
-  return { ...d, title, fields, tags: d.tags.map((t) => t.trim()).filter(Boolean) };
+  return { ...d, title, fields, folder: cleanFolder(d.folder), tags: d.tags.map((t) => t.trim()).filter(Boolean) };
 }
 
 function snapshot(s: Stored, event: VersionEvent, prev: ItemDraft | null, restoredFrom: number | null = null, ts = Date.now()) {
   s.history.push({ version: s.version, timestamp: ts, event, changedFields: diff(prev, s.draft), restoredFrom, draft: clone(s.draft) });
+}
+
+/** A folder change is a version of its own, as in the core. */
+function setFolder(s: Stored, folder: string | null) {
+  const prev = clone(s.draft);
+  s.draft.folder = folder; s.version += 1; s.updatedAt = Date.now();
+  snapshot(s, "edited", prev);
 }
 
 function seedItem(minsAgo: number, draft: ItemDraft, edits: { minsAgo: number; patch: Record<string, string>; title?: string }[] = []): Stored {
@@ -384,7 +463,7 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
 }
 
 // ---- device settings and the demo vault (same rules as the core; see storage/device.rs and storage/demo.rs) ----
-const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30 };
+const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc" };
 let device: DeviceInfo = { ...FRESH_DEVICE };
 let demoId: string | null = null;
 const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info, ...(p.info.id === demoId ? { demo: true } : {}) });
@@ -590,13 +669,102 @@ export const previewBackend: Backend = {
     await delay(60);
     return [...items().values()].filter((s) => s.deleted).map((s) => ({ id: s.id, title: s.draft.title, deletedAt: s.deletedAt ?? s.updatedAt })).sort((a, b) => b.deletedAt - a.deletedAt);
   },
-  async purgeItem(id, password, confirmation) {
+  async purgePlan(id) {
+    const s = need(id); await delay(60);
+    if (!s.deleted) err("not_in_trash", "Only items in the trash can be deleted forever.");
+    const deletedAt = s.deletedAt ?? s.updatedAt;
+    const plan: PurgePlan = { deletedAt, recent: isRecent(deletedAt), olderAt: deletedAt + PURGE_GRACE_MS, sum: null };
+    purgeSum = null;
+    if (plan.recent) {
+      const eq = makeLongEquation();
+      purgeSum = { id, answer: eq.answer };
+      plan.sum = eq.text;
+    }
+    return plan;
+  },
+  async purgeItem(id, password, answer) {
     const store = items(); const s = need(id);
     if (!s.deleted) err("not_in_trash", "Only items in the trash can be deleted forever.");
     await verify(password);
-    const c = confirmation.trim();
-    if (c !== "CONFIRM" && c !== s.draft.title.trim()) err("confirmation_mismatch", "Type the item name or CONFIRM exactly.");
+    // the sum is checked after the password and used up by any attempt, as in the core
+    if (isRecent(s.deletedAt ?? s.updatedAt)) {
+      const sum = purgeSum; purgeSum = null;
+      const typed = (answer ?? "").trim();
+      if (!sum || sum.id !== id || !/^\d{1,9}$/.test(typed) || Number(typed) !== sum.answer) err("wrong_answer", "That is not the answer. Try the new sum.");
+    }
     store.delete(id); touchQueue();
+  },
+  // ---- search and folders, with the core's rules (storage/vault_search.rs, vault_folders.rs) ----
+  async searchItems(query, oldVersions): Promise<SearchHit[]> {
+    const store = items(); await delay(80);
+    if ([...query].length > 200) err("invalid_input", "That search is too long.");
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+    if (words.length === 0) return [];
+    const hits: SearchHit[] = [];
+    for (const s of store.values()) {
+      if (s.deleted) continue;
+      const now = matchPieces(s.draft, words);
+      if (now) { hits.push({ id: s.id, matched: now, oldVersion: null }); continue; }
+      if (!oldVersions) continue;
+      for (const h of [...s.history].sort((a, b) => b.version - a.version)) {
+        if (h.version === s.version) continue;
+        const old = matchPieces(h.draft, words, s.draft.reprompt);
+        if (old) { hits.push({ id: s.id, matched: old, oldVersion: h.version }); break; }
+      }
+    }
+    return hits;
+  },
+  async createFolder(path): Promise<FolderChange> {
+    const p = requireUnlocked(); await delay(40);
+    const problem = folderProblem(path); if (problem) err("invalid_input", problem);
+    const clean = cleanFolder(path) as string;
+    const known = knownFolders(p);
+    const spelled = known.find((f) => f.toLowerCase() === clean.toLowerCase()) ?? clean;
+    p.folders = [...new Set([...(p.folders ?? []), spelled])].sort();
+    return { path: spelled, moved: 0, prefs: prefsOf(p) };
+  },
+  async renameFolder(from, to): Promise<FolderChange> {
+    const p = requireUnlocked(); await delay(60);
+    const a = cleanFolder(from); const b = cleanFolder(to);
+    if (!a) err("invalid_input", "Choose a folder.");
+    if (!b) err("invalid_input", "Give the folder a name.");
+    const problem = folderProblem(b); if (problem) err("invalid_input", problem);
+    const known = knownFolders(p);
+    if (!known.includes(a)) err("not_found", "That folder no longer exists.");
+    if (a === b) return { path: null, moved: 0, prefs: prefsOf(p) };
+    if (isInside(b, a) && b !== a && b.toLowerCase() !== a.toLowerCase()) err("invalid_input", "A folder cannot be moved inside itself.");
+    const target = known.find((f) => f.toLowerCase() === b.toLowerCase()) ?? b;
+    return { path: null, moved: remapFolders(p, a, target), prefs: prefsOf(p) };
+  },
+  async removeFolder(path): Promise<FolderChange> {
+    const p = requireUnlocked(); await delay(60);
+    const a = cleanFolder(path); if (!a) err("invalid_input", "Choose a folder.");
+    if (!knownFolders(p).includes(a)) err("not_found", "That folder no longer exists.");
+    const at = a.lastIndexOf(FOLDER_SEP);
+    const parent = at < 0 ? null : a.slice(0, at);
+    // what was inside moves up one level: `a/x` becomes `parent/x`, and `a` itself goes
+    let moved = 0;
+    for (const s of p.store.values()) {
+      if (s.deleted || !s.draft.folder || !isInside(s.draft.folder, a)) continue;
+      const rest = s.draft.folder === a ? "" : s.draft.folder.slice(a.length + 1);
+      const next = [parent, rest].filter(Boolean).join(FOLDER_SEP) || null;
+      setFolder(s, next); moved += 1;
+    }
+    p.folders = (p.folders ?? []).flatMap((f) => (f === a ? [] : isInside(f, a) ? [[parent, f.slice(a.length + 1)].filter(Boolean).join(FOLDER_SEP)] : [f]));
+    if (moved) touchQueue();
+    return { path: null, moved, prefs: prefsOf(p) };
+  },
+  async moveItems(ids, folder) {
+    const store = items(); await delay(60);
+    const target = cleanFolder(folder);
+    const found = ids.map((id) => { const s = store.get(id); if (!s) err("not_found", "That item no longer exists."); if (s.deleted) err("in_trash", "Restore this item from the trash to open it."); return s; });
+    let n = 0;
+    for (const s of found) {
+      if ((s.draft.folder ?? null) === target) continue;
+      setFolder(s, target); n += 1;
+    }
+    if (n) touchQueue();
+    return n;
   },
   async archiveItem(id) {
     items(); await delay(80); const s = active(id);
@@ -623,6 +791,7 @@ export const previewBackend: Backend = {
   },
   async reviewOtherDevice(id) { const s = active(id); s.changedElsewhere = false; },
   async syncFlush() { return { complete: true }; },
+  async syncReconnect() { /* the preview has no network */ },
   async screenSecure() { /* nothing to block in a browser preview */ },
   async getVersion(id, version, password) {
     const s = active(id); await gateItem(s, password);
@@ -860,15 +1029,14 @@ export const previewBackend: Backend = {
   },
   // ---- the vault's preferences: the same limits as the core (storage/backup/prefs.rs) ----
   async prefsGet(): Promise<PrefsView> {
-    const g = requireUnlocked().generator;
-    return { generator: g ? { ...g } : null };
+    return prefsOf(requireUnlocked());
   },
   async prefsSetGenerator(g): Promise<PrefsView> {
     const p = requireUnlocked();
     if (!Number.isInteger(g.length) || g.length < 4 || g.length > 128) err("invalid_input", "The password length must be between 4 and 128.");
     if (!(g.lower || g.upper || g.digits || g.symbols)) err("invalid_input", "Select at least one character type.");
     p.generator = { length: g.length, lower: g.lower, upper: g.upper, digits: g.digits, symbols: g.symbols, avoidAmbiguous: g.avoidAmbiguous };
-    return { generator: { ...p.generator } };
+    return prefsOf(p);
   },
   // ---- device settings, the clock and the demo vault ----
   async deviceGet() { return { ...device }; },
@@ -887,6 +1055,12 @@ export const previewBackend: Backend = {
   async deviceSetClipboardClear(seconds) {
     if (seconds !== 15 && seconds !== 30 && seconds !== 60) err("invalid_input", "Choose 15, 30 or 60 seconds.");
     device = { ...device, clipboardClear: seconds };
+    return { ...device };
+  },
+  async deviceSetOpenInSearch(on) { device = { ...device, openInSearch: on === true }; return { ...device }; },
+  async deviceSetListSort(order) {
+    if (!(LIST_SORTS as readonly string[]).includes(order)) err("invalid_input", "Choose one of the orders in the list.");
+    device = { ...device, listSort: order };
     return { ...device };
   },
   async clockStatus() { return clockView(); },

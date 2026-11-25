@@ -98,7 +98,7 @@ all avoidable, so each is now a rule:
    it is unfamiliar, pin the exact version, and record it in `ARCHITECTURE.md` §2. Prefer no new dependency. Many
    RustCrypto crates changed major versions in 2026: do not code them from memory.
 7. **No background activity.** No timers, polling, tray icon, notification or foreground service. Sync runs on
-   three triggers only (unlock, a saved change, leaving the app). `scripts/check_no_notifications.py` enforces part of this.
+   four triggers only (unlock, a saved change, leaving the app, the device coming back online). `scripts/check_no_notifications.py` enforces part of this.
 8. **Docs move with the code.** If behaviour, a command, an error code or a limit changes, update the matching file
    in `ai-docs/` in the same pull request, and say plainly in `CHANGELOG_AND_STATE.md` what you did **not** verify.
 9. **Say what you could not test.** "Not run on a device" is a fine thing to write; an unverified claim is not.

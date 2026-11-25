@@ -202,6 +202,9 @@ pub enum ImportMode {
     SkipDuplicates,
     AppendVersion,
     ImportAll,
+    /// Entries that are the same account as one already here (the same name, user name and website, or a login and a
+    /// one-time code of the same account) are merged into it: nothing either has is dropped, and every note is kept.
+    Merge,
 }
 
 /// `import_preview` / `import_commit` options (`ImportOptions` in `types.ts`).

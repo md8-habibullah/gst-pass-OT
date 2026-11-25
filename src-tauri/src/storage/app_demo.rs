@@ -58,6 +58,17 @@ impl AppCore {
         self.device_update(|d| d.clipboard_clear = seconds)
     }
 
+    /// Open the vault with the cursor in the search box (and the keyboard up on a phone).
+    pub fn device_set_open_in_search(&self, on: bool) -> Result<DeviceInfo> {
+        self.device_update(|d| d.open_in_search = on)
+    }
+
+    /// The order the item list starts in.
+    pub fn device_set_list_sort(&self, order: &str) -> Result<DeviceInfo> {
+        let order = device::validate_sort(order)?;
+        self.device_update(|d| d.list_sort = order)
+    }
+
     /// Switch the online time check on or off. Off, no request is ever made and waits rest on the boot clock alone.
     pub fn device_set_time_check(&self, on: bool) -> Result<DeviceInfo> {
         let info = self.device_update(|d| d.time_check = on)?;

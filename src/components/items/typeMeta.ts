@@ -17,5 +17,8 @@ export const TYPE_META: Record<ItemType, TypeMeta> = {
   media: { icon: Image, hint: "A description for a document or image. File attachments arrive with media support." },
 };
 
-/** The order types appear in the picker. */
-export const TYPE_ORDER: ItemType[] = ["login", "card", "identity", "sshKey", "secureNote", "totp", "media"];
+/**
+ * The order types appear in the picker, and (without Code only, which has its own Codes view) in the sidebar and the chips:
+ * the things people add most come first. Login, then Code only, Secure note, Identity, Card and SSH key.
+ */
+export const TYPE_ORDER: ItemType[] = ["login", "totp", "secureNote", "identity", "card", "sshKey", "media"];

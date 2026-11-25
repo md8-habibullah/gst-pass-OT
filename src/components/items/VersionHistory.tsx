@@ -137,7 +137,7 @@ export function VersionHistory({ id, title, version, stamp = 0, openSignal = 0 }
                         <span className="font-semibold">Version {e.version}</span>
                         {isLatest && <span className="rounded-full bg-brass/15 px-2 py-0.5 text-[0.8em] font-medium text-brass-ink-hi">Current</span>}
                         {e.otherDevice && <span className="rounded-full bg-raised px-2 py-0.5 text-[0.8em] font-medium text-mist shadow-e1">From another device</span>}
-                        <span className="text-mist">{EVENT_LABEL[e.event]}{e.restoredFrom ? ` (version ${e.restoredFrom})` : ""}</span>
+                        <span className="text-mist">{e.event === "edited" && e.restoredFrom ? `Combined with the other device’s version ${e.restoredFrom}` : `${EVENT_LABEL[e.event]}${e.restoredFrom ? ` (version ${e.restoredFrom})` : ""}`}</span>
                       </div>
                       <p className="mt-0.5 text-[0.86em] text-fog" title={exactTime(e.timestamp)}>
                         {exactTime(e.timestamp)}, {relativeTime(e.timestamp)}

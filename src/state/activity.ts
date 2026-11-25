@@ -33,6 +33,11 @@ export function watchActivity(): () => void {
   timer = window.setTimeout(() => { void look(); }, RECONCILE_WATCH_MS); // the pull starts at unlock: look soon
   const onFocus = () => { void look(); };
   window.addEventListener("focus", onFocus);
+  // Offline is a normal state: items are read, made and edited with no connection, and the changes wait in the durable
+  // queue. When the device comes back online the core pulls what other devices changed (merging it with this device's
+  // own changes) and sends what was waiting. This is the fourth sync trigger, still no timer: the system tells us.
+  const onOnline = () => { void be().syncReconnect().catch(() => undefined).then(() => look()); };
+  window.addEventListener("online", onOnline);
   // Phones: when the app goes to the background the core starts its own "after leaving the app" timer (Settings, App
   // lock; 5 minutes unless changed). When it runs out the core wipes the keys and closes Stage 1, whether or not this
   // page is still running by then. "Right away" does that at once. The first call goes out before anything else, so
@@ -57,6 +62,7 @@ export function watchActivity(): () => void {
     for (const e of events) window.removeEventListener(e, ping);
     if (mobile) document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("focus", onFocus);
+    window.removeEventListener("online", onOnline);
     stopped = true;
     window.clearTimeout(timer);
   };

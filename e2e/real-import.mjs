@@ -141,7 +141,7 @@ step("the export imports back into Hexis without loss", async (p) => {
   const before = await items();
   await nav(p, "Import"); await waitText(p, "Choose a file");
   await chooseAndCheck(p, dest, "Looks like Bitwarden (JSON)", `${before.length} entries ready`);
-  check("every exported item is recognised as a duplicate of what is already here", (await text(p)).includes(`${before.length} duplicates found`), (await text(p)).slice(0, 400));
+  check("every exported item is recognised as a match with what is already here", (await text(p)).includes(`${before.length} matches to merge`), (await text(p)).slice(0, 400));
 });
 
 step("nothing readable of the imported data sits on disk", async () => {

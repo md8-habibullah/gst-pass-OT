@@ -8,8 +8,8 @@
 use super::limits::{cap_chars, warn_title};
 use super::otp;
 use crate::storage::model::{
-    host_of, CustomField, ItemDraft, ItemType, MAX_CUSTOM_FIELDS, MAX_CUSTOM_NAME_CHARS,
-    MAX_FOLDER_CHARS, MAX_TAGS, MAX_TAG_CHARS, MAX_TITLE_CHARS,
+    clean_urls, host_of, CustomField, ItemDraft, ItemType, MAX_CUSTOM_FIELDS,
+    MAX_CUSTOM_NAME_CHARS, MAX_FOLDER_CHARS, MAX_TAGS, MAX_TAG_CHARS, MAX_TITLE_CHARS, MAX_URLS,
 };
 use std::collections::BTreeMap;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -146,10 +146,12 @@ impl ImportedEntry {
         }
     }
 
+    /// Add a web address. A cell that holds several (Bitwarden's CSV writes them a line each) adds each one.
     pub fn add_url(&mut self, url: &str) {
-        let u = url.trim();
-        if !u.is_empty() && !self.urls.iter().any(|x| x == u) {
-            self.urls.push(super::limits::own_capped(u));
+        for u in url.lines().map(str::trim) {
+            if !u.is_empty() && !self.urls.iter().any(|x| x == u) {
+                self.urls.push(super::limits::own_capped(u));
+            }
         }
     }
 
@@ -291,10 +293,19 @@ impl ImportedEntry {
             EntryKind::Login => {
                 put(&mut fields, "username", &self.username);
                 put(&mut fields, "password", &self.password);
-                if let Some(first) = self.urls.first() {
-                    put(&mut fields, "url", first);
-                }
-                for (i, u) in self.urls.iter().enumerate().skip(1) {
+                // every address goes in the one `url` field, a line each; what does not fit stays as a custom field
+                let urls = clean_urls(&self.urls.join("\n"));
+                put(
+                    &mut fields,
+                    "url",
+                    &urls
+                        .iter()
+                        .take(MAX_URLS)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+                for (i, u) in urls.iter().enumerate().skip(MAX_URLS) {
                     extra.push(CustomField {
                         name: format!("Website {}", i + 1),
                         value: u.clone(),
@@ -645,6 +656,111 @@ pub fn dup_key(d: &ItemDraft) -> DupKey {
     dup_key_parts(d.item_type, &d.title, get("username"), get("url"))
 }
 
+// ------------------------------------------------------------------ the same account in two apps
+
+/// What identifies one *account* across apps, so a login from a password manager and a code from an authenticator
+/// app are recognised as the same account: the user name or account (an email, usually), the names the account goes
+/// by (the title, the issuer, the site's own name) and the secret of its one-time code.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct AccountKey {
+    /// The user name or account, lower case. Empty when the item has none.
+    pub account: String,
+    /// Letters and digits only, lower case.
+    pub names: Vec<String>,
+    /// The one-time code's secret as upper-case Base32. Empty when there is none.
+    pub secret: String,
+}
+
+impl std::fmt::Debug for AccountKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountKey").finish_non_exhaustive()
+    }
+}
+
+/// Lower case, letters and digits only: `"Git-Hub (work)"` is `githubwork`.
+pub fn name_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The site's own name from a web address: `https://login.github.com/x` is `github`; `bbc.co.uk` is `bbc`.
+fn site_name(url: &str) -> String {
+    let Some(host) = host_of(url) else {
+        return String::new();
+    };
+    let labels: Vec<&str> = host.split('.').filter(|l| !l.is_empty()).collect();
+    let n = labels.len();
+    let second_level = matches!(
+        labels.get(n.wrapping_sub(2)).copied(),
+        Some("co" | "com" | "org" | "net" | "gov" | "ac" | "edu")
+    ) && labels.last().is_some_and(|t| t.len() == 2);
+    let idx = match n {
+        0 | 1 => 0,
+        _ if second_level && n >= 3 => n - 3,
+        _ => n - 2,
+    };
+    name_key(labels.get(idx).copied().unwrap_or(""))
+}
+
+/// The secret of a stored one-time code value (a bare key or an `otpauth://` link), cleaned.
+fn secret_of(value: &str) -> String {
+    let v = value.trim();
+    if v.is_empty() {
+        return String::new();
+    }
+    if v.get(..10)
+        .is_some_and(|p| p.eq_ignore_ascii_case("otpauth://"))
+    {
+        return otp::parse_link(v)
+            .map(|l| l.secret.to_string())
+            .unwrap_or_default();
+    }
+    otp::clean_base32(v)
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+/// The account key of a login or a one-time code item. `None` for every other kind, which are never cross-matched.
+pub fn account_key(d: &ItemDraft) -> Option<AccountKey> {
+    let get = |k: &str| d.fields.get(k).map_or("", |v| v.trim());
+    let (account, mut names) = match d.item_type {
+        ItemType::Login => (
+            get("username").to_lowercase(),
+            vec![name_key(&d.title), site_name(get("url"))],
+        ),
+        ItemType::Totp => (
+            get("account").to_lowercase(),
+            vec![name_key(get("issuer")), name_key(&d.title)],
+        ),
+        _ => return None,
+    };
+    names.retain(|n| !n.is_empty());
+    Some(AccountKey {
+        account,
+        names,
+        secret: secret_of(get("totp")),
+    })
+}
+
+fn names_alike(x: &str, y: &str) -> bool {
+    x == y || (x.len().min(y.len()) >= 4 && (x.contains(y) || y.contains(x)))
+}
+
+/// Are these two the same account? The same one-time code secret says so by itself; otherwise the same user name
+/// (or account) and a name the two share: `GitHub` and `GitHub (ana@example.com)`, or `github.com` and `GitHub`.
+pub fn same_account(a: &AccountKey, b: &AccountKey) -> bool {
+    if !a.secret.is_empty() && a.secret == b.secret {
+        return true;
+    }
+    !a.account.is_empty()
+        && a.account == b.account
+        && a.names
+            .iter()
+            .any(|x| b.names.iter().any(|y| names_alike(x, y)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,6 +773,102 @@ mod tests {
         e.add_url("https://gist.github.com");
         e.set_notes("n");
         e
+    }
+
+    fn key_of(item_type: ItemType, title: &str, fields: &[(&str, &str)]) -> AccountKey {
+        let d = ItemDraft {
+            item_type,
+            title: title.into(),
+            favorite: false,
+            reprompt: false,
+            tags: vec![],
+            folder: None,
+            fields: fields
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
+            custom_fields: vec![],
+        };
+        account_key(&d).unwrap()
+    }
+
+    #[test]
+    fn the_site_name_is_the_part_people_recognise() {
+        assert_eq!(site_name("https://login.github.com/x"), "github");
+        assert_eq!(site_name("https://www.bbc.co.uk"), "bbc");
+        assert_eq!(site_name("http://localhost:3000"), "localhost");
+        assert_eq!(site_name(""), "");
+        assert_eq!(name_key("Git-Hub (work)"), "githubwork");
+    }
+
+    #[test]
+    fn a_login_and_a_code_of_one_account_match_and_other_accounts_do_not() {
+        let login = key_of(
+            ItemType::Login,
+            "GitHub",
+            &[
+                ("username", "Ana@Example.com"),
+                ("url", "https://github.com"),
+            ],
+        );
+        let code = key_of(
+            ItemType::Totp,
+            "GitHub (ana@example.com)",
+            &[
+                ("issuer", "GitHub"),
+                ("account", "ana@example.com"),
+                ("totp", "JBSWY3DPEHPK3PXP"),
+            ],
+        );
+        assert!(same_account(&login, &code));
+        assert!(same_account(&code, &login));
+        // another account of the same service
+        let other = key_of(
+            ItemType::Totp,
+            "GitHub (bob@example.com)",
+            &[
+                ("issuer", "GitHub"),
+                ("account", "bob@example.com"),
+                ("totp", "KRSXG5CTMVRXEZLU"),
+            ],
+        );
+        assert!(!same_account(&login, &other));
+        // the same account name at a different service
+        let elsewhere = key_of(
+            ItemType::Totp,
+            "Dropbox",
+            &[
+                ("issuer", "Dropbox"),
+                ("account", "ana@example.com"),
+                ("totp", "KRSXG5CTMVRXEZLU"),
+            ],
+        );
+        assert!(!same_account(&login, &elsewhere));
+        // the same secret is the same account, whatever it is called, written as a link or a bare key
+        let by_secret = key_of(
+            ItemType::Login,
+            "Something else",
+            &[(
+                "totp",
+                "otpauth://totp/X:y?secret=jbswy3dp ehpk3pxp&issuer=X",
+            )],
+        );
+        assert!(same_account(&by_secret, &code));
+        // cards and notes are never cross-matched
+        let card = ItemDraft {
+            item_type: ItemType::Card,
+            title: "Visa".into(),
+            favorite: false,
+            reprompt: false,
+            tags: vec![],
+            folder: None,
+            fields: BTreeMap::new(),
+            custom_fields: vec![],
+        };
+        assert!(account_key(&card).is_none());
+        // empty account and no secret never matches
+        let bare = key_of(ItemType::Login, "GitHub", &[]);
+        assert!(!same_account(&bare, &login));
     }
 
     #[test]
@@ -690,17 +902,35 @@ mod tests {
         assert_eq!(d.item_type, ItemType::Login);
         assert_eq!(d.fields["username"], "ana");
         assert_eq!(d.fields["password"], "p w");
-        assert_eq!(d.fields["url"], "https://github.com");
+        // both addresses are in the one field, a line each
+        assert_eq!(
+            d.fields["url"],
+            "https://github.com\nhttps://gist.github.com"
+        );
         assert_eq!(d.fields["totp"], "JBSWY3DPEHPK3PXP");
         assert_eq!(d.fields["notes"], "n");
         assert_eq!(d.folder.as_deref(), Some("Work"));
         assert!(d.favorite);
-        assert_eq!(d.custom_fields.len(), 1);
-        assert_eq!(d.custom_fields[0].name, "Website 2");
+        assert!(d.custom_fields.is_empty());
         assert!(c.warnings.is_empty());
         for k in d.fields.keys() {
             assert!(ItemType::Login.spec(k).is_some());
         }
+    }
+
+    #[test]
+    fn more_addresses_than_a_login_holds_stay_as_custom_fields() {
+        let mut e = ImportedEntry::new(EntryKind::Login, "Many");
+        for i in 0..(MAX_URLS + 3) {
+            e.add_url(&format!("https://site{i}.example"));
+        }
+        let d = e.to_draft().draft;
+        assert_eq!(d.fields["url"].lines().count(), MAX_URLS);
+        assert_eq!(d.custom_fields.len(), 3);
+        assert_eq!(d.custom_fields[0].name, format!("Website {}", MAX_URLS + 1));
+        // and the draft is one the vault accepts
+        let mut d = d;
+        d.normalize().unwrap();
     }
 
     #[test]

@@ -2,8 +2,9 @@
 // Secret reads need the master password only for items set to ask for it (see withItemPassword); non-secret reads never do.
 import { BackendError, type ItemSummary, type ItemType, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
+import { urlsOf } from "../../lib/urls";
 import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
-import { openEditor } from "../../state/ui";
+import { openEditor, openFolderDialog } from "../../state/ui";
 import { withItemPassword } from "../reprompt/Reprompt";
 import { ITEM_FILTERS } from "../shell/nav";
 
@@ -44,7 +45,11 @@ export function webAddress(raw: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
 }
 
-export const findUrl = (view: ItemView): string | null => view.fields.find((f) => f.kind === "url" && f.value)?.value ?? null;
+/** Every web address an item has: its url fields can hold several, a line each. */
+export const findUrls = (view: Pick<ItemView, "fields">): string[] => view.fields.filter((f) => f.kind === "url").flatMap((f) => urlsOf(f.value));
+
+/** The first address, which "Launch" opens. */
+export const findUrl = (view: Pick<ItemView, "fields">): string | null => findUrls(view)[0] ?? null;
 
 export async function openLink(raw: string): Promise<void> {
   try {
@@ -81,11 +86,8 @@ export async function copyQuick(item: Target, q: QuickCopy): Promise<void> {
     }
     if (!value) return void pushToast({ kind: "info", text: `“${item.title}” has no ${q.label} saved.` });
     await copyText(value, q.secret ? clear : undefined);
-    pushToast(
-      q.secret
-        ? { kind: "success", text: `The ${q.label} was copied. The clipboard clears in ${clear} seconds.`, countdownMs: clear * 1000 }
-        : { kind: "success", text: `The ${q.label} was copied.` },
-    );
+    // A short notice, not a timer: the clipboard is cleared in the background whether or not the notice is still showing.
+    pushToast({ kind: "success", text: q.secret ? `The ${q.label} was copied. It leaves the clipboard in ${clear} seconds.` : `The ${q.label} was copied.` });
   } catch (e) {
     pushToast({ kind: "error", text: reason(e, "Copying was blocked on this device.") });
   }
@@ -96,6 +98,11 @@ export function viewItem(item: Target): void {
   const { filter } = app.get();
   if (!ITEM_FILTERS.has(filter) || (item.archived && filter !== "archive")) setFilter(item.archived ? "archive" : "all");
   select(item.id);
+}
+
+/** Opens the "Move to folder" dialog for one item. */
+export function moveItemToFolder(item: Pick<ItemSummary, "id" | "title" | "folder">): void {
+  openFolderDialog({ kind: "move", ids: [item.id], title: item.title, current: item.folder });
 }
 
 export async function editItem(item: Target): Promise<void> {

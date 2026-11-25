@@ -20,6 +20,7 @@ fn fast(ttl: Duration) -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: ttl,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 
@@ -934,54 +935,32 @@ fn nothing_is_ever_purged_automatically() {
 }
 
 #[test]
-fn purge_needs_trash_confirmation_and_password() {
+fn purge_needs_the_trash_and_the_password() {
+    // (the test configuration treats every trashed item as an old one, so the sum is not in play here; it is in
+    // `folder_search_tests.rs`)
     let fx = Fx::new();
     let id = fx.add("Bank account", "bank-secret-pw");
 
     // active items cannot be purged, whatever else is right or wrong
-    assert_eq!(
-        code(fx.s.item_purge(&id, PW.into(), "CONFIRM")),
-        "not_in_trash"
-    );
+    assert_eq!(code(fx.s.item_purge(&id, PW.into(), "")), "not_in_trash");
     assert_eq!(
         code(fx.s.item_purge(&id, WRONG.into(), "x")),
         "not_in_trash"
     );
 
     fx.s.item_trash(&id).unwrap();
-    // wrong confirmation text is refused before the (expensive) password check
+    // wrong password
     assert_eq!(
-        code(fx.s.item_purge(&id, PW.into(), "confirm")),
-        "confirmation_mismatch"
-    );
-    assert_eq!(
-        code(fx.s.item_purge(&id, PW.into(), "Bank")),
-        "confirmation_mismatch"
-    );
-    assert_eq!(
-        code(fx.s.item_purge(&id, PW.into(), "")),
-        "confirmation_mismatch"
-    );
-    // right text, wrong password
-    assert_eq!(
-        code(fx.s.item_purge(&id, WRONG.into(), "CONFIRM")),
+        code(fx.s.item_purge(&id, WRONG.into(), "")),
         "wrong_password"
     );
     assert_eq!(fx.s.trash_list().unwrap().len(), 1, "still in the trash");
     assert_eq!(fx.versions(&id), 2);
 
-    // typing the item name (trimmed) works as confirmation
-    fx.s.item_purge(&id, PW.into(), "  Bank account ").unwrap();
+    // the right password is enough for an old item, whatever else is typed
+    fx.s.item_purge(&id, PW.into(), "").unwrap();
     assert!(fx.s.trash_list().unwrap().is_empty());
     assert_eq!(code(fx.s.item_get(&id)), "not_found");
-}
-
-#[test]
-fn the_word_confirm_is_accepted_too() {
-    let fx = Fx::new();
-    let id = fx.add("Bank account", "bank-secret-pw");
-    fx.s.item_trash(&id).unwrap();
-    fx.s.item_purge(&id, PW.into(), "CONFIRM").unwrap();
 }
 
 #[test]

@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { motion } from "motion/react";
 import { ArrowLeft, LockKeyhole, RotateCcw, TriangleAlert } from "lucide-react";
-import { BackendError } from "../../backend";
+import { BackendError, type PurgePlan } from "../../backend";
 import { exactTime, relativeTime } from "../../lib/format";
+import { prettyEquation } from "../../lib/gateRules";
 import { app, be, pushToast, refresh, select } from "../../state/app";
 import { useStore } from "../../state/store";
 import { Avatar } from "../ui/Avatar";
@@ -110,29 +111,56 @@ export function TrashDetail({ id, onBack }: { id: string; onBack?: () => void })
   );
 }
 
-/** Step 1: warning. Step 2: master password and the item name (or CONFIRM). Only then does Rust erase it. */
+/**
+ * Deleting forever. Step 1 is the warning and says what it will take: an item that went to the trash less than six months
+ * ago needs the master password and the answer to a long sum; an older one needs the master password only. Step 2 asks
+ * for those. The core decides which rule applies (on its own checked clock) and keeps the sum's answer; a wrong answer
+ * uses the sum up and a new one is shown.
+ */
 function PurgeFlow({ id, title, open, onClose, onDone }: { id: string; title: string; open: boolean; onClose: () => void; onDone?: () => void }) {
   const [step, setStep] = useState<1 | 2>(1);
+  const [plan, setPlan] = useState<PurgePlan | null>(null);
   const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
+  const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [pwError, setPwError] = useState<string | null>(null);
-  const [confError, setConfError] = useState<string | null>(null);
+  const [answerError, setAnswerError] = useState<string | null>(null);
 
-  const close = () => { if (busy) return; setStep(1); setPassword(""); setConfirmation(""); setPwError(null); setConfError(null); onClose(); };
-  const matches = confirmation.trim() === "CONFIRM" || confirmation.trim() === title.trim();
+  const loadPlan = useCallback(async () => {
+    setPlanError(null);
+    try {
+      setPlan(await be().purgePlan(id));
+    } catch (e) {
+      setPlan(null);
+      setPlanError(e instanceof Error ? e.message : "Could not check this item.");
+    }
+  }, [id]);
+
+  // The warning shows the item's age, so the plan is read when the sheet opens.
+  useEffect(() => { if (open) void loadPlan(); }, [open, loadPlan]);
+
+  const reset = () => { setStep(1); setPlan(null); setPassword(""); setAnswer(""); setPwError(null); setAnswerError(null); setPlanError(null); };
+  const close = () => { if (busy) return; reset(); onClose(); };
+
+  async function toStep2() {
+    // A fresh sum for the step that uses it (it is made by the core and its answer never leaves it).
+    await loadPlan();
+    setStep(2);
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (busy) return;
-    setPwError(null); setConfError(null);
+    if (busy || !plan) return;
+    setPwError(null); setAnswerError(null);
+    const typed = answer.trim();
     if (!password) return setPwError("Enter your master password.");
-    if (!matches) return setConfError(`Type “${title}” or CONFIRM exactly.`);
+    if (plan.recent && !/^\d+$/.test(typed)) return setAnswerError("Type the answer as a whole number.");
     setBusy(true);
     try {
-      await be().purgeItem(id, password, confirmation.trim());
+      await be().purgeItem(id, password, plan.recent ? typed : undefined);
       setBusy(false);
-      setStep(1); setPassword(""); setConfirmation("");
+      reset();
       onClose();
       await refresh();
       select(null);
@@ -140,17 +168,25 @@ function PurgeFlow({ id, title, open, onClose, onDone }: { id: string; title: st
       pushToast({ kind: "success", text: `“${title}” was deleted forever.` });
     } catch (err) {
       setBusy(false);
-      if (err instanceof BackendError && err.code === "wrong_password") setPwError("That master password is not right.");
-      else if (err instanceof BackendError && err.code === "confirmation_mismatch") setConfError(err.message);
-      else setPwError(err instanceof Error ? err.message : "Could not delete the item.");
+      if (err instanceof BackendError && err.code === "wrong_password") {
+        setPwError("That master password is not right.");
+      } else if (err instanceof BackendError && err.code === "wrong_answer") {
+        // The sum is used up, right or wrong: nothing was deleted and a new one is shown.
+        setAnswer("");
+        await loadPlan();
+        setAnswerError("That is not the answer, so nothing was deleted. Here is a new sum.");
+      } else {
+        setPwError(err instanceof Error ? err.message : "Could not delete the item.");
+      }
     }
   }
 
+  const recent = plan?.recent === true;
   return (
     <Sheet
       open={open}
       onClose={close}
-      title={step === 1 ? `Delete “${title}” forever?` : "Confirm with your master password"}
+      title={step === 1 ? `Delete “${title}” forever?` : recent ? "Confirm with your password and the sum" : "Confirm with your master password"}
       variant="dialog"
       size="sm"
       dismissible={!busy}
@@ -159,22 +195,47 @@ function PurgeFlow({ id, title, open, onClose, onDone }: { id: string; title: st
       {step === 1 ? (
         <div className="flex flex-col gap-4 pt-1">
           <p className="text-mist">This permanently erases the item, every earlier version and any attachments from this device. It cannot be undone, and nothing is kept in a hidden backup.</p>
+          {planError ? (
+            <p role="alert" className="text-[0.93em] text-ember">{planError}</p>
+          ) : plan ? (
+            <p className="rounded-lg bg-pane/70 px-4 py-3 text-[0.93em] shadow-e1">
+              {plan.recent
+                ? <>Deleted {exactTime(plan.deletedAt)}, less than six months ago. To erase it you need your master password <strong className="font-semibold">and</strong> the answer to a sum. From {exactTime(plan.olderAt)} the master password alone is enough.</>
+                : <>Deleted {exactTime(plan.deletedAt)}, over six months ago. Your master password is all it takes.</>}
+            </p>
+          ) : (
+            <p className="text-[0.93em] text-fog" aria-busy>Checking how long it has been in the trash…</p>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={close}>Cancel</Button>
-            <Button variant="danger" onClick={() => setStep(2)}>Continue</Button>
+            <Button variant="danger" disabled={!plan} onClick={() => void toStep2()}>Continue</Button>
           </div>
         </div>
       ) : (
-        <form onSubmit={submit} className="flex flex-col gap-4 pt-1">
+        <form onSubmit={submit} className="flex flex-col gap-4 pt-1" noValidate>
           <Field label="Master password" error={pwError}>
             {({ id: fid, describedBy, invalid }) => <TextInput id={fid} data-autofocus type="password" autoComplete="current-password" value={password} invalid={invalid} aria-describedby={describedBy} disabled={busy} onChange={(e) => setPassword(e.target.value)} />}
           </Field>
-          <Field label={`Type “${title}” or CONFIRM`} error={confError}>
-            {({ id: fid, describedBy, invalid }) => <TextInput id={fid} value={confirmation} invalid={invalid} aria-describedby={describedBy} disabled={busy} onChange={(e) => setConfirmation(e.target.value)} />}
-          </Field>
+          {recent && (
+            <div className="flex flex-col gap-3">
+              <p
+                aria-live="polite"
+                aria-label={plan?.sum ? `What is ${prettyEquation(plan.sum)}?` : "Making a sum"}
+                className="rounded-lg bg-pane/70 px-4 py-4 text-center font-display text-[1.35rem] leading-snug font-semibold tabular-nums text-balance break-words shadow-e1"
+              >
+                {plan?.sum ? <>{prettyEquation(plan.sum)} <span className="text-fog">= ?</span></> : <span className="text-fog">…</span>}
+              </p>
+              <Field label="Your answer" hint="A wrong answer deletes nothing and gives you a new sum." error={answerError}>
+                {({ id: fid, describedBy, invalid }) => (
+                  <TextInput id={fid} mono inputMode="numeric" pattern="[0-9]*" enterKeyHint="go" value={answer} invalid={invalid} aria-describedby={describedBy} disabled={busy || !plan?.sum} onChange={(e) => { setAnswer(e.target.value); setAnswerError(null); }} />
+                )}
+              </Field>
+            </div>
+          )}
+          {planError && <p role="alert" className="text-[0.93em] text-ember">{planError}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => setStep(1)} disabled={busy}>Back</Button>
-            <Button type="submit" variant="danger" busy={busy} disabled={!matches || !password}>Delete forever</Button>
+            <Button type="submit" variant="danger" busy={busy} disabled={!plan || !password || (recent && !answer.trim())}>Delete forever</Button>
           </div>
         </form>
       )}

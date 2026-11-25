@@ -2,6 +2,36 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-25, Q6): folders, a search through everything, offline use that merges, several websites, a safer delete
+
+**The request (nine items):** open straight into search; search over everything (titles, websites, notes, field names and descriptions) with an option for old versions, plus filters and orders; work 100 % offline and merge by itself on reconnect like Google Keep, keeping every conflict in the history; several websites per login; a short copy notice instead of a countdown over the buttons; New item menu order (Login, Code only, Secure note, Identity, Card, SSH key first); permanent delete needs the master password and a long sum while the item is recent (under six months) and only the password after that; a collapsible password generator; folders; Bitwarden and Ente Auth imports that match the same account and keep every note.
+
+**Built (uncommitted; the owner commits). Version raised to 0.4.0** (`VERSION` and the five files that follow it, `CHANGELOG.md` has a `## [0.4.0] - 2026-11-25` section). Decisions D38 to D44 in `ARCHITECTURE.md`; contract in `IPC_CONTRACT.md` sections 3, 10 to 13; storage and merge rules in `STORAGE_AND_SYNC.md`; screens in `UI_DESIGN_SYSTEM.md` section 11; the slice is Q6 in `FEATURE_QUEUE.md`.
+
+* **No format change.** `ItemPayload` stays as it was (it refuses unknown keys), so a folder is a path string in the existing `folder` field (the list of empty folders is in the synced settings object), several websites are one `url` field with a line each, and a merge is recorded as an `edited` event with `restored_from`. A 0.3.0 build still opens everything 0.4.0 writes.
+* **Folders (D38).** Paths of up to six levels; create, rename (merges into an existing name), remove (contents move up, nothing is deleted), move one or many items. The list shows folders first, then the items at that level, with a path bar; a search or a filter looks in every folder.
+* **Search (D41).** `item_search` runs in the core and answers with ids and field names only, never a value; secret kinds are never compared; a re-prompt item's notes stay sealed. A result says where it matched ("Found in Notes"). A tick adds earlier versions. Orders (nine) and filters (type, favourites, has a code, asks for the password, tag, changed within, at least and at most a number of versions) work on what the list already knows.
+* **Merge (D39) and reconnect (D42).** A three-way merge per field; the newer change wins a true conflict, tags, websites and files are merged as sets, custom fields by name, notes by lines with plain markers where two devices edited the same lines. Everything the other device had stays as snapshots in the history. A fourth sync trigger, the device coming back online (`sync_reconnect`, called from the window's `online` event); still no timers, no polling, no notifications.
+* **Permanent delete (D40).** `item_purge_plan` then `item_purge(id, password, answer?)`: under 183 days on the trusted clock (fails closed) needs the password and the sum, older needs only the password; the answer never leaves the core; the sum is single-use (a wrong answer, or a delete that went through, uses it up; a wrong password leaves it).
+* **Import (D43).** *Merge matching accounts* is the default: a Bitwarden login and its Ente Auth code become one item; every note, website and tag is kept.
+* **Open in search and the default order (D44)** are device settings (`openInSearch`, `listSort` in `device.json`; Settings > Vault list).
+* **Smaller items:** several-website editor and detail rows, a collapsible generator, the short copy notice, the New item order.
+
+**Found by the final checks and fixed:** (1) the `e2e/run.mjs` import step looked for an imported item at the top level, but Bitwarden's folder now comes across as a folder, so the step opens the folder first; (2) `.github/workflows/codeql.yml` (added from GitHub's own template, pulled in as `daa0c6e`) had no "System details" first step, which `scripts/tests/test_ci_system_info.py` requires of every job; the step was added (copied from `ci.yml`) and the steps re-indented to this repository's layout, the CodeQL settings themselves are untouched; (3) `cargo fmt` and five clippy lints (`cloned_ref_to_slice_refs`) in new test code.
+
+**Verified (fresh runs 2026-11-25, `scripts/verify_all.sh`: ALL CHECKS PASSED).** Rust library suite 962 passed, 0 failed, 2 ignored; `cargo fmt --check` and `clippy --all-targets -D warnings` clean. vitest 203 (21 files); `tsc --noEmit` and the production build clean; the production bundle holds no dev-only strings. Python script tests 149. `shellcheck` 0.8.0 in an `ubuntu:22.04` container. Real-core end-to-end through `scripts/ci_e2e.sh`, the way CI runs it: `run` 90, `theme-ui`, `real-gate` 75, `real-uninstall` 18, `real-drive` 18, `real-import` 13, `real-lists` 33 (new: folders, search, filters, several websites, the delete sum, open in search), `real-disguise` 16, `real-backup` 13, `real-sync` 46, `real-multi-s3` 25 (two S3 servers in Docker), all passed.
+
+**Not verified.**
+* **Android:** whether the keyboard comes up with *Open in search* on a phone, and the new Kotlin was not compiled or run; the phone was not touched.
+* **Real windows:** the `online` event that triggers the reconnect sync was exercised only through the core and the shim (headless Chromium), not in a real WebKitGTK window or the Android WebView; nor how those engines draw the new screens.
+* **Screen readers** reading the new folder rows, the filter panel and the delete dialog.
+* The trusted time servers (the delete rule's six months use the checked clock; with no check the delete stays on the strict side).
+* **The installer in distribution containers** (`scripts/check_installer_in_containers.sh`) was not re-run: the download of CI's packages stalled twice (5 and 9 minutes). `scripts/install.sh` and `scripts/tests/container_case.sh` are unchanged this round, and CI's installer jobs on `daa0c6e` passed on every distribution for the same files.
+* **The CodeQL workflow's `java-kotlin` autobuild** may fail; the first run on GitHub decides.
+* Known limits, by design: two devices that each make a *different empty folder* while offline can lose the earlier one (a folder with an item in it is never lost); items of different types are not merged (the older way, a restore from the history, remains); notes longer than 64 KiB are merged by taking the newer text.
+
+**For the release:** the version is 0.4.0 and CI publishes by itself once it is on `main` (see the entry below).
+
 ## Update (2026-11-25, after the push): two red CI runs, and the rules that follow
 
 **What happened.** The push `2c35375` (next code, clean uninstall, themes) and the fix `e492fca` each came back red, although the local checks had passed. Nothing was wrong with the app. Three separate causes, two of them mine:

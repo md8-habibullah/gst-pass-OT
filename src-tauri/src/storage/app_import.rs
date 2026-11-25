@@ -196,7 +196,7 @@ impl AppCore {
         let session = self.session()?;
         let key = self.import_key(&session, &options)?;
         self.import_ensure_parsed(&session, &options, &key)?;
-        session.import_preview(&options.handle, &key)
+        session.import_preview(&options.handle, &key, options.mode)
     }
 
     /// Import the file. Attachments found in it go into the encrypted drive, encrypted from memory.

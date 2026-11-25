@@ -39,6 +39,7 @@ fn harness() -> Harness {
             p_cost: 1,
         },
         edit_token_ttl: Duration::from_secs(600),
+        purge_grace: std::time::Duration::ZERO,
     };
     let mem = MemFactory::new();
     let opener = Arc::new(RecordingOpener::new());
@@ -271,7 +272,7 @@ fn the_whole_contract_works_over_real_ipc() {
     );
     assert_eq!(restored["version"], 3);
 
-    // --- trash: restricted view, restore, purge with double confirmation
+    // --- trash: restricted view, restore, purge with the password (the sum for a recent one is in folder_search_tests)
     h.ok("item_trash", json!({"id": id}));
     assert_eq!(h.err_code("item_get", json!({"id": id})), "in_trash");
     assert_eq!(
@@ -291,21 +292,12 @@ fn the_whole_contract_works_over_real_ipc() {
     assert_eq!(
         h.err_code(
             "item_purge",
-            json!({"id": id, "password": PW, "confirmation": "nope"})
-        ),
-        "confirmation_mismatch"
-    );
-    assert_eq!(
-        h.err_code(
-            "item_purge",
-            json!({"id": id, "password": "wrong wrong", "confirmation": "CONFIRM"})
+            json!({"id": id, "password": "wrong wrong", "answer": null})
         ),
         "wrong_password"
     );
-    h.ok(
-        "item_purge",
-        json!({"id": id, "password": PW, "confirmation": "CONFIRM"}),
-    );
+    // the answer is optional: an old item needs the password alone
+    h.ok("item_purge", json!({"id": id, "password": PW}));
     assert_eq!(h.ok("trash_list", json!({})).as_array().unwrap().len(), 0);
     assert_eq!(h.err_code("item_get", json!({"id": id})), "not_found");
 
@@ -1073,6 +1065,7 @@ fn core_with_queued_work() -> (
             p_cost: 1,
         },
         edit_token_ttl: Duration::from_secs(600),
+        purge_grace: std::time::Duration::ZERO,
     };
     let core = AppCore::open(dir.path(), cfg, Arc::new(TestPicker::default()))
         .unwrap()
@@ -1090,6 +1083,28 @@ fn core_with_queued_work() -> (
     let draft: ItemDraft = serde_json::from_value(draft("Bank")).unwrap();
     let item = core.item_create(draft).unwrap();
     (dir, mem, Arc::new(core), item.id)
+}
+
+#[test]
+fn sync_reconnect_answers_at_once_with_or_without_an_open_vault() {
+    let h = harness();
+    assert_eq!(
+        h.ok("sync_reconnect", json!({})),
+        json!(null),
+        "nothing open: a no-op"
+    );
+    signed_in(&h);
+    assert_eq!(
+        h.ok("sync_reconnect", json!({})),
+        json!(null),
+        "no backup target: nothing to do, no error"
+    );
+    h.ok("vault_lock", json!({}));
+    assert_eq!(
+        h.ok("sync_reconnect", json!({})),
+        json!(null),
+        "locked: a no-op"
+    );
 }
 
 #[test]
@@ -1330,4 +1345,5 @@ fn edit_password_over_ipc(h: &Harness, id: &str, password: &str) {
     );
 }
 mod device_ipc;
+mod folder_ipc;
 mod gate_ipc;

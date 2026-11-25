@@ -36,6 +36,7 @@ fn harness() -> Harness {
             p_cost: 1,
         },
         edit_token_ttl: Duration::from_secs(600),
+        purge_grace: std::time::Duration::ZERO,
     };
     let runtime = BackupRuntime::new(
         crate::storage::backup::remote::mem::MemFactory::new(),

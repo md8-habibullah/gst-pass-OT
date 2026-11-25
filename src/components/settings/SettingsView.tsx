@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, ListFilter, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
 import { plural } from "../../lib/format";
 import { useLayout } from "../../lib/layout";
 import { zoneLabel } from "../../lib/zones";
@@ -17,6 +17,7 @@ import { AppLockGroup } from "./AppLock";
 import { DateTimePage } from "./DateTimePage";
 import { DisguiseGroup } from "./Disguise";
 import { HelpPage } from "./HelpPage";
+import { ListPage } from "./ListPage";
 import { Group, LinkRow } from "./parts";
 import { SecurityPage } from "./SecurityPage";
 import { ThemePage } from "./ThemePage";
@@ -31,6 +32,7 @@ interface Category {
 
 const CATEGORIES: Category[] = [
   { id: "security", title: "Security", icon: ShieldCheck, about: "Your master password, the clipboard and locking the vault." },
+  { id: "list", title: "Vault list", icon: ListFilter, about: "Open straight into search, and how items are ordered." },
   { id: "applock", title: "App lock", icon: LockKeyhole, about: "A passcode before the account list, and when open vaults lock by themselves." },
   { id: "accounts", title: "Accounts", icon: UsersRound, about: "The vaults on this device." },
   { id: "time", title: "Date and time", icon: Clock, about: "Hexis saves every time in UTC and writes it in your zone. Changing the zone changes only how times look." },
@@ -51,6 +53,7 @@ function useSummaries(): Record<SettingsPageId, string> {
   const name = useBrandName();
   return {
     security: `Clipboard clears after ${clipboardClear} seconds`,
+    list: device?.openInSearch ? "Opens in search" : "Opens at the list",
     applock: gate?.enabled ? "Passcode on" : "Passcode off",
     accounts: plural(profiles.length, "account"),
     time: device?.timeZone ? zoneLabel(device.timeZone) : "Not chosen",
@@ -78,6 +81,7 @@ function BackupPage() {
 function PageContent({ id }: { id: SettingsPageId }): ReactNode {
   switch (id) {
     case "security": return <SecurityPage />;
+    case "list": return <ListPage />;
     case "applock": return <AppLockGroup heading={false} />;
     case "accounts": return <AccountsGroup heading={false} />;
     case "time": return <DateTimePage />;

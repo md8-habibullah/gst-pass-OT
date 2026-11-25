@@ -29,11 +29,12 @@ The webview never sees a key, a seed or a master-password hash.
 * **Post-quantum ready.** The vault key is wrapped with a hybrid **ML-KEM-1024 + X25519** exchange; the password goes
   through **Argon2id** (64 MiB x 4 passes by default, configurable); items use **XChaCha20-Poly1305** with per-object HKDF sub-keys.
   Details and wire formats: [`CRYPTO_SPEC.md`](ai-docs/CRYPTO_SPEC.md).
-* **Offline first.** Everything works without a network and without any bucket; sync is something you add, not
+* **Offline first.** Everything works without a network and without any bucket: items are made, edited, searched and
+  deleted locally, and the changes wait in a durable queue until the device is back online. Sync is something you add, not
   something you need. A first start opens a ready-made demo vault (its password is on the screen), so there is nothing
   to set up before you look around.
-* **Quiet by design.** Sync runs on three triggers only: unlock, a saved change, and leaving the app. No timers, no
-  background services, no notifications, no telemetry in Hexis's own code.
+* **Quiet by design.** Sync runs on four triggers only: unlock, a saved change, leaving the app, and the device coming back
+  online. No timers, no background services, no notifications, no telemetry in Hexis's own code.
 * **Honest about limits.** The threat model says what is and is not protected. The optional Stage 1 gate is a privacy
   screen, never a shortcut to the keys: the master password is always required to open a vault.
 
@@ -41,8 +42,9 @@ The webview never sees a key, a seed or a master-password hash.
 
 | Area | Details |
 |---|---|
-| Items | Logins, cards, identities, SSH keys, secure notes, media; one-time codes (RFC 6238) with QR setup on phones; folders, tags, favourites |
-| History | Immutable version history per item, trash with a two-step permanent delete, archive, clone |
+| Items | Logins (with several websites each), cards, identities, SSH keys, secure notes, media; one-time codes (RFC 6238) with QR setup on phones; nested folders, tags, favourites |
+| Find | One search over titles, websites, notes, field names, tags and folders (never a password), an option to look in earlier versions too, nine orders and filters by type, tag, code, favourites and number of versions; an option to open straight into search |
+| History | Immutable version history per item, trash with a permanent delete that asks for the master password and, within six months, a sum; archive, clone |
 | Accounts | Several independent vaults per device, each with its own master password and its own backup targets |
 | Encrypted drive | Files up to 50 MB, chunked and authenticated, attachable to items; screen capture blocked while one is open on Android |
 | Sync and backup | Several S3-compatible targets at once (a master plus mirrors) over HTTPS, single-writer replication, pull-and-reconcile at unlock, per-target health, restore into a new vault |
@@ -65,15 +67,18 @@ Hexis has no sync server. It writes sealed objects to buckets that belong to you
   promotes a mirror after re-checking every object.
 * **Sealed before upload.** Items are encrypted on your device with keys that never leave it. A provider sees object
   names, sizes and times, never content and never your master password.
-* **Several devices, no silent overwrites.** At unlock a device pulls from the master and reconciles by version, and a
-  push never overwrites remote data that device has not seen (the target shows `failing` with the reason instead).
+* **Several devices, no silent overwrites, merged for you.** At unlock (and when the device is back online) a device pulls
+  from the master and reconciles by version, and a push never overwrites remote data that device has not seen (the target
+  shows `failing` with the reason instead). An item changed on two devices is merged field by field, notes line by line, and
+  both earlier states stay in its history.
 * **Restore anywhere.** Point a fresh install at a bucket, enter the master password, and the vault is rebuilt.
-* **Event-driven.** Sync runs when you unlock, save a change or leave the app: no timers, no background service, no
-  notifications.
+* **Event-driven.** Sync runs when you unlock, save a change, leave the app or come back online: no timers, no background
+  service, no notifications.
 
 What is *not* verified yet: sync has been tested against Hexis's own local S3-compatible reference server
 (`scripts/mock_s3.py`, which checks AWS Signature V4 independently of the client), not against real AWS, Cloudflare,
-Backblaze, Wasabi or MinIO accounts. There is also no manual merge screen for two devices that edited the same item;
+Backblaze, Wasabi or MinIO accounts. There is also no side-by-side merge screen: two devices that edited the same item are merged automatically, and
+when both changed the very same lines of a note both versions are written out, marked, for you to tidy (the other states are in the item's history);
 the rules and what is built are in [`STORAGE_AND_SYNC.md`](ai-docs/STORAGE_AND_SYNC.md).
 
 ## Download
@@ -166,7 +171,7 @@ To report a vulnerability, read [SECURITY.md](SECURITY.md). What the app does an
 
 ## Import and export
 
-**Import** from KeePass (`.kdbx`, with password and/or key file, and KeePass XML), Bitwarden (JSON, CSV), Proton Pass (JSON, ZIP, CSV), 1Password (`.1pux`, CSV), LastPass, Dashlane (CSV, JSON), NordPass, Enpass (CSV, JSON), Chrome / Edge / Brave / Firefox / Safari password CSVs, Aegis and 2FAS (unencrypted exports), lists of `otpauth://` links, Google Authenticator export links, and any other CSV through a column mapper. The format is recognised from the file's content, not its name. Files are read in Rust, in memory, with hard size and nesting limits, and a preview shows what would happen before anything is saved; three modes handle duplicates (skip, add as a new version, import everything); the whole import is one all-or-nothing transaction and is queued for backup like any other change. Encrypted exports of other apps are refused with instructions (export unencrypted, import, delete the file).
+**Import** from KeePass (`.kdbx`, with password and/or key file, and KeePass XML), Bitwarden (JSON, CSV), Proton Pass (JSON, ZIP, CSV), 1Password (`.1pux`, CSV), LastPass, Dashlane (CSV, JSON), NordPass, Enpass (CSV, JSON), Chrome / Edge / Brave / Firefox / Safari password CSVs, Aegis and 2FAS (unencrypted exports), lists of `otpauth://` links, Google Authenticator export links, and any other CSV through a column mapper. The format is recognised from the file's content, not its name. Files are read in Rust, in memory, with hard size and nesting limits, and a preview shows what would happen before anything is saved; four modes handle matches (merge matching accounts, which is the default and keeps every note, skip, add as a new version, import everything); the whole import is one all-or-nothing transaction and is queued for backup like any other change. Encrypted exports of other apps are refused with instructions (export unencrypted, import, delete the file).
 
 **Export** a readable (Bitwarden-compatible JSON or CSV) copy of your vault from Tools. That file is **not encrypted**: it needs your master password again, is written with owner-only permissions, and you should delete it as soon as it has done its job. The encrypted archive export is unchanged.
 

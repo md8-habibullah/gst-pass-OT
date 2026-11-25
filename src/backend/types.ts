@@ -28,6 +28,10 @@ export type Theme = "system" | "light" | "dark";
 /** Seconds a copied secret stays on the clipboard. */
 export type ClipboardClear = 15 | 30 | 60;
 
+/** The orders the item list offers. The core keeps the chosen default (`device.json`); the screen does the sorting. */
+export const LIST_SORTS = ["updated-desc", "updated-asc", "created-desc", "created-asc", "title-asc", "title-desc", "type", "versions-desc", "versions-asc"] as const;
+export type ListSort = (typeof LIST_SORTS)[number];
+
 /**
  * What the core keeps about this install in `device.json` (not secret; survives an erase). The screen itself keeps nothing:
  * no local storage, no cookies, so nothing of the app is left in the web view when it is removed.
@@ -41,6 +45,10 @@ export interface DeviceInfo {
   timeCheck: boolean;
   theme: Theme;
   clipboardClear: ClipboardClear;
+  /** After the vault opens, the cursor goes to the search box (and the keyboard comes up on a phone). */
+  openInSearch: boolean;
+  /** How the item list is ordered until another order is picked. */
+  listSort: ListSort;
 }
 
 /** The core's clock: UTC checked online, not the device date. */
@@ -88,6 +96,7 @@ export interface ItemSummary {
   tags: string[];
   folder: string | null;
   hasTotp: boolean;
+  createdAt: number;
   updatedAt: number;
   version: number;
   archived: boolean;
@@ -332,6 +341,31 @@ export interface GeneratorPrefs {
 /** What the vault remembers for the person. `generator` is `null` until something was saved. */
 export interface PrefsView {
   generator: GeneratorPrefs | null;
+  /** Folders made on purpose (an empty folder can exist), as paths like "Work/Clients". Folders that items sit in are not listed here. */
+  folders: string[];
+}
+/** One item the search found: which fields matched (names, never values), and the old version if only that matched. */
+export interface SearchHit {
+  id: string;
+  matched: string[];
+  /** `n`: the item as it is now does not match, but its version `n` did (only when old versions were searched). */
+  oldVersion: number | null;
+}
+/** What the screen needs before an item is erased for good. */
+export interface PurgePlan {
+  deletedAt: number;
+  /** Trashed less than six months ago: the master password and the sum are both needed. */
+  recent: boolean;
+  /** When the six months are over. */
+  olderAt: number;
+  /** The sum to solve (its answer stays in the core). `null` for an old item. */
+  sum: string | null;
+}
+/** What a folder command did: the folder it made, how many items it changed, and the folders now. */
+export interface FolderChange {
+  path: string | null;
+  moved: number;
+  prefs: PrefsView;
 }
 export interface AppSettings {
   lockAfterMinutes: (typeof LOCK_AFTER_MINUTES)[number];
@@ -369,7 +403,7 @@ export type ImportFormat =
 export interface ImportPick { handle: string; fileName: string; size: number; format: ImportFormat | "unknown"; needsPassword: boolean; needsKeyfile: boolean }
 export interface CsvMapping { title?: string; username?: string; password?: string; url?: string; totp?: string; notes?: string; folder?: string }
 export interface CsvInspect { delimiter: string; headers: string[]; sample: string[][] }
-export type ImportMode = "skip_duplicates" | "append_version" | "import_all";
+export type ImportMode = "skip_duplicates" | "append_version" | "import_all" | "merge";
 export interface ImportOptions { handle: string; format: ImportFormat; mode: ImportMode; password?: string; keyfileHandle?: string; mapping?: CsvMapping }
 export interface ImportPreview { entries: number; totpSeeds: number; attachments: number; duplicates: number; skipped: number; warnings: string[]; titles: string[] }
 export interface ImportOutcome { added: number; appended: number; skipped: number; failed: number; /** Plain sentences about what was not carried over (attachments, drive unavailable); never file content. */ warnings: string[] }
@@ -408,7 +442,18 @@ export interface Backend {
   trashItem(id: string): Promise<void>;
   restoreItem(id: string): Promise<ItemSummary>;
   listTrash(): Promise<TrashEntry[]>;
-  purgeItem(id: string, password: string, confirmation: string): Promise<void>;
+  /** The master password is always needed; for an item trashed less than six months ago, also the answer to the sum `purgePlan` showed. */
+  purgeItem(id: string, password: string, answer?: string): Promise<void>;
+  /** What erasing this trashed item for good will ask for. Each call makes a new sum. */
+  purgePlan(id: string): Promise<PurgePlan>;
+  /** The deep search: titles, addresses, notes, field names, tags and folders, never a password. With `oldVersions`, earlier versions too. */
+  searchItems(query: string, oldVersions: boolean): Promise<SearchHit[]>;
+  createFolder(path: string): Promise<FolderChange>;
+  renameFolder(from: string, to: string): Promise<FolderChange>;
+  /** What was inside moves up one level. */
+  removeFolder(path: string): Promise<FolderChange>;
+  /** Moves items into a folder (`null`: out of every folder). Answers with how many changed. */
+  moveItems(ids: string[], folder: string | null): Promise<number>;
   archiveItem(id: string): Promise<ItemSummary>;
   unarchiveItem(id: string): Promise<ItemSummary>;
   cloneItem(id: string, password?: string): Promise<ItemSummary>;
@@ -432,6 +477,8 @@ export interface Backend {
   runBackup(id: string | null): Promise<BackupTargetView[]>;
   /** Sends whatever is still queued (bounded to a few seconds). Called when a phone app goes to the background. */
   syncFlush(): Promise<{ complete: boolean }>;
+  /** The device came back online: pull what other devices changed and send what was queued. Answers at once. */
+  syncReconnect(): Promise<void>;
   revealBackupSecret(id: string, password: string): Promise<string>;
 
   /** Opens an http(s) link in the system browser (validated in the core). */
@@ -503,6 +550,8 @@ export interface Backend {
   deviceSetTimeCheck(on: boolean): Promise<DeviceInfo>;
   deviceSetTheme(theme: Theme): Promise<DeviceInfo>;
   deviceSetClipboardClear(seconds: ClipboardClear): Promise<DeviceInfo>;
+  deviceSetOpenInSearch(on: boolean): Promise<DeviceInfo>;
+  deviceSetListSort(order: ListSort): Promise<DeviceInfo>;
   clockStatus(): Promise<ClockStatus>;
   /** Checks the time online now (up to about ten seconds). A failure is in `problem`, not an error. */
   clockSync(): Promise<ClockStatus>;

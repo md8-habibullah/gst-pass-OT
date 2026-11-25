@@ -19,6 +19,8 @@ pub const MAX_TAG_CHARS: usize = 64;
 pub const MAX_FOLDER_CHARS: usize = 128;
 pub const MAX_CUSTOM_FIELDS: usize = 50;
 pub const MAX_CUSTOM_NAME_CHARS: usize = 64;
+/// How many web addresses one login may hold (they are kept one per line in its `url` field).
+pub const MAX_URLS: usize = 20;
 /// Sum of all text in one item (a guard far below the 64 MiB envelope limit).
 pub const MAX_ITEM_BYTES: usize = 4 * 1024 * 1024;
 
@@ -229,13 +231,16 @@ impl ItemDraft {
 
         self.folder = match self.folder.take() {
             Some(f) => {
-                let f = f.trim().to_string();
-                if f.chars().count() > MAX_FOLDER_CHARS {
+                // the same spelling a folder made in the app has: `" Work // Clients "` is `Work/Clients`
+                let f = super::vault::folders::clean(&f);
+                if f.as_ref()
+                    .is_some_and(|f| f.chars().count() > MAX_FOLDER_CHARS)
+                {
                     return Err(StorageError::invalid(
                         "The folder name is too long (128 characters at most).",
                     ));
                 }
-                (!f.is_empty()).then_some(f)
+                f
             }
             None => None,
         };
@@ -256,6 +261,21 @@ impl ItemDraft {
             total += key.len() + value.len();
         }
         self.fields.retain(|_, v| !v.is_empty());
+
+        // several web addresses live in the one `url` field, a line each: tidy them like tags
+        if let Some(v) = self.fields.get("url") {
+            let urls = clean_urls(v);
+            if urls.len() > MAX_URLS {
+                return Err(StorageError::invalid(format!(
+                    "Use at most {MAX_URLS} web addresses."
+                )));
+            }
+            if urls.is_empty() {
+                self.fields.remove("url");
+            } else {
+                self.fields.insert("url".into(), urls.join("\n"));
+            }
+        }
 
         if let Some(v) = self.fields.get("totp") {
             validate_totp(v)?;
@@ -560,6 +580,7 @@ impl ItemPayload {
             tags: self.tags.clone(),
             folder: self.folder.clone(),
             has_totp: self.fields.contains_key("totp"),
+            created_at: self.created_at,
             updated_at: self.updated_at,
             version,
             archived: self.archived,
@@ -666,9 +687,25 @@ pub fn subtitle_of(item_type: ItemType, fields: &BTreeMap<String, String>) -> Op
     }
 }
 
-/// `https://user@www.example.com:8443/a?b#c` → `example.com`.
+/// The web addresses in a login's `url` field: one per line, trimmed, none empty.
+pub fn urls_of(value: &str) -> impl Iterator<Item = &str> {
+    value.lines().map(str::trim).filter(|l| !l.is_empty())
+}
+
+/// The same list without repeats (the first spelling stays), in the order they were written.
+pub fn clean_urls(value: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for u in urls_of(value) {
+        if !out.iter().any(|seen| seen == u) {
+            out.push(u.to_string());
+        }
+    }
+    out
+}
+
+/// `https://user@www.example.com:8443/a?b#c` → `example.com`. With several addresses, the first one.
 pub fn host_of(url: &str) -> Option<String> {
-    let s = url.trim();
+    let s = urls_of(url).next()?;
     let rest = s.split_once("://").map_or(s, |(_, r)| r);
     let authority = rest.split(['/', '?', '#']).next()?;
     let hostport = authority.rsplit('@').next()?;
@@ -698,6 +735,7 @@ pub struct ItemSummary {
     pub tags: Vec<String>,
     pub folder: Option<String>,
     pub has_totp: bool,
+    pub created_at: u64,
     pub updated_at: u64,
     pub version: u64,
     /// Archived items are listed (they stay readable) but hidden from the default views by the UI.
@@ -840,6 +878,36 @@ mod tests {
     }
 
     #[test]
+    fn several_web_addresses_are_kept_a_line_each_and_tidied() {
+        let mut d = login("A");
+        d.fields.insert(
+            "url".into(),
+            " https://a.example \n\nhttps://b.example\r\nhttps://a.example ".into(),
+        );
+        d.normalize().unwrap();
+        assert_eq!(d.fields["url"], "https://a.example\nhttps://b.example");
+        // the list row and the duplicate check use the first address
+        assert_eq!(host_of(&d.fields["url"]).as_deref(), Some("a.example"));
+        d.fields.remove("username");
+        assert_eq!(
+            subtitle_of(ItemType::Login, &d.fields).as_deref(),
+            Some("a.example")
+        );
+        // blank lines alone are no address
+        d.fields.insert("url".into(), " \n \n".into());
+        d.normalize().unwrap();
+        assert!(!d.fields.contains_key("url"));
+        // and there is a limit
+        let many: Vec<String> = (0..=MAX_URLS)
+            .map(|i| format!("https://s{i}.example"))
+            .collect();
+        d.fields.insert("url".into(), many.join("\n"));
+        assert!(d.normalize().is_err());
+        d.fields.insert("url".into(), many[..MAX_URLS].join("\n"));
+        d.normalize().unwrap();
+    }
+
+    #[test]
     fn normalize_trims_dedupes_and_drops_empty_values() {
         let mut d = login("  GitHub  ");
         d.tags = vec![" work ".into(), "work".into(), "".into(), "code".into()];
@@ -849,6 +917,9 @@ mod tests {
         assert_eq!(d.title, "GitHub");
         assert_eq!(d.tags, vec!["work", "code"]);
         assert_eq!(d.folder, None);
+        d.folder = Some(" Work // Clients/ ".into());
+        d.normalize().unwrap();
+        assert_eq!(d.folder.as_deref(), Some("Work/Clients"));
         assert!(!d.fields.contains_key("notes"));
         assert!(d.fields.contains_key("username"));
     }

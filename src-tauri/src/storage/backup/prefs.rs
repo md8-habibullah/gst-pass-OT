@@ -1,6 +1,7 @@
 //! Preferences that belong to the vault and follow it to every device. So far: the password
 //! generator's last settings (length and character types), so the Generator page and the item
-//! editor open with what the person chose last time, on every device.
+//! editor open with what the person chose last time, on every device, and the folders the person
+//! made on purpose (so an empty folder can exist; the folders items sit in need no entry here).
 //!
 //! * One small JSON document, sealed with the vault's `meta` sub-key as the object `prefs`, kept
 //!   in the `meta` table (key `prefs`, base64). Nothing readable is stored: a plain database
@@ -72,6 +73,10 @@ pub struct Prefs {
     pub v: u32,
     #[serde(default)]
     pub generator: Option<GeneratorPrefs>,
+    /// Folders made on purpose, as `Work/Clients` paths. Written only when there is one, so a vault that never made a
+    /// folder is sealed exactly as an older build seals it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<String>,
     /// Settings a newer build added; carried through untouched.
     #[serde(flatten)]
     pub other: BTreeMap<String, serde_json::Value>,
@@ -86,6 +91,7 @@ impl Default for Prefs {
         Self {
             v: 1,
             generator: None,
+            folders: Vec::new(),
             other: BTreeMap::new(),
         }
     }
@@ -108,14 +114,29 @@ impl Prefs {
 #[serde(rename_all = "camelCase")]
 pub struct PrefsView {
     pub generator: Option<GeneratorPrefs>,
+    /// The folders made on purpose, sorted. The screen adds the ones items sit in.
+    pub folders: Vec<String>,
 }
 
 impl From<Prefs> for PrefsView {
     fn from(p: Prefs) -> Self {
+        let p = p.usable();
         Self {
-            generator: p.usable().generator,
+            generator: p.generator,
+            folders: p.folders,
         }
     }
+}
+
+/// What a folder command did: the folder it made (the vault's spelling), how many items it changed, and the folder list now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderChange {
+    /// The path that was made, for `folder_create`; `None` for the other commands.
+    pub path: Option<String>,
+    /// How many items got a new version because their folder changed.
+    pub moved: usize,
+    pub prefs: PrefsView,
 }
 
 /// What a pull made of the preferences object it read from the source target.
@@ -170,7 +191,27 @@ impl Vault {
             return Ok(prefs);
         }
         prefs.generator = Some(generator);
-        let json = Zeroizing::new(serde_json::to_vec(&prefs)?);
+        self.save_prefs(&prefs)?;
+        Ok(prefs)
+    }
+
+    /// Replace the list of folders made on purpose (already cleaned and checked by the caller) and queue it for every
+    /// enabled target. Saving what is already saved writes and sends nothing.
+    pub(crate) fn set_folder_list(&mut self, mut folders: Vec<String>) -> Result<Prefs> {
+        folders.sort_by_key(|f| f.to_lowercase());
+        folders.dedup();
+        let mut prefs = self.prefs();
+        if prefs.folders == folders {
+            return Ok(prefs);
+        }
+        prefs.folders = folders;
+        self.save_prefs(&prefs)?;
+        Ok(prefs)
+    }
+
+    /// Seal the preferences as the next version and queue them for the targets.
+    fn save_prefs(&mut self, prefs: &Prefs) -> Result<()> {
+        let json = Zeroizing::new(serde_json::to_vec(prefs)?);
         let now = now_millis();
         // Strictly increasing, so a newer write is always recognisably newer than an older one.
         let version = now.max(self.prefs_version().saturating_add(1));
@@ -182,7 +223,7 @@ impl Vault {
             dbops::enqueue_for_enabled(c, JobKind::Targets, PREFS_REF, 0, 0, now)
         })?;
         self.wake_backup();
-        Ok(prefs)
+        Ok(())
     }
 
     /// The preferences object a pull read from `source`. It is authenticated and parsed before

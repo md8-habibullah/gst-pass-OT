@@ -22,6 +22,7 @@ fn fast() -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: EDIT_TOKEN_TTL,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 
@@ -189,6 +190,43 @@ fn the_zone_is_checked_and_survives_a_restart() {
     let d = fx.app.device_get();
     assert_eq!(d.time_zone.as_deref(), Some("Europe/London"));
     assert!(d.setup_done);
+}
+
+#[test]
+fn opening_in_search_and_the_list_order_survive_a_restart_and_an_erase() {
+    let mut fx = Fx::new();
+    let d = fx.app.device_get();
+    assert!(!d.open_in_search);
+    assert_eq!(d.list_sort, "updated-desc");
+
+    fx.app.device_set_open_in_search(true).unwrap();
+    fx.app.device_set_list_sort("versions-desc").unwrap();
+    assert!(fx.app.device_set_list_sort("sideways").is_err());
+    assert_eq!(fx.app.device_get().list_sort, "versions-desc");
+
+    fx.restart();
+    let d = fx.app.device_get();
+    assert!(d.open_in_search);
+    assert_eq!(d.list_sort, "versions-desc");
+
+    fx.app.demo_spawn().unwrap();
+    fx.app.wipe_with(&mut NoObserver).unwrap();
+    let d = fx.app.device_get();
+    assert!(d.open_in_search);
+    assert_eq!(d.list_sort, "versions-desc");
+}
+
+#[test]
+fn a_hand_edited_list_order_is_the_default_and_keeps_the_other_settings() {
+    let fx = Fx::new();
+    fx.app.device_set_time_zone("Asia/Dhaka").unwrap();
+    let path = fx.dir.path().join(device::DEVICE_FILE);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    v["listSort"] = serde_json::json!("not-an-order");
+    std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+    let loaded = device::load(fx.dir.path());
+    assert_eq!(loaded.list_sort, device::DEFAULT_SORT);
+    assert_eq!(loaded.time_zone.as_deref(), Some("Asia/Dhaka"));
 }
 
 #[test]

@@ -126,56 +126,67 @@ fn a_local_state_that_is_ahead_of_the_bucket_is_left_alone_and_then_pushed() {
 
 // ============================================================ diverged
 
+/// Change one field of an item, whatever else it holds.
+fn edit_field(app: &AppCore, id: &str, key: &str, value: &str) {
+    let b = app.item_begin_edit(id, Some(PW.into())).unwrap();
+    let mut d = b.draft.clone();
+    d.fields.insert(key.into(), value.into());
+    app.item_update(id, &b.token, b.version, d).unwrap();
+}
+
 #[test]
-fn a_diverged_item_keeps_the_local_head_and_stores_the_other_one_as_another_devices_version() {
+fn a_diverged_item_is_merged_and_both_earlier_states_stay_in_the_history() {
     let fx = Fx::new(manual());
-    let x = two_devices(&fx); // the bucket holds B's v2
+    let x = two_devices(&fx); // the bucket holds B's v2, "from-B"
     let theirs = remote_item(&fx, &x);
 
     fx.switch_to("A");
-    edit_password(&fx.app, &x, "from-A"); // A's own v2
+    edit_password(&fx.app, &x, "from-A"); // A's own v2, made later than B's
     let views = fx.run();
     assert_eq!(views[0].health.state, HealthState::Healthy, "{views:?}");
     assert_eq!(views[0].health.queued, 0);
 
-    // the local head stays; the bucket's head is not touched
-    assert_eq!(version_of(&fx, &x), 2);
+    // both changed the password: the newer one (A's) stands, as a new state above everything
+    assert_eq!(version_of(&fx, &x), 4);
     assert_eq!(password_of(&fx, &x), "from-A");
-    assert_eq!(remote_item(&fx, &x), theirs);
-    // the other device's state is one more, immutable version, flagged
+    // the merged state replaced B's in the bucket (it grew out of it)
+    assert_ne!(remote_item(&fx, &x), theirs);
+    assert_eq!(remote_item(&fx, &x), item_blob(&fx, &x));
+
+    // the person is told, and all three states are in the history
     let view = fx.app.item_get(&x).unwrap();
     assert!(view.changed_elsewhere);
     let entries = fx.app.history_list(&x).unwrap();
-    assert_eq!(entries.len(), 3);
+    assert_eq!(
+        entries.iter().map(|e| e.version).collect::<Vec<_>>(),
+        [4, 3, 2, 1]
+    );
     let copy = entries.iter().find(|e| e.other_device).unwrap();
     assert_eq!(copy.version, 3, "above every number in use here");
-    assert_eq!(copy.event, crate::storage::model::ItemEvent::Edited);
+    let merged = &entries[0];
+    assert!(!merged.other_device);
+    assert_eq!(merged.event, crate::storage::model::ItemEvent::Edited);
     assert_eq!(
-        entries
-            .iter()
-            .filter(|e| !e.other_device)
-            .map(|e| e.version)
-            .collect::<Vec<_>>(),
-        [2, 1]
+        merged.restored_from,
+        Some(3),
+        "a merge records the copy it was built with"
     );
     assert_eq!(
         fx.app.history_get(&x, 3, Some(PW.into())).unwrap().fields["password"],
         "from-B"
     );
+    assert_eq!(
+        fx.app.history_get(&x, 2, Some(PW.into())).unwrap().fields["password"],
+        "from-A"
+    );
     assert_eq!(sync_revision(&fx), 1);
 
-    // a second pass over the unchanged bucket downloads nothing and adds nothing
+    // a second pass over the unchanged bucket adds nothing
     fx.bucket("bkt").clear_log();
     let views = fx.run();
     assert_eq!(views[0].health.state, HealthState::Healthy);
-    assert_eq!(
-        fx.bucket("bkt").count(Op::Get),
-        0,
-        "{:?}",
-        fx.bucket("bkt").log()
-    );
-    assert_eq!(fx.app.history_list(&x).unwrap().len(), 3);
-    assert_eq!(sync_revision(&fx), 1);
+    assert_eq!(fx.app.history_list(&x).unwrap().len(), 4);
+    assert_eq!(version_of(&fx, &x), 4);
 
     // "Got it" clears the flag, the copy stays in the history
     fx.app.item_review_other_device(&x).unwrap();
@@ -188,6 +199,60 @@ fn a_diverged_item_keeps_the_local_head_and_stores_the_other_one_as_another_devi
 }
 
 #[test]
+fn changes_to_different_fields_on_two_devices_both_survive() {
+    let fx = Fx::new(manual());
+    let x = two_devices(&fx); // B changed the password to "from-B"
+    fx.switch_to("A");
+    edit_field(&fx.app, &x, "username", "ana@work.example"); // A: another field
+    fx.run();
+
+    assert_eq!(password_of(&fx, &x), "from-B", "B's change came in");
+    assert_eq!(
+        fx.app.item_reveal(&x, Some(PW.into())).unwrap().fields["username"],
+        "ana@work.example",
+        "and A's stayed"
+    );
+    // nothing was lost in either direction: B fast-forwards to the merged state, nothing flagged for it
+    fx.switch_to("B");
+    let views = fx.run();
+    assert_eq!(views[0].health.state, HealthState::Healthy, "{views:?}");
+    assert_eq!(password_of(&fx, &x), "from-B");
+    assert_eq!(
+        fx.app.item_reveal(&x, Some(PW.into())).unwrap().fields["username"],
+        "ana@work.example"
+    );
+    assert_eq!(other_device_entries(&fx, &x), 0);
+    assert!(!fx.app.item_get(&x).unwrap().changed_elsewhere);
+    assert_eq!(item_blob(&fx, &x), remote_item(&fx, &x));
+}
+
+#[test]
+fn a_long_run_of_edits_on_the_other_device_comes_along_as_history() {
+    let fx = Fx::new(manual());
+    let x = two_devices(&fx); // B's v2 is in the bucket
+    edit_field(&fx.app, &x, "notes", "from B, one");
+    fx.run();
+    edit_field(&fx.app, &x, "notes", "from B, one\nfrom B, two");
+    fx.run(); // B: v4 in the bucket
+
+    fx.switch_to("A");
+    edit_field(&fx.app, &x, "username", "ana@work.example"); // A: v2, from v1
+    fx.run();
+
+    // B's v2, v3 and v4 are all kept as its own line of states; the merge sits on top
+    assert_eq!(other_device_entries(&fx, &x), 3);
+    let view = fx.app.item_reveal(&x, Some(PW.into())).unwrap();
+    assert_eq!(view.fields["username"], "ana@work.example");
+    assert_eq!(view.fields["password"], "from-B");
+    assert_eq!(view.fields["notes"], "from B, one\nfrom B, two");
+    let entries = fx.app.history_list(&x).unwrap();
+    assert_eq!(entries.len(), 6, "{entries:?}");
+    assert_eq!(entries[0].version, 6);
+    // only the one of them that was the head counts as waiting to be looked at
+    assert!(fx.app.item_get(&x).unwrap().changed_elsewhere);
+}
+
+#[test]
 fn restoring_the_other_devices_copy_clears_the_flag_and_lets_that_device_fast_forward() {
     let fx = Fx::new(manual());
     let x = two_devices(&fx);
@@ -196,9 +261,11 @@ fn restoring_the_other_devices_copy_clears_the_flag_and_lets_that_device_fast_fo
     fx.run();
     assert!(fx.app.item_get(&x).unwrap().changed_elsewhere);
 
-    // the existing restore-from-version, on the copy
+    // the automatic merge kept A's newer password; the copy of B's can still be restored (the existing
+    // restore-from-version, on the copy)
+    assert_eq!(password_of(&fx, &x), "from-A");
     let restored = fx.app.history_restore(&x, 3, Some(PW.into())).unwrap();
-    assert_eq!(restored.version, 4);
+    assert_eq!(restored.version, 5);
     assert_eq!(password_of(&fx, &x), "from-B");
     assert!(
         !fx.app.item_get(&x).unwrap().changed_elsewhere,
@@ -217,7 +284,7 @@ fn restoring_the_other_devices_copy_clears_the_flag_and_lets_that_device_fast_fo
     assert_eq!(version_of(&fx, &x), 2);
     let views = fx.run();
     assert_eq!(views[0].health.state, HealthState::Healthy, "{views:?}");
-    assert_eq!(version_of(&fx, &x), 4);
+    assert_eq!(version_of(&fx, &x), 5);
     assert_eq!(password_of(&fx, &x), "from-B");
     assert_eq!(other_device_entries(&fx, &x), 0);
     assert!(!fx.app.item_get(&x).unwrap().changed_elsewhere);
@@ -225,22 +292,60 @@ fn restoring_the_other_devices_copy_clears_the_flag_and_lets_that_device_fast_fo
 }
 
 #[test]
-fn a_device_that_keeps_its_own_state_ends_up_with_both_on_the_other_device_too() {
+fn the_other_device_grows_into_the_merge_and_whatever_was_edited_after_it() {
     let fx = Fx::new(manual());
     let x = two_devices(&fx);
     fx.switch_to("A");
     edit_password(&fx.app, &x, "from-A");
-    fx.run(); // A: diverged; the bucket keeps B's head
-    edit_password(&fx.app, &x, "from-A-later"); // A's next edit supersedes it
+    fx.run(); // A: merged, and the bucket holds the merge
+    edit_password(&fx.app, &x, "from-A-later"); // A's next edit goes on from the merge
     fx.run();
     assert_eq!(remote_item(&fx, &x), item_blob(&fx, &x));
 
     fx.switch_to("B");
+    let views = fx.run();
+    assert_eq!(views[0].health.state, HealthState::Healthy, "{views:?}");
+    // B's own state is in A's line, so this is a plain fast-forward: nothing is flagged for B
+    assert_eq!(password_of(&fx, &x), "from-A-later");
+    assert!(!fx.app.item_get(&x).unwrap().changed_elsewhere);
+    assert_eq!(other_device_entries(&fx, &x), 0);
+    assert_eq!(item_blob(&fx, &x), remote_item(&fx, &x));
+}
+
+#[test]
+fn two_devices_that_both_merge_before_hearing_from_each_other_end_up_on_one_state() {
+    let fx = Fx::new(manual());
+    let x = two_devices(&fx); // the bucket holds B's v2
+                              // A edits and, before it has pushed, B edits again and pushes first
+    fx.switch_to("A");
+    edit_field(&fx.app, &x, "username", "ana@work.example");
+    fx.switch_to("B");
+    edit_field(&fx.app, &x, "notes", "from B");
     fx.run();
-    // B's own head stays; A's line of edits is the copy
-    assert_eq!(password_of(&fx, &x), "from-B");
-    assert!(fx.app.item_get(&x).unwrap().changed_elsewhere);
-    assert_eq!(other_device_entries(&fx, &x), 1);
+    fx.switch_to("A");
+    fx.run(); // A merges B's v3 with its own edit and pushes
+    fx.switch_to("B");
+    fx.run();
+    fx.switch_to("A");
+    let views = fx.run();
+    assert_eq!(views[0].health.state, HealthState::Healthy, "{views:?}");
+    let (a_user, a_notes) = {
+        let v = fx.app.item_reveal(&x, Some(PW.into())).unwrap();
+        (v.fields["username"].clone(), v.fields["notes"].clone())
+    };
+    fx.switch_to("B");
+    fx.run();
+    let v = fx.app.item_reveal(&x, Some(PW.into())).unwrap();
+    assert_eq!(
+        (v.fields["username"].clone(), v.fields["notes"].clone()),
+        (a_user, a_notes)
+    );
+    assert_eq!(v.fields["password"], "from-B");
+    assert_eq!(
+        item_blob(&fx, &x),
+        remote_item(&fx, &x),
+        "both hold the bucket's state"
+    );
 }
 
 // ============================================================ rollback guard
@@ -269,16 +374,16 @@ fn an_older_state_in_the_bucket_than_one_already_seen_is_not_merged_and_is_repla
     fx.switch_to("B");
     edit_password(&fx.app, &x, "b2"); // B's own v2, B has not pulled yet
     fx.run();
-    // B saw A's v3 and kept both: one copy from another device
+    // B saw A's v3 and merged: B's own edit was the later one and stands; A's v2 and v3 are kept as copies
     assert_eq!(password_of(&fx, &x), "b2");
-    assert_eq!(other_device_entries(&fx, &x), 1);
+    assert_eq!(other_device_entries(&fx, &x), 2);
 
     // the bucket is rolled back to a state older than what B has seen (and not part of its line)
     fx.bucket("bkt").plant(&keys::item(&x), &a2);
     fx.run();
     assert_eq!(
         other_device_entries(&fx, &x),
-        1,
+        2,
         "the stale state was not merged as one more copy"
     );
     assert_eq!(password_of(&fx, &x), "b2");
@@ -635,6 +740,7 @@ fn a_change_decided_against_an_old_head_steps_back_when_the_item_was_edited_mean
             id: x.clone(),
             expect: old_head,
             head: theirs.clone(),
+            snapshots: vec![],
         }),
         Applied::Raced
     );

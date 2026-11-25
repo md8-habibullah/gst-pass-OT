@@ -1,5 +1,7 @@
-import { getBackend, type Backend, type BackupTargetInput, type ClipboardClear, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ProfileInfo, type SuiteInfo, type Theme, type TrashEntry, type VaultStatus } from "../backend";
+import { getBackend, type Backend, type BackupTargetInput, type ClipboardClear, type DeviceInfo, type GateOutcome, type GateStatus, type ItemSummary, type ListSort, type ProfileInfo, type SearchHit, type SuiteInfo, type Theme, type TrashEntry, type VaultStatus } from "../backend";
+import { allFolders, childFolders, isInside, itemsIn, parentFolder, type FolderNode } from "../lib/folders";
 import { setDisplayZone } from "../lib/format";
+import { activeFilterCount, applyFilters, compareItems, NO_FILTERS, summaryMatches, type ListFilters } from "../lib/listView";
 import { canGenerate, DEFAULT_GEN, savedOrDefault, type GenOptions } from "../lib/password";
 import { applyTheme } from "../lib/theme";
 import { setBrand } from "./brand";
@@ -31,9 +33,18 @@ export interface Toast {
   kind: "info" | "success" | "error";
   text: string;
   action?: ToastAction;
-  /** When set, a ring counts down this long (clipboard auto-clear). */
-  countdownMs?: number;
+  /** How long it stays on screen. A notice never waits longer than {@link TOAST_MS} unless the caller says so (warnings do). */
   ttlMs: number;
+}
+
+/** A notice is on screen this long, then goes by itself; a swipe to either side (or the close button) removes it sooner. */
+export const TOAST_MS = 5000;
+
+/** What the deeper search found for one query (the core reads notes and every other field; the screen only gets ids and field names). */
+export interface DeepSearch {
+  query: string;
+  oldVersions: boolean;
+  hits: SearchHit[];
 }
 
 export interface AppState {
@@ -50,11 +61,22 @@ export interface AppState {
   profile: ProfileInfo | null;
   items: ItemSummary[];
   trash: TrashEntry[];
+  /** Folders made on purpose (so an empty one can exist). Items bring the rest; see `allFolders`. */
+  folders: string[];
+  /** The folder the list is showing, or `null` for the top level. */
+  folder: string | null;
   filter: Filter;
   query: string;
+  /** The extra list filters (types, tag, number of versions, ...). */
+  filters: ListFilters;
+  /** Search also looks in the versions an item had before. */
+  includeOld: boolean;
+  deep: DeepSearch | null;
   selectedId: string | null;
   /** True for the single render after unlocking so the shell can play the entrance sequence once. */
   justUnlocked: boolean;
+  /** The vault just opened and "open in search" is on: the list puts the cursor in the search box once, then clears this. */
+  searchOnOpen: boolean;
   toasts: Toast[];
   /** How long a copied secret stays on the clipboard. Kept by the core with the other device settings, never in the web view. */
   clipboardClear: ClipboardClear;
@@ -77,10 +99,16 @@ export const app = createStore<AppState>({
   profile: null,
   items: [],
   trash: [],
+  folders: [],
+  folder: null,
   filter: "all",
   query: "",
+  filters: NO_FILTERS,
+  includeOld: false,
+  deep: null,
   selectedId: null,
   justUnlocked: false,
+  searchOnOpen: false,
   toasts: [],
   syncRevision: 0,
   generator: { ...DEFAULT_GEN },
@@ -108,7 +136,10 @@ export function be(): Backend {
   return backend;
 }
 
-const EMPTY_VAULT: Partial<AppState> = { items: [], trash: [], selectedId: null, query: "", filter: "all", toasts: [], justUnlocked: false, generator: { ...DEFAULT_GEN } };
+const EMPTY_VAULT: Partial<AppState> = {
+  items: [], trash: [], folders: [], folder: null, selectedId: null, query: "", filters: NO_FILTERS, includeOld: false, deep: null, filter: "all",
+  toasts: [], justUnlocked: false, searchOnOpen: false, generator: { ...DEFAULT_GEN },
+};
 
 /** Re-reads the account list and decides which lock-screen view to start from. No vault at all: make the built-in one. */
 async function settle(status: VaultStatus): Promise<void> {
@@ -175,14 +206,20 @@ export async function refresh(): Promise<void> {
   const b = be();
   // The remembered generator settings ride along; they must never get in the way of showing the vault.
   const [items, trash, prefs] = await Promise.all([b.listItems(), b.listTrash(), b.prefsGet().catch(() => null)]);
-  app.set((s) => ({
+  app.set((s) => {
+    const folders = prefs?.folders ?? s.folders;
+    return {
     ...s,
     items,
     trash,
+    folders,
+    // The folder being shown was removed or renamed somewhere else (another device, a pull): back to the top level.
+    folder: s.folder && allFolders(folders, items).includes(s.folder) ? s.folder : null,
     // A change made a moment ago and not yet saved is newer than what the vault answers.
     generator: prefs && !genPending && genSaving === 0 ? savedOrDefault(prefs.generator) : s.generator,
     selectedId: s.selectedId && (items.some((i) => i.id === s.selectedId) || trash.some((t) => t.id === s.selectedId)) ? s.selectedId : null,
-  }));
+    };
+  });
 }
 
 // ---- the generator's remembered settings ----
@@ -240,7 +277,7 @@ async function preload(): Promise<void> {
 
 /** Called by the lock screen once its unlock animation has finished. */
 export function enterApp(): void {
-  patch({ phase: "ready", justUnlocked: true, filter: "all", query: "", selectedId: null });
+  patch({ phase: "ready", justUnlocked: true, searchOnOpen: app.get().device?.openInSearch === true, filter: "all", query: "", folder: null, filters: NO_FILTERS, includeOld: false, deep: null, selectedId: null });
 }
 
 // ---- accounts ----
@@ -490,9 +527,50 @@ export async function lockVault(): Promise<void> {
 }
 
 export const consumeUnlockMoment = () => patch({ justUnlocked: false });
+export const consumeSearchOnOpen = () => patch({ searchOnOpen: false });
 export const select = (id: string | null) => patch({ selectedId: id });
-export const setFilter = (filter: Filter) => patch({ filter, selectedId: null });
+export const setFilter = (filter: Filter) => patch({ filter, folder: null, selectedId: null });
 export const setQuery = (query: string) => patch({ query });
+export const setFilters = (filters: ListFilters) => patch({ filters });
+export const setIncludeOld = (includeOld: boolean) => patch({ includeOld });
+export const setDeep = (deep: DeepSearch | null) => patch({ deep });
+/** Opens a folder in the list (`null`: the top level). */
+export const openFolder = (folder: string | null) => patch({ folder, selectedId: null });
+
+// ---- folders ----
+// The core keeps the folder list with the vault's other synced settings; each call answers with the list as it is now.
+
+/** Makes a folder (and the ones above it). Answers with its path. A refusal (too deep, too long) is thrown with its words. */
+export async function createFolder(path: string): Promise<string> {
+  const change = await be().createFolder(path);
+  patch({ folders: change.prefs.folders });
+  return change.path ?? path;
+}
+
+/** Renames a folder, or moves it under another: everything inside follows. */
+export async function renameFolder(from: string, to: string): Promise<number> {
+  const change = await be().renameFolder(from, to);
+  const here = app.get().folder;
+  patch({ folders: change.prefs.folders, folder: here && isInside(here, from) ? to + here.slice(from.length) : here });
+  await refresh();
+  return change.moved;
+}
+
+/** Removes the folder only: what was inside moves up one level and nothing is deleted. */
+export async function removeFolder(path: string): Promise<number> {
+  const change = await be().removeFolder(path);
+  const here = app.get().folder;
+  patch({ folders: change.prefs.folders, folder: here && isInside(here, path) ? parentFolder(path) : here });
+  await refresh();
+  return change.moved;
+}
+
+/** Puts items in a folder (`null`: no folder). */
+export async function moveItems(ids: string[], folder: string | null): Promise<number> {
+  const n = await be().moveItems(ids, folder);
+  await refresh();
+  return n;
+}
 
 /**
  * How long a copied secret stays on the clipboard. The core keeps it (`device.json`), never the web view: the screen stores
@@ -506,6 +584,27 @@ export async function setClipboardClear(sec: ClipboardClear): Promise<void> {
   } catch (e) {
     patch({ clipboardClear: before });
     pushToast({ kind: "error", text: e instanceof Error ? e.message : "The clipboard time could not be saved." });
+  }
+}
+
+/** "Open in search": after the vault opens, the cursor is in the search box (the keyboard comes up on a phone). The core keeps the choice. */
+export async function setOpenInSearch(on: boolean): Promise<void> {
+  try {
+    adoptDevice(await be().deviceSetOpenInSearch(on));
+  } catch (e) {
+    pushToast({ kind: "error", text: e instanceof Error ? e.message : "The setting could not be saved." });
+  }
+}
+
+/** The order the item list starts in. The core keeps the choice; the list follows it at once. */
+export async function setListSort(order: ListSort): Promise<void> {
+  const before = app.get().device;
+  if (before) patch({ device: { ...before, listSort: order } });
+  try {
+    adoptDevice(await be().deviceSetListSort(order));
+  } catch (e) {
+    if (before) patch({ device: before });
+    pushToast({ kind: "error", text: e instanceof Error ? e.message : "The order could not be saved." });
   }
 }
 
@@ -525,7 +624,7 @@ export async function setTheme(theme: Theme): Promise<void> {
 let toastSeq = 0;
 export function pushToast(t: Omit<Toast, "id" | "ttlMs"> & { ttlMs?: number }): number {
   const id = ++toastSeq;
-  const toast: Toast = { ttlMs: t.countdownMs ?? 4200, ...t, id };
+  const toast: Toast = { ...t, ttlMs: t.ttlMs ?? TOAST_MS, id };
   app.set((s) => ({ ...s, toasts: [...s.toasts.slice(-2), toast] }));
   return id;
 }
@@ -550,14 +649,34 @@ const FILTER_MATCH: Record<ListFilter, (i: ItemSummary) => boolean> = {
 
 const isListFilter = (f: Filter): f is ListFilter => f in FILTER_MATCH;
 
-export function visibleItems(items: ItemSummary[], filter: Filter, query: string): ItemSummary[] {
-  if (!isListFilter(filter)) return [];
-  const q = query.trim().toLowerCase();
-  const match = FILTER_MATCH[filter];
-  return items
-    .filter(match)
-    .filter((i) => !q || i.title.toLowerCase().includes(q) || (i.subtitle ?? "").toLowerCase().includes(q) || i.tags.some((t) => t.toLowerCase().includes(q)) || (i.folder ?? "").toLowerCase().includes(q))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+/** What the list shows: folders first (when browsing), then items in the chosen order. */
+export interface ListModel {
+  /** Folders directly inside the open one. Empty while searching or filtering, which look through everything. */
+  folders: FolderNode[];
+  items: ItemSummary[];
+  /** Searching or filtering: every folder is looked through and the list is flat. */
+  flat: boolean;
+  /** What the deeper search found, by item id (field names for the row's note). */
+  hits: Map<string, SearchHit>;
+}
+
+/** The one place that decides what the list holds, so the screen and the keyboard shortcuts agree. */
+export function visibleList(s: Pick<AppState, "items" | "filter" | "query" | "filters" | "folder" | "folders" | "deep" | "includeOld" | "device">): ListModel {
+  const hits = new Map<string, SearchHit>();
+  if (!isListFilter(s.filter)) return { folders: [], items: [], flat: false, hits };
+  const order = compareItems(s.device?.listSort ?? "updated-desc");
+  const base = applyFilters(s.items.filter(FILTER_MATCH[s.filter]), s.filters);
+  const q = s.query.trim();
+  const flat = q !== "" || activeFilterCount(s.filters) > 0;
+  if (flat) {
+    const deepFits = s.deep !== null && s.deep.query === q && s.deep.oldVersions === s.includeOld;
+    if (q && deepFits) for (const h of s.deep!.hits) hits.set(h.id, h);
+    const items = (q ? base.filter((i) => summaryMatches(i, q) || hits.has(i.id)) : base).sort(order);
+    return { folders: [], items, flat, hits };
+  }
+  // Browsing. The folders made on purpose only show with "All items"; a type or a list of favorites shows the folders that hold matching items.
+  const known = allFolders(s.filter === "all" ? s.folders : [], base);
+  return { folders: childFolders(known, base, s.folder), items: itemsIn(base, s.folder).sort(order), flat, hits };
 }
 
 export function counts(items: ItemSummary[], trashCount: number): Record<Filter, number> {

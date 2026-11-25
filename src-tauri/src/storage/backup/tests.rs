@@ -36,6 +36,7 @@ pub(super) fn fast() -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: EDIT_TOKEN_TTL,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 
@@ -1168,6 +1169,46 @@ fn unlocking_is_a_trigger_that_sends_what_is_queued() {
     });
     settle(&fx);
     assert_eq!(fx.state("Primary"), HealthState::Healthy);
+}
+
+#[test]
+fn coming_back_online_is_a_trigger_that_sends_what_was_made_offline() {
+    let fx = Fx::with_target(background());
+    settle(&fx);
+    let b = fx.bucket("bkt");
+    // offline: the app still works, and the changes wait in the durable queue
+    b.fail_all(None, unreachable());
+    let item = fx.app.item_create(login("Bank", "pw1")).unwrap();
+    let second = fx.app.item_create(login("Mail", "pw2")).unwrap();
+    wait_for_failure(&fx);
+    assert_eq!(
+        fx.app.item_list().unwrap().len(),
+        2,
+        "no connection, no loss of function"
+    );
+    let calls = b.total_calls();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(b.total_calls(), calls, "nothing is retried on a schedule");
+    // the connection returns, and the page says so: no new change, no unlock, no exit
+    b.clear_faults();
+    fx.app.sync_reconnect();
+    wait_for("what was made offline to be sent", || {
+        bucket_has(&b, &keys::item(&item.id)) && bucket_has(&b, &keys::item(&second.id))
+    });
+    settle(&fx);
+    assert_eq!(fx.state("Primary"), HealthState::Healthy);
+}
+
+#[test]
+fn coming_back_online_with_the_vault_locked_or_nothing_selected_does_nothing() {
+    let fx = Fx::with_target(background());
+    settle(&fx);
+    let b = fx.bucket("bkt");
+    fx.app.lock();
+    let calls = b.total_calls();
+    fx.app.sync_reconnect();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(b.total_calls(), calls, "a locked vault contacts nobody");
 }
 
 #[test]

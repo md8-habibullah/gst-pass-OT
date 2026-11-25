@@ -11,7 +11,7 @@
 //! ordinary extra fields.
 
 use super::jsonutil::format_iso;
-use crate::storage::model::{CustomField, ItemDraft, ItemType};
+use crate::storage::model::{urls_of, CustomField, ItemDraft, ItemType};
 use crate::storage::{uuid, Result, StorageError};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -347,14 +347,12 @@ fn bw_item<'a>(
         ItemType::Login => {
             item.notes = opt(f(d, "notes"));
             item.login = Some(BwLogin {
-                uris: opt(f(d, "url"))
-                    .map(|u| {
-                        vec![BwUri {
-                            matching: None,
-                            uri: u,
-                        }]
+                uris: urls_of(f(d, "url"))
+                    .map(|u| BwUri {
+                        matching: None,
+                        uri: u,
                     })
-                    .unwrap_or_default(),
+                    .collect(),
                 username: opt(f(d, "username")),
                 password: opt(f(d, "password")),
                 totp: opt(f(d, "totp")),
@@ -742,6 +740,28 @@ mod tests {
                 rec.draft.title
             );
         }
+    }
+
+    #[test]
+    fn every_web_address_of_a_login_is_exported_and_comes_back() {
+        let one = draft(
+            ItemType::Login,
+            "Many",
+            &[("url", "https://a.example\nhttps://b.example")],
+        );
+        let recs = vec![ExportRecord {
+            draft: one,
+            ..records().remove(0)
+        }];
+        let out = bitwarden_json(&recs).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(out.as_slice()).unwrap();
+        let uris = v["items"][0]["login"]["uris"].as_array().unwrap();
+        assert_eq!(uris.len(), 2);
+        assert_eq!(uris[1]["uri"], "https://b.example");
+        // a file with both addresses reads back as both
+        let back = bitwarden::parse_json(out.as_slice()).unwrap();
+        let d = back.entries[0].to_draft().draft;
+        assert_eq!(d.fields["url"], "https://a.example\nhttps://b.example");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // DEV-ONLY deep links for design review and screenshots. Active only with the in-memory preview backend
 // in a development browser; the whole module is dropped from production builds (see App.tsx).
 import { PREVIEW_PASSWORD, gate, seedPreview, simulateOtherDeviceEdit } from "../backend/mock";
-import { app, be, enterApp, refreshDevice, refreshGate, refreshProfiles, select, selectProfile, setFilter, setTheme, showPicker, syncAfterCoreLock, unlock, visibleItems, type Filter } from "./app";
+import { app, be, enterApp, refreshDevice, refreshGate, refreshProfiles, select, selectProfile, setFilter, setTheme, showPicker, syncAfterCoreLock, unlock, visibleList, type Filter } from "./app";
 import { setBrand } from "./brand";
 import { reprompt } from "../components/reprompt/Reprompt";
 import { openEditor, openNewItem, setSettingsPage, type SettingsPageId } from "./ui";
@@ -47,7 +47,7 @@ export async function devBootstrap(): Promise<void> {
   const open = q.get("open");
   if (open !== null) {
     const s = app.get();
-    const id = filter === "trash" ? s.trash[Number(open)]?.id : visibleItems(s.items, s.filter, "")[Number(open)]?.id;
+    const id = filter === "trash" ? s.trash[Number(open)]?.id : visibleList(s).items[Number(open)]?.id;
     if (id) select(id);
   }
   const sheet = q.get("sheet");

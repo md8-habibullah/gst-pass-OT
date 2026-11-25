@@ -5,8 +5,9 @@
 //! * [`commands`]: the Tauri IPC surface (`ai-docs/IPC_CONTRACT.md`)
 //! * [`gate`]: Stage 1, the optional app gate, the wipe and the inactivity lock (`ai-docs/FEATURE_QUEUE.md` Q1)
 //!
-//! Backup sync runs on exactly three triggers (`ai-docs/FEATURE_QUEUE.md` Q0): unlock (pull and
-//! reconcile), a committed local change (push) and app exit or backgrounding (flush). This file
+//! Backup sync runs on exactly four triggers (`ai-docs/FEATURE_QUEUE.md` Q0, plus the reconnect of Q6): unlock
+//! (pull and reconcile), a committed local change (push), app exit or backgrounding (flush) and the device
+//! coming back online (pull and push, called by the page). This file
 //! hooks the third one: the window `CloseRequested` event on desktop, and the mobile
 //! `Suspended` event (Android `onPause`). There are no timers, no tray icon and no notifications.
 

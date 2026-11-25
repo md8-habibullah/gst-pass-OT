@@ -16,6 +16,7 @@ node e2e/real-gate.mjs                              # Stage 1 gate, decoy maths,
 node e2e/real-uninstall.mjs                         # theme and clipboard time kept by the core, "Remove Hexis from this device" leaves no file
 node e2e/real-drive.mjs                             # encrypted drive, 50 MB limit, attachments
 node e2e/real-import.mjs                            # import preview and commit, plaintext export, round trip
+node e2e/real-lists.mjs                             # folders first, search through notes and old versions, filters and order, several web addresses, open in search
 node e2e/real-disguise.mjs                          # app name and icon (writes a launcher entry in a temp XDG folder)
 node e2e/real-backup.mjs                            # backup targets against scripts/mock_s3.py
 node e2e/real-sync.mjs                              # two devices, pull and reconcile, the generator settings, no idle traffic

@@ -9,7 +9,7 @@
 //! * Every item command acts on the selected profile's [`Session`]; with nothing selected they
 //!   answer `locked` (and `vault_unlock` answers `no_vault`).
 
-use super::backup::prefs::{GeneratorPrefs, PrefsView};
+use super::backup::prefs::{FolderChange, GeneratorPrefs, PrefsView};
 use super::backup::{
     probe_config, restore, BackupRuntime, BackupTargetInput, BackupTargetView, BackupTestResult,
     TargetConfig,
@@ -26,8 +26,9 @@ use super::profiles::{
     name_key, normalize_display_name, Entry, ProfileInfo, ProfileList, Registry, LEGACY_DIR,
     VAULTS_DIR, VAULT_FILE,
 };
-use super::session::{Session, SessionConfig};
+use super::session::{PurgePlan, Session, SessionConfig};
 use super::uuid;
+use super::vault::search::SearchHit;
 use crate::crypto::{now_millis, VaultKeyBundle};
 use crate::gate::GateCore;
 use serde::Serialize;
@@ -611,6 +612,14 @@ impl AppCore {
         }
     }
 
+    /// Trigger 4: the page noticed the device is back online. Asks the worker to pull and then send, and returns at once.
+    /// A locked vault (or none selected) is a no-op.
+    pub fn sync_reconnect(&self) {
+        if let Some((_, s)) = self.active_session() {
+            s.sync_request();
+        }
+    }
+
     // ------------------------------------------------------------------ links
 
     /// Show a web address in the system browser (the only door the webview has to do that).
@@ -729,8 +738,49 @@ impl AppCore {
         self.session()?.trash_list()
     }
 
-    pub fn item_purge(&self, id: &str, password: String, confirmation: &str) -> Result<()> {
-        self.session()?.item_purge(id, password, confirmation)
+    /// What erasing this trashed item for good will ask for (and, for a recent one, the sum to solve).
+    pub fn item_purge_plan(&self, id: &str) -> Result<PurgePlan> {
+        self.session()?.item_purge_plan(id)
+    }
+
+    pub fn item_purge(&self, id: &str, password: String, answer: &str) -> Result<()> {
+        self.session()?.item_purge(id, password, answer)
+    }
+
+    pub fn item_search(&self, query: &str, old_versions: bool) -> Result<Vec<SearchHit>> {
+        self.session()?.item_search(query, old_versions)
+    }
+
+    /// Makes a folder; the path comes back as the vault spells it.
+    pub fn folder_create(&self, path: &str) -> Result<FolderChange> {
+        let (path, prefs) = self.session()?.folder_create(path)?;
+        Ok(FolderChange {
+            path: Some(path),
+            moved: 0,
+            prefs,
+        })
+    }
+
+    pub fn folder_rename(&self, from: &str, to: &str) -> Result<FolderChange> {
+        let (moved, prefs) = self.session()?.folder_rename(from, to)?;
+        Ok(FolderChange {
+            path: None,
+            moved,
+            prefs,
+        })
+    }
+
+    pub fn folder_remove(&self, path: &str) -> Result<FolderChange> {
+        let (moved, prefs) = self.session()?.folder_remove(path)?;
+        Ok(FolderChange {
+            path: None,
+            moved,
+            prefs,
+        })
+    }
+
+    pub fn item_move(&self, ids: &[String], folder: Option<&str>) -> Result<usize> {
+        self.session()?.item_move(ids, folder)
     }
 
     pub fn history_list(&self, id: &str) -> Result<Vec<VersionEntry>> {

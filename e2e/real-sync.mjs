@@ -4,7 +4,7 @@
 // and an object that fails authentication (ignored, counted, local data untouched).
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, unlockUi, addLogin, runSteps } from "./lib.mjs";
+import { Core, SP, check, finish, freshDir, walkFiles, launch, sleep, text, has, waitText, waitGone, btn, nav, createAccount, firstStart, waitDemoShell, unlockUi, addLogin, runSteps, solve } from "./lib.mjs";
 const BIN = process.env.E2E_BIN; const only = process.argv[2];
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const S3_PORT = 9335, S3_DATA = freshDir("s-s3"), DATA_A = freshDir("s-data-a"), DATA_B = freshDir("s-data-b");
@@ -161,7 +161,10 @@ step("restoring the other device's copy makes a head both devices accept", async
 
 step("deletion on A reaches B", async (p) => {
   const id = await idOf(A, "GitHub (work)");
-  await ok(A, "item_trash", { id }); await ok(A, "item_purge", { id, password: PW, confirmation: "CONFIRM" });
+  await ok(A, "item_trash", { id });
+  const plan = await ok(A, "item_purge_plan", { id });
+  check("an item trashed a moment ago needs a sum, and the plan never carries the answer", plan.recent === true && typeof plan.sum === "string" && !("answer" in plan), JSON.stringify(plan));
+  await ok(A, "item_purge", { id, password: PW, answer: String(solve(plan.sum)) });
   await settled(A, "A");
   await pullNow(p);
   await waitGone(p, "GitHub (work)", 25000);

@@ -19,18 +19,21 @@
 
 use super::{IndexEntry, Vault};
 use crate::crypto::{now_millis, KeyPurpose};
-use crate::importer::entry::{dup_key, dup_key_parts, DupKey};
+use crate::importer::entry::{
+    account_key, dup_key, dup_key_parts, name_key, same_account, AccountKey, DupKey,
+};
 use crate::importer::export::ExportRecord;
 use crate::importer::limits::{warn_title, MAX_WARNINGS};
 use crate::importer::ImportMode;
 use crate::storage::backup::dbops::{self, JobKind};
 use crate::storage::error::{Result, StorageError};
 use crate::storage::model::{
-    changed_fields, CustomField, ItemDraft, ItemEvent, ItemPayload, ItemSummary, ItemType,
+    changed_fields, clean_urls, CustomField, FieldKind, ItemDraft, ItemEvent, ItemPayload,
+    ItemSummary, ItemType,
 };
 use crate::storage::uuid;
 use rusqlite::params;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use zeroize::Zeroizing;
 
 /// One item to import: its content, the time the source says it was created, and notes the
@@ -122,8 +125,22 @@ fn reason_of(e: &StorageError) -> String {
 pub fn merge_drafts(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
     let mut out = old.clone();
     for (k, v) in &new.fields {
-        if !v.trim().is_empty() {
-            out.fields.insert(k.clone(), v.clone());
+        if v.trim().is_empty() {
+            continue;
+        }
+        // Notes are never replaced: a different note in the file is added under the stored one.
+        let is_note = out
+            .item_type
+            .spec(k)
+            .is_some_and(|s| matches!(s.kind, FieldKind::Note | FieldKind::Paragraph));
+        match out.fields.get(k) {
+            Some(have) if is_note => {
+                let joined = join_notes(have, v);
+                out.fields.insert(k.clone(), joined);
+            }
+            _ => {
+                out.fields.insert(k.clone(), v.clone());
+            }
         }
     }
     for c in &new.custom_fields {
@@ -155,6 +172,221 @@ pub fn merge_drafts(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
     // a merge never takes protection away: either side asking for the password again keeps it
     out.reprompt = old.reprompt || new.reprompt;
     out
+}
+
+/// Two notes as one: the same text stays as it is, a note that holds the other is the longer one, and two different
+/// notes are written one under the other. Nothing is ever dropped.
+pub fn join_notes(a: &str, b: &str) -> String {
+    let (a, b) = (a.trim_end(), b.trim_end());
+    if a.is_empty() || b.is_empty() || a == b || a.contains(b) {
+        if a.is_empty() {
+            b.to_string()
+        } else {
+            a.to_string()
+        }
+    } else if b.contains(a) {
+        b.to_string()
+    } else {
+        format!("{a}\n\n{b}")
+    }
+}
+
+/// The name a custom field gets for a value from a file that differs from the stored one.
+fn imported_name(label: &str) -> String {
+    format!("{label} (imported)")
+}
+
+fn push_custom(out: &mut ItemDraft, name: &str, value: &str, hidden: bool) {
+    let same = out
+        .custom_fields
+        .iter()
+        .any(|c| c.name.eq_ignore_ascii_case(name) && c.value == value);
+    if !same && !value.is_empty() {
+        out.custom_fields.push(CustomField {
+            name: name.to_string(),
+            value: value.to_string(),
+            hidden,
+        });
+    }
+}
+
+/// A one-time code item as the login it belongs to: the account is the user name, the code is the code, and what
+/// the code item kept in a custom field called "Notes" is the login's notes.
+fn as_login(d: &ItemDraft) -> ItemDraft {
+    if d.item_type != ItemType::Totp {
+        return d.clone();
+    }
+    let mut out = ItemDraft {
+        item_type: ItemType::Login,
+        title: d.title.clone(),
+        favorite: d.favorite,
+        reprompt: d.reprompt,
+        tags: d.tags.clone(),
+        folder: d.folder.clone(),
+        fields: BTreeMap::new(),
+        custom_fields: Vec::new(),
+    };
+    let get = |k: &str| d.fields.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+    if let Some(a) = get("account") {
+        out.fields.insert("username".into(), a.to_string());
+    }
+    if let Some(t) = get("totp") {
+        out.fields.insert("totp".into(), t.to_string());
+    }
+    if let Some(i) = get("issuer").filter(|i| name_key(i) != name_key(&d.title)) {
+        push_custom(&mut out, "Issuer", i, false);
+    }
+    for c in &d.custom_fields {
+        if c.name.eq_ignore_ascii_case("notes") {
+            let notes = out.fields.get("notes").cloned().unwrap_or_default();
+            out.fields
+                .insert("notes".into(), join_notes(&notes, &c.value));
+        } else {
+            out.custom_fields.push(c.clone());
+        }
+    }
+    out
+}
+
+fn titles_alike(a: &str, b: &str) -> bool {
+    let (x, y) = (name_key(a), name_key(b));
+    x == y || x.contains(&y) || y.contains(&x)
+}
+
+/// Merge `new` (from a file) into `old` (in the vault) when they are the same account, **dropping nothing**: where
+/// both have a value and they differ, the stored one stays and the file's goes into a custom field called
+/// "<name> (imported)"; notes are written one under the other; web addresses, tags and custom fields are joined; a
+/// second title becomes "Also named". A login and a one-time code item of the same account become one login.
+pub fn merge_keep_all(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
+    let target = if old.item_type == ItemType::Login || new.item_type == ItemType::Login {
+        ItemType::Login
+    } else {
+        old.item_type
+    };
+    let (old_t, new_t) = if target == ItemType::Login {
+        (as_login(old), as_login(new))
+    } else {
+        (old.clone(), new.clone())
+    };
+    if old_t.item_type != new_t.item_type {
+        return merge_drafts(old, new);
+    }
+    let mut out = old_t.clone();
+    if old.item_type != target {
+        // a code item turning into the login it belongs to: the login's name is the better one
+        out.title = new_t.title.clone();
+    } else if !titles_alike(&old_t.title, &new_t.title) {
+        push_custom(&mut out, "Also named", &new_t.title, false);
+    }
+
+    for (key, value) in &new_t.fields {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let spec = out.item_type.spec(key);
+        let kind = spec.map(|s| s.kind);
+        let label = spec.map_or(key.as_str(), |s| s.label);
+        let Some(have) = out.fields.get(key).cloned() else {
+            out.fields.insert(key.clone(), value.to_string());
+            continue;
+        };
+        if have == value {
+            continue;
+        }
+        match kind {
+            Some(FieldKind::Url) => {
+                let joined = clean_urls(&format!("{have}\n{value}")).join("\n");
+                out.fields.insert(key.clone(), joined);
+            }
+            Some(FieldKind::Note | FieldKind::Paragraph) => {
+                out.fields.insert(key.clone(), join_notes(&have, value));
+            }
+            Some(FieldKind::Totp) => {
+                let same = account_key_secret(&have) == account_key_secret(value);
+                if !same {
+                    push_custom(&mut out, &imported_name(label), value, true);
+                }
+            }
+            Some(FieldKind::Text) if have.eq_ignore_ascii_case(value) => {}
+            _ => push_custom(
+                &mut out,
+                &imported_name(label),
+                value,
+                kind.is_some_and(FieldKind::is_secret),
+            ),
+        }
+    }
+
+    for c in &new_t.custom_fields {
+        if c.name.eq_ignore_ascii_case("notes") && out.item_type.spec("notes").is_some() {
+            let have = out.fields.get("notes").cloned().unwrap_or_default();
+            out.fields
+                .insert("notes".into(), join_notes(&have, &c.value));
+            continue;
+        }
+        let same_name = out
+            .custom_fields
+            .iter()
+            .any(|o| o.name.eq_ignore_ascii_case(&c.name));
+        let same_value = out
+            .custom_fields
+            .iter()
+            .any(|o| o.name.eq_ignore_ascii_case(&c.name) && o.value == c.value);
+        if same_value {
+            continue;
+        }
+        if same_name {
+            push_custom(&mut out, &imported_name(&c.name), &c.value, c.hidden);
+        } else {
+            push_custom(&mut out, &c.name, &c.value, c.hidden);
+        }
+    }
+    for t in &new_t.tags {
+        if !out.tags.contains(t) {
+            out.tags.push(t.clone());
+        }
+    }
+    if out.folder.is_none() {
+        out.folder = new_t.folder.clone();
+    }
+    out.favorite = old_t.favorite || new_t.favorite;
+    out.reprompt = old_t.reprompt || new_t.reprompt;
+    out
+}
+
+/// The secret of a stored one-time code value, to tell whether two values are the same code.
+fn account_key_secret(value: &str) -> String {
+    let mut d = ItemDraft {
+        item_type: ItemType::Totp,
+        title: String::new(),
+        favorite: false,
+        reprompt: false,
+        tags: Vec::new(),
+        folder: None,
+        fields: BTreeMap::new(),
+        custom_fields: Vec::new(),
+    };
+    d.fields.insert("totp".into(), value.to_string());
+    account_key(&d)
+        .map(|k| k.secret.clone())
+        .unwrap_or_default()
+}
+
+/// Every login and one-time code item of the vault by account, for matching entries of a file across apps.
+pub struct CrossIndex {
+    items: Vec<(AccountKey, String, u64)>,
+}
+
+impl CrossIndex {
+    /// The most recently changed item that is the same account as `key`.
+    pub fn find(&self, key: &AccountKey) -> Option<&str> {
+        self.items
+            .iter()
+            .filter(|(k, _, _)| same_account(k, key))
+            .max_by(|a, b| (a.2, &a.1).cmp(&(b.2, &b.1)))
+            .map(|(_, id, _)| id.as_str())
+    }
 }
 
 impl Vault {
@@ -191,6 +423,27 @@ impl Vault {
         Ok(best.into_iter().map(|(k, (_, id))| (k, id)).collect())
     }
 
+    /// The logins and one-time code items that are here now, by account (see [`CrossIndex`]).
+    pub fn import_cross_index(&self) -> Result<CrossIndex> {
+        let mut items = Vec::new();
+        for (id, entry) in &self.index {
+            let IndexEntry::Active(s) = entry else {
+                continue;
+            };
+            if !matches!(s.item_type, ItemType::Login | ItemType::Totp) {
+                continue;
+            }
+            // An item that cannot be read cannot be compared; it is left alone.
+            let Ok((p, _)) = self.load_latest(id) else {
+                continue;
+            };
+            if let Some(key) = account_key(&p.to_draft()) {
+                items.push((key, id.clone(), s.updated_at));
+            }
+        }
+        Ok(CrossIndex { items })
+    }
+
     /// Save a whole import in one transaction (see the module notes). `items` are consumed in
     /// order; the outcome has one `ids` slot per item.
     pub fn import_batch(
@@ -203,6 +456,9 @@ impl Vault {
         } else {
             self.import_dup_index()?
         };
+        let cross = (mode == ImportMode::Merge)
+            .then(|| self.import_cross_index())
+            .transpose()?;
         let now = now_millis();
         let mut out = BatchOutcome::default();
         let mut prepared: Vec<Prepared> = Vec::new();
@@ -227,11 +483,19 @@ impl Vault {
             }
             let existing = (mode != ImportMode::ImportAll)
                 .then(|| dups.get(&dup_key(&draft)))
-                .flatten();
+                .flatten()
+                .map(String::as_str)
+                .or_else(|| {
+                    let key = account_key(&draft)?;
+                    cross.as_ref()?.find(&key)
+                });
             let step = match (mode, existing) {
                 (ImportMode::SkipDuplicates, Some(_)) => Ok(None),
                 (ImportMode::AppendVersion, Some(id)) => {
-                    self.prepare_append(id, &draft, now, &mut working)
+                    self.prepare_append(id, &draft, now, &mut working, false)
+                }
+                (ImportMode::Merge, Some(id)) => {
+                    self.prepare_append(id, &draft, now, &mut working, true)
                 }
                 _ => self.prepare_new(&draft, created, updated, now).map(Some),
             };
@@ -345,13 +609,18 @@ impl Vault {
         draft: &ItemDraft,
         now: u64,
         working: &mut HashMap<String, (ItemPayload, u64)>,
+        keep_all: bool,
     ) -> Result<Option<Prepared>> {
         let (old, version) = match working.get(id) {
             Some((p, v)) => (p.clone(), *v),
             None => self.load_latest(id)?,
         };
         let old_draft = old.to_draft();
-        let mut merged = merge_drafts(&old_draft, draft);
+        let mut merged = if keep_all {
+            merge_keep_all(&old_draft, draft)
+        } else {
+            merge_drafts(&old_draft, draft)
+        };
         merged.normalize()?;
         let changed = changed_fields(&old_draft, &merged);
         if changed.is_empty() {
@@ -361,6 +630,8 @@ impl Vault {
             .checked_add(1)
             .ok_or_else(|| StorageError::Storage("This item has too many versions.".into()))?;
         let mut next = old.clone();
+        // A code item that is the same account as a login becomes that login (its earlier states stay as they were).
+        next.item_type = merged.item_type;
         next.apply_draft(&merged);
         next.updated_at = now.max(old.updated_at);
         next.event = ItemEvent::Edited;

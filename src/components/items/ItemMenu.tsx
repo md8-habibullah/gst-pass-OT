@@ -1,14 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Copy, ExternalLink, Eye, Files, Pencil, Trash2, type LucideIcon } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, ExternalLink, Eye, Files, FolderInput, Pencil, Trash2, type LucideIcon } from "lucide-react";
 import { useLayout } from "../../lib/layout";
+import { shortUrl } from "../../lib/urls";
 import { be } from "../../state/app";
 import { createStore, useStore } from "../../state/store";
 import { Sheet } from "../ui/Sheet";
-import { cloneItem, copyQuick, editItem, launch, QUICK_COPY, setArchived, trashItem, viewItem, type Target } from "./actions";
+import { cloneItem, copyQuick, editItem, findUrls, launch, moveItemToFolder, openLink, QUICK_COPY, setArchived, trashItem, viewItem, type Target } from "./actions";
+
+/** What the menu needs of an item: what the actions take, plus the folder it is in (for "Move to folder"). */
+type MenuItem = Target & { folder?: string | null };
 
 interface Open {
-  item: Target;
+  item: MenuItem;
   x: number;
   y: number;
   /** Where the menu was opened from, to put focus back when it closes. */
@@ -20,7 +24,7 @@ interface Open {
 const menu = createStore<Open | null>(null);
 
 /** Opens the item menu at a pointer position or under a button. */
-export function openItemMenu(item: Target, at: { x: number; y: number } | HTMLElement) {
+export function openItemMenu(item: MenuItem, at: { x: number; y: number } | HTMLElement) {
   if (at instanceof HTMLElement) {
     const r = at.getBoundingClientRect();
     menu.set({ item, x: r.right, y: r.bottom + 4, from: at, button: true });
@@ -29,6 +33,9 @@ export function openItemMenu(item: Target, at: { x: number; y: number } | HTMLEl
   }
 }
 const closeMenu = () => menu.set(null);
+
+/** A login with many addresses gets this many "Open ..." entries; the rest are on its screen. */
+const MAX_OPEN_ENTRIES = 5;
 
 interface Entry {
   id: string;
@@ -40,14 +47,14 @@ interface Entry {
   group?: boolean;
 }
 
-function useEntries(item: Target | null): Entry[] {
-  const [hasUrl, setHasUrl] = useState(false);
+function useEntries(item: MenuItem | null): Entry[] {
+  const [urls, setUrls] = useState<string[]>([]);
   const id = item?.id;
   useEffect(() => {
-    setHasUrl(false);
+    setUrls([]);
     if (!id) return;
     let alive = true;
-    be().getItem(id).then((v) => alive && setHasUrl(v.fields.some((f) => f.kind === "url" && f.value))).catch(() => undefined);
+    be().getItem(id).then((v) => alive && setUrls(findUrls(v))).catch(() => undefined);
     return () => { alive = false; };
   }, [id]);
   if (!item) return [];
@@ -59,9 +66,13 @@ function useEntries(item: Target | null): Entry[] {
     item.archived
       ? { id: "archive", label: "Unarchive", icon: ArchiveRestore, run: () => setArchived(item, false) }
       : { id: "archive", label: "Archive", icon: Archive, run: () => setArchived(item, true) },
+    { id: "move", label: "Move to folder", icon: FolderInput, run: () => moveItemToFolder({ id: item.id, title: item.title, folder: item.folder ?? null }) },
     { id: "trash", label: "Move to trash", icon: Trash2, run: () => trashItem(item), tone: "danger" },
   ];
-  if (hasUrl) list.push({ id: "launch", label: "Launch", icon: ExternalLink, run: () => launch(item), group: true });
+  // One address: "Launch". Several: one entry each, so the right one is a single tap.
+  if (urls.length === 1) list.push({ id: "launch", label: "Launch", icon: ExternalLink, run: () => launch(item), group: true });
+  else urls.slice(0, MAX_OPEN_ENTRIES).forEach((u, i) => list.push({ id: `open-${i}`, label: `Open ${shortUrl(u)}`, icon: ExternalLink, run: () => openLink(u), group: i === 0 }));
+  const hasUrl = urls.length > 0;
   quick.forEach((q, i) => list.push({ id: `copy-${q.key}`, label: `Copy ${q.label}`, icon: Copy, run: () => copyQuick(item, q), group: !hasUrl && i === 0 }));
   return list;
 }
@@ -116,7 +127,7 @@ function Popover({ open, entries }: { open: Open; entries: Entry[] }) {
       ref={ref}
       role="menu"
       aria-label={`Actions for ${open.item.title}`}
-      className="surface-float fixed z-[60] min-w-52 rounded-lg p-1.5"
+      className="surface-float fixed z-[60] max-w-[min(22rem,calc(100vw-1rem))] min-w-52 rounded-lg p-1.5"
       style={{ left: pos.left, top: pos.top, visibility: pos.ready ? "visible" : "hidden" }}
     >
       {entries.map((e) => (
@@ -129,7 +140,7 @@ function Popover({ open, entries }: { open: Open; entries: Entry[] }) {
             className={`pressable flex min-h-9 w-full items-center gap-3 rounded-sm px-3 text-left hover:bg-raised focus-visible:bg-raised ${e.tone === "danger" ? "text-ember" : "text-frost"}`}
           >
             <e.icon className="size-4 shrink-0 opacity-80" aria-hidden />
-            {e.label}
+            <span className="min-w-0 truncate">{e.label}</span>
           </button>
         </div>
       ))}
@@ -152,7 +163,7 @@ export function ItemMenuHost() {
             <li key={e.id} className={e.group ? "mt-1 border-t border-hairline pt-1" : ""}>
               <button type="button" onClick={() => { closeMenu(); void e.run(); }} className={`pressable flex min-h-12 w-full items-center gap-4 rounded-lg px-2 text-left hover:bg-raised ${e.tone === "danger" ? "text-ember" : ""}`}>
                 <e.icon className="size-5 shrink-0 opacity-80" aria-hidden />
-                {e.label}
+                <span className="min-w-0 truncate">{e.label}</span>
               </button>
             </li>
           ))}

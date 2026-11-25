@@ -177,6 +177,15 @@ impl Vault {
         }
     }
 
+    /// Trigger 4 (the device is back online): the same pull, reconcile and drain as at unlock, for work that could not
+    /// be sent, or changes that could not be fetched, while there was no connection. Returns at once; nothing here
+    /// touches the network. Asking while a pull is already queued or running changes nothing.
+    pub fn request_sync(&self) {
+        if let Some(b) = &self.backup {
+            b.replicator.request_reconcile();
+        }
+    }
+
     /// Is a pull queued or running?
     pub fn backup_reconciling(&self) -> bool {
         self.backup

@@ -39,6 +39,7 @@ fn fast() -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: EDIT_TOKEN_TTL,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 
@@ -1330,4 +1331,324 @@ fn trashed_items_are_not_exported_and_archived_ones_are() {
         .unwrap();
     let text = std::fs::read_to_string(&dest).unwrap();
     assert!(text.contains("Visa") && !text.contains("remember"));
+}
+
+// ============================================================ the same account in two apps (Merge)
+
+/// An Ente Auth plain-text line: the standard link plus the app's own `codeDisplay` (its note, tags, pin).
+fn ente_line(issuer: &str, account: &str, secret: &str, note: &str, tag: &str) -> String {
+    let display =
+        serde_json::json!({"pinned": false, "trashed": false, "tags": [tag], "note": note})
+            .to_string();
+    let encoded: String = display
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    format!(
+        "otpauth://totp/{issuer}:{account}?secret={secret}&issuer={issuer}&codeDisplay={encoded}\n"
+    )
+}
+
+fn bitwarden_login(
+    name: &str,
+    username: &str,
+    url: &str,
+    notes: &str,
+    totp: Option<&str>,
+) -> String {
+    serde_json::json!({
+        "encrypted": false, "folders": [],
+        "items": [{"id": "i1", "type": 1, "name": name, "notes": notes, "favorite": false,
+            "login": {"uris": [{"uri": url}], "username": username, "password": "bw-password", "totp": totp}}]
+    })
+    .to_string()
+}
+
+const SECRET: &str = "JBSWY3DPEHPK3PXP";
+
+fn reveal(fx: &Fx, title: &str) -> ItemDraft {
+    fx.app
+        .item_reveal(&fx.id_of(title), Some(PW.into()))
+        .unwrap()
+}
+
+#[test]
+fn a_code_from_an_authenticator_joins_the_login_of_the_same_account_and_every_note_is_kept() {
+    let fx = Fx::new();
+    let login = fx
+        .app
+        .item_create(draft(
+            ItemType::Login,
+            "GitHub",
+            &[
+                ("username", "ana@example.com"),
+                ("password", "bw-password"),
+                ("url", "https://github.com/login"),
+                ("notes", "Recovery: abc-123"),
+            ],
+        ))
+        .unwrap();
+    fx.app
+        .item_create(draft(ItemType::Login, "Other", &[("username", "someone")]))
+        .unwrap();
+
+    let file = ente_line(
+        "GitHub",
+        "ana@example.com",
+        SECRET,
+        "Ente backup code: 1234-5678",
+        "work",
+    );
+    let pick = fx.pick("ente.txt", file.as_bytes());
+    assert_eq!(pick.format, "otpauth-list");
+    let preview = fx
+        .app
+        .import_preview(opts(&pick.handle, "otpauth-list", "merge"))
+        .unwrap();
+    assert_eq!((preview.entries, preview.duplicates), (1, 1), "{preview:?}");
+
+    let out = fx
+        .app
+        .import_commit(opts(&pick.handle, "otpauth-list", "merge"))
+        .unwrap();
+    assert_eq!((out.added, out.appended, out.failed), (0, 1, 0), "{out:?}");
+
+    // one item, not two: the login now has the code, and both notes
+    assert_eq!(fx.titles(), ["GitHub", "Other"]);
+    let merged = reveal(&fx, "GitHub");
+    assert_eq!(merged.item_type, ItemType::Login);
+    assert_eq!(merged.fields["password"], "bw-password");
+    assert!(
+        merged.fields["totp"].contains(SECRET),
+        "{:?}",
+        merged.fields["totp"]
+    );
+    let notes = &merged.fields["notes"];
+    assert!(notes.contains("Recovery: abc-123"), "{notes}");
+    assert!(notes.contains("Ente backup code: 1234-5678"), "{notes}");
+    assert_eq!(merged.tags, ["work"]);
+    // the history shows the merge as a new version of the same item
+    assert_eq!(fx.app.history_list(&login.id).unwrap().len(), 2);
+}
+
+#[test]
+fn a_login_from_a_password_manager_turns_the_code_item_of_the_same_account_into_one_login() {
+    let fx = Fx::new();
+    // the authenticator's file came first: a code item, with a note
+    fx.import(
+        "otpauth-list",
+        "merge",
+        "ente.txt",
+        ente_line(
+            "GitHub",
+            "ana@example.com",
+            SECRET,
+            "Ente backup code: 1234-5678",
+            "work",
+        )
+        .as_bytes(),
+    );
+    let code_item = fx.id_of("GitHub (ana@example.com)");
+    assert_eq!(
+        fx.app.item_get(&code_item).unwrap().item_type,
+        ItemType::Totp
+    );
+
+    let json = bitwarden_login(
+        "GitHub",
+        "ana@example.com",
+        "https://github.com/login",
+        "Recovery: abc-123",
+        None,
+    );
+    let pick = fx.pick("bitwarden.json", json.as_bytes());
+    let preview = fx
+        .app
+        .import_preview(opts(&pick.handle, "bitwarden-json", "merge"))
+        .unwrap();
+    assert_eq!(preview.duplicates, 1, "{preview:?}");
+    let out = fx
+        .app
+        .import_commit(opts(&pick.handle, "bitwarden-json", "merge"))
+        .unwrap();
+    assert_eq!((out.added, out.appended), (0, 1), "{out:?}");
+
+    // the same item (same id, same history), now a login that has everything
+    assert_eq!(fx.titles(), ["GitHub"]);
+    assert_eq!(fx.id_of("GitHub"), code_item);
+    let merged = reveal(&fx, "GitHub");
+    assert_eq!(merged.item_type, ItemType::Login);
+    assert_eq!(merged.fields["username"], "ana@example.com");
+    assert_eq!(merged.fields["password"], "bw-password");
+    assert_eq!(merged.fields["url"], "https://github.com/login");
+    assert!(merged.fields["totp"].contains(SECRET));
+    let notes = &merged.fields["notes"];
+    assert!(
+        notes.contains("Recovery: abc-123") && notes.contains("Ente backup code: 1234-5678"),
+        "{notes}"
+    );
+    // the first version is still the code item, and can be restored as one
+    let history = fx.app.history_list(&code_item).unwrap();
+    assert_eq!(history.len(), 2);
+    let first = fx.app.history_get(&code_item, 1, Some(PW.into())).unwrap();
+    assert_eq!(first.item_type, ItemType::Totp);
+    fx.app
+        .history_restore(&code_item, 1, Some(PW.into()))
+        .unwrap();
+    assert_eq!(
+        fx.app.item_get(&code_item).unwrap().item_type,
+        ItemType::Totp,
+        "restoring brings the old kind back with it"
+    );
+}
+
+#[test]
+fn the_same_code_secret_is_the_same_account_even_under_another_name() {
+    let fx = Fx::new();
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "Work VPN",
+            &[("username", "ana"), ("totp", SECRET)],
+        ))
+        .unwrap();
+    let out = fx.import(
+        "otpauth-list",
+        "merge",
+        "ente.txt",
+        ente_line("Corp", "ana.lopez@corp.example", SECRET, "", "work").as_bytes(),
+    );
+    assert_eq!((out.added, out.appended), (0, 1), "{out:?}");
+    assert_eq!(fx.titles(), ["Work VPN"]);
+}
+
+#[test]
+fn two_accounts_of_one_service_are_not_mistaken_for_each_other() {
+    let fx = Fx::new();
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "GitHub",
+            &[
+                ("username", "ana@example.com"),
+                ("url", "https://github.com"),
+            ],
+        ))
+        .unwrap();
+    let out = fx.import(
+        "otpauth-list",
+        "merge",
+        "ente.txt",
+        ente_line("GitHub", "bob@example.com", "KRSXG5CTMVRXEZLU", "", "x").as_bytes(),
+    );
+    assert_eq!((out.added, out.appended), (1, 0), "{out:?}");
+    assert_eq!(fx.titles().len(), 2);
+}
+
+#[test]
+fn a_different_code_for_the_same_account_is_kept_in_a_hidden_field() {
+    let fx = Fx::new();
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "GitHub",
+            &[("username", "ana@example.com"), ("totp", SECRET)],
+        ))
+        .unwrap();
+    let out = fx.import(
+        "otpauth-list",
+        "merge",
+        "ente.txt",
+        ente_line("GitHub", "ana@example.com", "KRSXG5CTMVRXEZLU", "", "x").as_bytes(),
+    );
+    assert_eq!((out.added, out.appended), (0, 1), "{out:?}");
+    let merged = reveal(&fx, "GitHub");
+    assert_eq!(
+        merged.fields["totp"], SECRET,
+        "the code that was here stays the code"
+    );
+    let extra = merged
+        .custom_fields
+        .iter()
+        .find(|c| c.name == "One-time code (imported)")
+        .expect("the other code is kept");
+    assert!(extra.hidden && extra.value.contains("KRSXG5CTMVRXEZLU"));
+}
+
+#[test]
+fn skipping_duplicates_does_not_reach_across_kinds_and_import_all_never_merges() {
+    let fx = Fx::new();
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "GitHub",
+            &[("username", "ana@example.com")],
+        ))
+        .unwrap();
+    let line = ente_line("GitHub", "ana@example.com", SECRET, "n", "x");
+    let out = fx.import("otpauth-list", "skip_duplicates", "a.txt", line.as_bytes());
+    assert_eq!((out.added, out.skipped), (1, 0), "{out:?}");
+    let out = fx.import("otpauth-list", "import_all", "b.txt", line.as_bytes());
+    assert_eq!((out.added, out.appended), (1, 0), "{out:?}");
+    assert_eq!(fx.titles().len(), 3);
+}
+
+#[test]
+fn adding_as_a_new_version_no_longer_replaces_a_different_note() {
+    let fx = Fx::new();
+    let a = fx
+        .app
+        .item_create(draft(
+            ItemType::Login,
+            "Site",
+            &[
+                ("username", "ana"),
+                ("url", "https://site.example"),
+                ("notes", "old note"),
+            ],
+        ))
+        .unwrap();
+    let json = bitwarden_login(
+        "Site",
+        "ana",
+        "https://site.example",
+        "new note from the file",
+        None,
+    );
+    let out = fx.import(
+        "bitwarden-json",
+        "append_version",
+        "bw.json",
+        json.as_bytes(),
+    );
+    assert_eq!((out.added, out.appended), (0, 1), "{out:?}");
+    let merged = fx.app.item_reveal(&a.id, Some(PW.into())).unwrap();
+    assert_eq!(merged.fields["notes"], "old note\n\nnew note from the file");
+}
+
+#[test]
+fn merging_the_same_file_twice_changes_nothing_the_second_time() {
+    let fx = Fx::new();
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "GitHub",
+            &[("username", "ana@example.com"), ("notes", "mine")],
+        ))
+        .unwrap();
+    let line = ente_line("GitHub", "ana@example.com", SECRET, "theirs", "work");
+    let first = fx.import("otpauth-list", "merge", "a.txt", line.as_bytes());
+    assert_eq!(first.appended, 1);
+    let second = fx.import("otpauth-list", "merge", "b.txt", line.as_bytes());
+    assert_eq!(
+        (second.added, second.appended, second.failed),
+        (0, 0, 0),
+        "{second:?}"
+    );
+    assert_eq!(reveal(&fx, "GitHub").fields["notes"], "mine\n\ntheirs");
 }

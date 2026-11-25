@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ChevronUp, RefreshCw } from "lucide-react";
 import { canGenerate, GEN_LENGTH_MAX, GEN_LENGTH_MIN, generatePassword, type GenOptions } from "../../lib/password";
 import { flushGenerator, rememberGenerator, app } from "../../state/app";
 import { useStore } from "../../state/store";
@@ -20,7 +20,7 @@ const TOGGLES: { key: keyof Pick<GenOptions, "lower" | "upper" | "digits" | "sym
  * The settings are the vault's: every place that shows the generator starts from what was chosen last (the length and the
  * character types), and a change is remembered in the vault and synced with it.
  */
-export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: { onUse: (pw: string) => void; actionLabel?: string }) {
+export function PasswordGenerator({ onUse, actionLabel = "Use this password", onClose }: { onUse: (pw: string) => void; actionLabel?: string; onClose?: () => void }) {
   const remembered = useStore(app, (s) => s.generator);
   // With every character type switched off there is nothing to generate and nothing worth remembering: it is only shown.
   const [unusable, setUnusable] = useState<GenOptions | null>(null);
@@ -53,6 +53,14 @@ export function PasswordGenerator({ onUse, actionLabel = "Use this password" }: 
 
   return (
     <div className="flex flex-col gap-4 rounded-lg bg-pane/80 p-4 shadow-e1">
+      {onClose && (
+        <div className="-mb-1 flex items-center justify-between gap-3">
+          <p className="text-[0.93em] font-medium text-mist">Password generator</p>
+          <button type="button" onClick={onClose} aria-label="Hide the generator" className="pressable inline-flex items-center gap-1.5 rounded-sm px-2 py-1 text-[0.93em] font-semibold text-brass-ink hover:bg-hover hover:text-brass-ink-hi pointer-coarse:min-h-11">
+            <ChevronUp className="size-4" aria-hidden /> Hide
+          </button>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <div className="min-h-[3rem] min-w-0 flex-1 rounded-sm bg-raised px-3 py-2.5 shadow-e1" aria-live="polite">
           {error ? <span className="text-ember">{error}</span> : <PasswordText value={value} />}

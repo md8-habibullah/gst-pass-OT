@@ -25,6 +25,7 @@ fn fast() -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: EDIT_TOKEN_TTL,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 

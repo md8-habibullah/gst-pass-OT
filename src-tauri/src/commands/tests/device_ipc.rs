@@ -14,7 +14,8 @@ fn the_defaults_a_new_install_reports() {
         h.ok("device_get", json!({})),
         json!({
             "timeZone": null, "setupDone": false, "timeCheck": true,
-            "theme": "system", "clipboardClear": 30
+            "theme": "system", "clipboardClear": 30,
+            "openInSearch": false, "listSort": "updated-desc"
         })
     );
 }
@@ -119,11 +120,57 @@ fn a_closed_gate_lets_only_the_read_commands_through() {
         ("device_set_time_check", json!({"on": false})),
         ("device_set_theme", json!({"theme": "light"})),
         ("device_set_clipboard_clear", json!({"seconds": 15})),
+        ("device_set_open_in_search", json!({"on": true})),
+        ("device_set_list_sort", json!({"order": "title-asc"})),
         ("demo_spawn", json!({})),
         ("demo_open", json!({})),
     ] {
         assert_eq!(h.err_code(cmd, args), "locked", "{cmd}");
     }
+}
+
+#[test]
+fn opening_in_search_and_the_list_order_are_saved_by_the_core() {
+    let h = harness();
+    let d = h.ok("device_get", json!({}));
+    assert_eq!(d["openInSearch"], false);
+    assert_eq!(d["listSort"], "updated-desc");
+
+    assert_eq!(
+        h.ok("device_set_open_in_search", json!({"on": true}))["openInSearch"],
+        true
+    );
+    for order in [
+        "updated-desc",
+        "updated-asc",
+        "created-desc",
+        "created-asc",
+        "title-asc",
+        "title-desc",
+        "type",
+        "versions-desc",
+        "versions-asc",
+    ] {
+        let d = h.ok("device_set_list_sort", json!({"order": order}));
+        assert_eq!(d["listSort"], order);
+    }
+    // an order the list does not offer changes nothing (and a missing one is refused outright)
+    h.ok("device_set_list_sort", json!({"order": "title-asc"}));
+    for bad in ["", "random", "title-sideways", "../x", "TITLE-ASC"] {
+        assert_eq!(
+            h.err_code("device_set_list_sort", json!({"order": bad})),
+            "invalid_input",
+            "{bad:?}"
+        );
+    }
+    assert!(h.call("device_set_list_sort", json!({})).is_err());
+    assert_eq!(h.ok("device_get", json!({}))["listSort"], "title-asc");
+
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(h.dir.path().join("device.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["openInSearch"], true);
+    assert_eq!(saved["listSort"], "title-asc");
 }
 
 #[test]

@@ -23,6 +23,7 @@ pub mod error;
 pub mod files;
 pub mod legacy;
 pub mod links;
+pub mod merge;
 pub mod model;
 pub mod profiles;
 pub mod session;
@@ -38,10 +39,12 @@ mod app_tests;
 #[cfg(test)]
 mod drive_tests;
 #[cfg(test)]
+mod folder_search_tests;
+#[cfg(test)]
 mod tests;
 
 pub use app::{AppCore, ExportedFile, SyncFlush, EXIT_FLUSH};
-pub use backup::prefs::{GeneratorPrefs, PrefsView};
+pub use backup::prefs::{FolderChange, GeneratorPrefs, PrefsView};
 pub use backup::{BackupRuntime, BackupTargetInput, BackupTargetView, BackupTestResult, Timing};
 pub use drive::FileEntry;
 pub use error::{Result, StorageError};
@@ -51,4 +54,6 @@ pub use model::{
     BeginEdit, ItemDraft, ItemSummary, ItemView, TotpNow, TrashEntry, VaultStatus, VersionEntry,
 };
 pub use profiles::{ProfileInfo, ProfileList};
+pub use session::PurgePlan;
 pub use session::{Session, SessionConfig};
+pub use vault::search::SearchHit;

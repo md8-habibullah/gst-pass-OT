@@ -14,7 +14,7 @@ const LONG_PRESS_MS = 480;
  * One row of the item list. The brass selection edge glides between rows via a shared layout id.
  * The row menu opens from the "more" button, a right click, the menu key, or a long press on touch screens.
  */
-export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: ItemSummary; selected: boolean; onSelect: () => void; roomy: boolean; showType: boolean }) {
+export function ItemRow({ item, selected, onSelect, roomy, showType, note }: { item: ItemSummary; selected: boolean; onSelect: () => void; roomy: boolean; showType: boolean; note?: string }) {
   const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
   const TypeIcon = TYPE_META[item.type].icon;
@@ -45,7 +45,7 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
         onPointerMove={(e) => { if (press.current && Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 10) cancelPress(); }}
         onPointerUp={cancelPress}
         onPointerCancel={cancelPress}
-        className={`pressable relative flex w-full items-center gap-3 rounded-lg py-0 pr-12 pl-3 text-left transition-colors ${roomy ? "min-h-[4.5rem]" : "min-h-[3.75rem]"} ${selected ? "bg-raised shadow-e2" : "hover:bg-raised/60"} ${item.archived ? "opacity-80" : ""}`}
+        className={`pressable relative flex w-full items-center gap-3 rounded-lg py-1 pr-12 pl-3 text-left transition-colors ${roomy ? "min-h-[4.5rem]" : "min-h-[3.75rem]"} ${selected ? "bg-raised shadow-e2" : "hover:bg-raised/60"} ${item.archived ? "opacity-80" : ""}`}
       >
         {selected && (
           <motion.span
@@ -59,6 +59,7 @@ export function ItemRow({ item, selected, onSelect, roomy, showType }: { item: I
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{item.title}</span>
           <span className="block truncate text-[0.93em] text-mist">{item.subtitle ?? (item.type === "login" ? "No username" : "")}</span>
+          {note && <span className="block truncate text-[0.8em] text-fog">{note}</span>}
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1.5 self-start pt-3.5 text-[0.8em] text-fog">
           <span className="whitespace-nowrap">{relativeTime(item.updatedAt)}</span>

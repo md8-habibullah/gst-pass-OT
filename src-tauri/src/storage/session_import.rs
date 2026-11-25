@@ -16,13 +16,13 @@
 
 use super::Session;
 use crate::crypto::rng;
-use crate::importer::entry::{dup_key, ImportedAttachment, ImportedEntry};
+use crate::importer::entry::{account_key, dup_key, ImportedAttachment, ImportedEntry};
 use crate::importer::export::{PlainFormat, SecretBuf};
 use crate::importer::limits::{cap_chars, warn_title, MAX_WARNINGS};
 use crate::importer::{ImportMode, ImportPreview, ParsedImport};
 use crate::storage::error::{Result, StorageError};
 use crate::storage::files;
-use crate::storage::vault::import::{BatchItem, BatchOutcome};
+use crate::storage::vault::import::{BatchItem, BatchOutcome, CrossIndex};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -235,6 +235,7 @@ pub struct PlainWritten {
 fn build_preview(
     parsed: &ParsedImport,
     dups: &HashMap<crate::importer::entry::DupKey, String>,
+    cross: Option<&CrossIndex>,
 ) -> ImportPreview {
     let mut preview = ImportPreview {
         entries: parsed.entries.len(),
@@ -261,7 +262,11 @@ fn build_preview(
         if preview.titles.len() < MAX_PREVIEW_TITLES {
             preview.titles.push(cap_chars(&draft.title, 256));
         }
-        if dups.contains_key(&dup_key(&draft)) {
+        let here = dups.contains_key(&dup_key(&draft))
+            || cross
+                .zip(account_key(&draft))
+                .is_some_and(|(c, key)| c.find(&key).is_some());
+        if here {
             preview.duplicates += 1;
         }
         // What the commit would refuse, said now.
@@ -339,12 +344,20 @@ impl Session {
     }
 
     /// The numbers of a stored preview. Reads the vault; changes nothing.
-    pub fn import_preview(&self, handle: &str, key: &ImportKey) -> Result<ImportPreview> {
+    pub fn import_preview(
+        &self,
+        handle: &str,
+        key: &ImportKey,
+        mode: ImportMode,
+    ) -> Result<ImportPreview> {
         self.with_unlocked(|u| {
             u.imports.purge();
             let dups = u.vault.import_dup_index()?;
+            let cross = (mode == ImportMode::Merge)
+                .then(|| u.vault.import_cross_index())
+                .transpose()?;
             let parsed = u.imports.parsed(handle, key)?;
-            Ok(build_preview(parsed, &dups))
+            Ok(build_preview(parsed, &dups, cross.as_ref()))
         })
     }
 

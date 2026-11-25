@@ -1,6 +1,7 @@
 //! Single-writer replication of the already-encrypted vault objects to the backup targets
-//! (`ai-docs/STORAGE_AND_SYNC.md` §6/§7/§10), driven by **three triggers only** (`FEATURE_QUEUE.md`
-//! Q0, decision D18): unlock, a committed local change, and app exit or backgrounding.
+//! (`ai-docs/STORAGE_AND_SYNC.md` §6/§7/§10), driven by **four triggers only** (`FEATURE_QUEUE.md`
+//! Q0, decision D18, extended by D42): unlock, a committed local change, app exit or backgrounding, and the device
+//! coming back online ([`Replicator::request_reconcile`] again, asked for by the page through `sync_reconnect`).
 //!
 //! * Every storage change queues work for every enabled target **in the same transaction** as
 //!   the change (`storage/db.rs`). This module drains those queues.

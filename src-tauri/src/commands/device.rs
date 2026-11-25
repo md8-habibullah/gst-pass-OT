@@ -50,6 +50,24 @@ pub async fn device_set_clipboard_clear(
     run(&state, move |c| c.device_set_clipboard_clear(seconds)).await
 }
 
+/// Open the vault with the cursor in the search box (and the keyboard up on a phone).
+#[tauri::command]
+pub async fn device_set_open_in_search(
+    state: State<'_, AppState>,
+    on: bool,
+) -> CmdResult<DeviceInfo> {
+    run(&state, move |c| c.device_set_open_in_search(on)).await
+}
+
+/// The order the item list starts in (one of the names the core knows).
+#[tauri::command]
+pub async fn device_set_list_sort(
+    state: State<'_, AppState>,
+    order: String,
+) -> CmdResult<DeviceInfo> {
+    run(&state, move |c| c.device_set_list_sort(&order)).await
+}
+
 #[tauri::command]
 pub async fn clock_status(state: State<'_, AppState>) -> CmdResult<ClockStatus> {
     run(&state, |c| Ok(c.clock_status())).await

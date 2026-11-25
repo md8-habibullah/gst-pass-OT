@@ -26,6 +26,7 @@ fn fast() -> SessionConfig {
             p_cost: 1,
         },
         edit_token_ttl: EDIT_TOKEN_TTL,
+        purge_grace: std::time::Duration::ZERO,
     }
 }
 
@@ -1400,6 +1401,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
         keys,
         [
             "archived",
+            "createdAt",
             "favorite",
             "folder",
             "hasTotp",

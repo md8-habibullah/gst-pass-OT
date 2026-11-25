@@ -27,6 +27,12 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 // private index and sealing helpers.
 #[path = "vault_import.rs"]
 pub mod import;
+// Folders (make, rename, remove, move items) and the search inside items. Child modules too: they use the private
+// index and the sealing helpers.
+#[path = "vault_folders.rs"]
+pub mod folders;
+#[path = "vault_search.rs"]
+pub mod search;
 
 /// In-memory index entry. Trashed items keep only what the trash view may show.
 enum IndexEntry {
@@ -127,7 +133,7 @@ impl Vault {
         Ok((payload, opened.header.timestamp))
     }
 
-    fn load_latest(&self, id: &str) -> Result<(ItemPayload, u64)> {
+    pub(in crate::storage) fn load_latest(&self, id: &str) -> Result<(ItemPayload, u64)> {
         let row = self.store.item_row(id)?.ok_or(StorageError::NotFound)?;
         let payload = self.open_row(&row)?;
         Ok((payload, row.version))
@@ -154,7 +160,7 @@ impl Vault {
     /// The number the next state of `id` gets: above the head and above every other number in
     /// use, so that a copy that arrived from another device (which has a number of its own) can
     /// never be mistaken for it.
-    fn next_number(&self, id: &str, head: u64) -> Result<u64> {
+    pub(in crate::storage) fn next_number(&self, id: &str, head: u64) -> Result<u64> {
         next_version(self.store.max_version(id)?.max(head))
     }
 
@@ -194,7 +200,7 @@ impl Vault {
     /// `commit`, with the parent pointer chosen by the caller (restoring a copy that came from
     /// another device makes the new state a descendant of that copy, which is what lets the other
     /// device fast-forward to it).
-    fn commit_with_parent(
+    pub(in crate::storage) fn commit_with_parent(
         &mut self,
         mut payload: ItemPayload,
         prev_version: Option<u64>,
@@ -454,25 +460,19 @@ impl Vault {
         self.commit(next, Some(version), self.next_number(id, version)?)
     }
 
-    /// Everything that must hold before a purge is attempted: the item is in the trash and
-    /// `confirmation` is its title or the word `CONFIRM`. Cheap, so the session runs it before
-    /// spending an Argon2id run on the password.
-    pub fn purge_checks(&self, id: &str, confirmation: &str) -> Result<()> {
-        let title = match self.entry(id)? {
-            IndexEntry::Trashed { title, .. } => title,
-            IndexEntry::Active(_) => return Err(StorageError::NotInTrash),
-        };
-        let typed = confirmation.trim();
-        if typed != "CONFIRM" && typed != title.trim() {
-            return Err(StorageError::ConfirmationMismatch);
+    /// When the item was moved to the trash (milliseconds since 1970). Errors like `require_trashed`.
+    pub fn trashed_at(&self, id: &str) -> Result<u64> {
+        match self.entry(id)? {
+            IndexEntry::Trashed { deleted_at, .. } => Ok(*deleted_at),
+            IndexEntry::Active(_) => Err(StorageError::NotInTrash),
         }
-        Ok(())
     }
 
-    /// Permanent deletion (tombstone, then every row of the item). The master password is
-    /// checked by the caller; the in-trash state and the confirmation text are re-checked here.
-    pub fn purge_item(&mut self, id: &str, confirmation: &str) -> Result<()> {
-        self.purge_checks(id, confirmation)?;
+    /// Permanent deletion (tombstone, then every row of the item). The master password, and for an item that was
+    /// trashed recently the sum, are checked by the session before this runs; that the item is in the trash is
+    /// re-checked here.
+    pub fn purge_item(&mut self, id: &str) -> Result<()> {
+        self.require_trashed(id)?;
         // The sealed proof of deletion that every backup target receives.
         let now = now_millis();
         let tombstone = self.seal_tombstone(id, now)?;
@@ -569,6 +569,8 @@ impl Vault {
         let (snapshot, _) = self.open_snapshot(id, row.version, &row.blob)?;
         let target = snapshot.to_draft();
         let mut next = latest.clone();
+        // An old state may be of another kind (a code item that an import later made into a login).
+        next.item_type = snapshot.item_type;
         next.apply_draft(&target);
         next.changed_fields = changed_fields(&latest.to_draft(), &target);
         next.updated_at = now_millis().max(latest.updated_at);

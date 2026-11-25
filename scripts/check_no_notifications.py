@@ -2,8 +2,8 @@
 """Fail if anything that could notify the user, run in the background or sit in a tray is in the project.
 
 Hexis's rule (ai-docs/FEATURE_QUEUE.md Q0, decision D18): no push notifications, no tray
-icon, no background daemon, no foreground service. Sync runs on three triggers only (unlock, a
-committed change, app exit or backgrounding), so none of the following may ever appear:
+icon, no background daemon, no foreground service. Sync runs on four triggers only (unlock, a
+committed change, app exit or backgrounding, the device coming back online), so none of the following may ever appear:
 
   * Android: any AndroidManifest.xml under src-tauri/gen/android/ that declares POST_NOTIFICATIONS,
     any FOREGROUND_SERVICE* permission, or a <service> element.

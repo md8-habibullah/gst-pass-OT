@@ -25,10 +25,12 @@
 //!      snapshots on the way;
 //!    * the local head's lineage contains it (**local is ahead**): nothing (the push side will
 //!      replace it);
-//!    * neither (**diverged**): the local head stays, and the remote state is kept as one more
-//!      immutable version flagged "from another device". Restoring it (the existing
-//!      restore-from-version) makes the merged state a descendant of both, so the other device
-//!      fast-forwards to it.
+//!    * neither (**diverged**): the remote state is kept as one more immutable version flagged
+//!      "from another device" (with the states the other device went through since the two last
+//!      agreed), and the two are **merged automatically** field by field (`storage::merge`). The
+//!      merged state is written as a new local version that grows out of the remote one, so the
+//!      other device fast-forwards to it; both earlier states stay in the history. When no merge can
+//!      be made the local head stays and the person restores the copy by hand, as before.
 //! 5. Every change is written by the vault in one transaction that re-checks the local head
 //!    (see [`super::pull_apply`]); afterwards the vault's index is refreshed and its
 //!    `syncRevision` goes up.
@@ -59,6 +61,8 @@ pub const MAX_OBJECTS: usize = 100_000;
 const MAX_WALK: usize = 5_000;
 /// How many snapshots of one new item are downloaded.
 const MAX_ITEM_SNAPSHOTS: usize = 2_000;
+/// How many of the other device's states are downloaded to find what a merge grew out of.
+const MAX_MERGE_CHAIN: usize = 200;
 
 /// How a pull reaches the vault: one short visit at a time, under the session lock.
 ///
@@ -97,6 +101,10 @@ pub struct PullReport {
     pub rolled_back: usize,
     /// Items the person edited while the pull was deciding; left for the next pass.
     pub raced: usize,
+    /// Items that were changed on both devices and were merged into one new state (`storage::merge`).
+    pub auto_merged: usize,
+    /// Places in those merges where both devices had changed the same thing differently.
+    pub merge_conflicts: usize,
     /// The vault preferences (generator settings) of another device were taken over.
     pub prefs_adopted: bool,
 }
@@ -298,12 +306,55 @@ impl Pass<'_> {
     }
 
     fn apply(&mut self, plan: Plan) -> PullResult<Applied> {
+        Ok(self.apply_full(plan)?.applied)
+    }
+
+    fn apply_full(&mut self, plan: Plan) -> PullResult<super::pull_apply::ApplyResult> {
         let source = self.source.to_string();
         let result = visit(self.link, |v| v.pull_apply(&source, plan))
             .ok_or(PullError::Stopped)?
             .map_err(|_| PullError::Local)?;
         self.report.damaged += result.skipped_snapshots;
-        Ok(result.applied)
+        if let Some(conflicts) = result.merged {
+            self.report.auto_merged += 1;
+            self.report.merge_conflicts += conflicts;
+        }
+        Ok(result)
+    }
+
+    /// The other device's states between its head and the last one this device has as well, downloaded (newest
+    /// first) so the merge has the state both grew out of, and the history keeps what the other device did. A step the
+    /// backup does not have, or one that does not authenticate, ends the chain: the merge then has no base.
+    fn remote_chain(&mut self, id: &str, remote: Head) -> PullResult<Vec<Snap>> {
+        let known: HashSet<(u64, u64)> = visit(self.link, |v| v.pull_local_ancestors(id))
+            .ok_or(PullError::Stopped)?
+            .into_iter()
+            .collect();
+        let mut chain = Vec::new();
+        let mut parent = remote.parent;
+        while let Some(p) = parent {
+            if chain.len() >= MAX_MERGE_CHAIN || known.contains(&(p.version, p.ts)) {
+                break;
+            }
+            let Some(obj) = self
+                .remote
+                .get(&keys::version(id, p.version, p.ts), MAX_OBJECT_BYTES)?
+            else {
+                break;
+            };
+            let node = visit(self.link, |v| {
+                v.pull_node_remote(id, p.version, p.ts, &obj.bytes)
+            })
+            .ok_or(PullError::Stopped)?;
+            let Some(node) = node else { break };
+            chain.push(Snap {
+                version: p.version,
+                ts: p.ts,
+                bytes: obj.bytes,
+            });
+            parent = node.parent;
+        }
+        Ok(chain)
     }
 
     fn tombstones(&mut self) -> PullResult<HashSet<String>> {
@@ -530,17 +581,25 @@ impl Pass<'_> {
             self.record_main(key, etag, remote.version);
             return Ok(());
         }
-        // Both sides changed it (or the lineage cannot be proven, which is treated the same way,
-        // because nothing is ever lost by keeping both).
+        // Both sides changed it (or the lineage cannot be proven, which is treated the same way, because nothing is
+        // ever lost by keeping both). The other device's state is kept as a copy and the two are merged.
+        let snapshots = self.remote_chain(id, remote)?;
         let plan = Plan::OtherDevice {
             id: id.into(),
             expect: local_ref,
             head: bytes,
+            snapshots,
         };
-        match self.apply(plan)? {
+        let result = self.apply_full(plan)?;
+        match result.applied {
             Applied::Changed => {
                 self.report.other_device += 1;
-                self.record_merged(key, etag, remote.version);
+                if result.merged.is_some() {
+                    // The merged state grows out of the bucket's: the next push replaces it with `If-Match`.
+                    self.record_main(key, etag, remote.version);
+                } else {
+                    self.record_merged(key, etag, remote.version);
+                }
             }
             Applied::Unchanged => self.record_merged(key, etag, remote.version),
             Applied::Raced => self.report.raced += 1,

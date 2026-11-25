@@ -12,9 +12,9 @@
 use crate::crypto;
 use crate::storage::{
     AppCore, BackupTargetInput, BackupTargetView, BackupTestResult, BeginEdit, ExportedFile,
-    FilePicker, GeneratorPrefs, ItemDraft, ItemSummary, ItemView, PrefsView, ProfileInfo,
-    ProfileList, SessionConfig, StorageError, SyncFlush, TotpNow, TrashEntry, UrlOpener,
-    VaultStatus, VersionEntry, EXIT_FLUSH,
+    FilePicker, FolderChange, GeneratorPrefs, ItemDraft, ItemSummary, ItemView, PrefsView,
+    ProfileInfo, ProfileList, PurgePlan, SearchHit, SessionConfig, StorageError, SyncFlush,
+    TotpNow, TrashEntry, UrlOpener, VaultStatus, VersionEntry, EXIT_FLUSH,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -543,14 +543,71 @@ pub async fn trash_list(state: State<'_, AppState>) -> CmdResult<Vec<TrashEntry>
     run(&state, |c| c.trash_list()).await
 }
 
+/// What erasing a trashed item for good will ask for: how long it has been in the trash and, when that is under six
+/// months, a sum to solve (the answer stays in the core). Each call makes a new sum.
+#[tauri::command]
+pub async fn item_purge_plan(state: State<'_, AppState>, id: String) -> CmdResult<PurgePlan> {
+    run(&state, move |c| c.item_purge_plan(&id)).await
+}
+
+/// Erase a trashed item for good: always the master password, and, for one trashed less than six months ago, the
+/// answer to the sum `item_purge_plan` showed. A wrong answer uses the sum up (`wrong_answer`).
 #[tauri::command]
 pub async fn item_purge(
     state: State<'_, AppState>,
     id: String,
     password: String,
-    confirmation: String,
+    answer: Option<String>,
 ) -> CmdResult<()> {
-    run(&state, move |c| c.item_purge(&id, password, &confirmation)).await
+    run(&state, move |c| {
+        c.item_purge(&id, password, answer.as_deref().unwrap_or(""))
+    })
+    .await
+}
+
+// ------------------------------------------------------------------ search and folders
+
+/// Search inside the items: titles, folders, tags, every field that is not secret, the notes, the custom fields, and
+/// with `old_versions` the earlier versions too. The answer names the fields that matched, never a value.
+#[tauri::command]
+pub async fn item_search(
+    state: State<'_, AppState>,
+    query: String,
+    old_versions: bool,
+) -> CmdResult<Vec<SearchHit>> {
+    run(&state, move |c| c.item_search(&query, old_versions)).await
+}
+
+/// Make a folder (`Work/Clients` nests). Answers with the path as the vault spells it and the folders now.
+#[tauri::command]
+pub async fn folder_create(state: State<'_, AppState>, path: String) -> CmdResult<FolderChange> {
+    run(&state, move |c| c.folder_create(&path)).await
+}
+
+/// Rename a folder or move it into another; what is inside comes along.
+#[tauri::command]
+pub async fn folder_rename(
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+) -> CmdResult<FolderChange> {
+    run(&state, move |c| c.folder_rename(&from, &to)).await
+}
+
+/// Remove a folder. What was inside moves up one level.
+#[tauri::command]
+pub async fn folder_remove(state: State<'_, AppState>, path: String) -> CmdResult<FolderChange> {
+    run(&state, move |c| c.folder_remove(&path)).await
+}
+
+/// Move items into a folder (`null`: out of every folder). Each one gets a new version; nothing is revealed.
+#[tauri::command]
+pub async fn item_move(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    folder: Option<String>,
+) -> CmdResult<usize> {
+    run(&state, move |c| c.item_move(&ids, folder.as_deref())).await
 }
 
 // ------------------------------------------------------------------ history
@@ -670,6 +727,18 @@ pub async fn sync_flush(state: State<'_, AppState>) -> CmdResult<SyncFlush> {
     run(&state, |c| Ok(c.sync_flush())).await
 }
 
+/// Trigger 4: the webview calls this when the device comes back online (`window` `online` event). The background
+/// worker pulls what other devices changed and sends what could not be sent while offline. Answers at once; with the
+/// vault locked it does nothing. Never an error for network problems.
+#[tauri::command]
+pub async fn sync_reconnect(state: State<'_, AppState>) -> CmdResult<()> {
+    run(&state, |c| {
+        c.sync_reconnect();
+        Ok(())
+    })
+    .await
+}
+
 // ------------------------------------------------------------------ links
 
 #[tauri::command]
@@ -711,7 +780,13 @@ pub fn invoke_handler<R: tauri::Runtime>(
         item_unarchive,
         item_clone,
         trash_list,
+        item_purge_plan,
         item_purge,
+        item_search,
+        folder_create,
+        folder_rename,
+        folder_remove,
+        item_move,
         history_list,
         history_get,
         history_restore,
@@ -726,6 +801,7 @@ pub fn invoke_handler<R: tauri::Runtime>(
         backup_reveal_secret,
         profile_restore_from_backup,
         sync_flush,
+        sync_reconnect,
         open_url,
         device::device_get,
         device::device_set_time_zone,
@@ -733,6 +809,8 @@ pub fn invoke_handler<R: tauri::Runtime>(
         device::device_set_time_check,
         device::device_set_theme,
         device::device_set_clipboard_clear,
+        device::device_set_open_in_search,
+        device::device_set_list_sort,
         device::clock_status,
         device::clock_sync,
         device::demo_spawn,

@@ -14,7 +14,7 @@ export function GeneratorView() {
           const clear = app.get().clipboardClear;
           try {
             await copyText(pw, clear);
-            pushToast({ kind: "success", text: `Password copied. The clipboard clears in ${clear} seconds.`, countdownMs: clear * 1000 });
+            pushToast({ kind: "success", text: `Password copied. The clipboard clears in ${clear} seconds.` });
           } catch {
             pushToast({ kind: "error", text: "Copying was blocked. Select the password and copy it by hand." });
           }

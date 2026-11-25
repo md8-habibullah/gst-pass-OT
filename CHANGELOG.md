@@ -8,6 +8,30 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+Folders, a search that looks inside everything, order and filters, several websites per login, automatic merging between devices, and a safer way to delete for good.
+
+**Upgrading from 0.3.0:** vault files and S3 backups keep their format, and a 0.3.0 build can still open everything this version writes. `device.json` gains `openInSearch` and `listSort` (older builds ignore them), the synced settings object gains `folders` (older builds keep what they do not know), and a login with several websites stores them one per line in its existing website field (an older build shows them as one long line). A change made to the same item on two devices is now merged for you; before, the other device's copy waited in the history. Permanently deleting no longer asks you to type the item's name: see Changed.
+
+### Added
+
+* **Folders.** Make folders (and folders inside folders, up to six levels), rename and remove them, and put an item in one with *Move to folder* in its menu or the Folder box of the editor. The list shows the folders first, with how many items each holds, then the items that sit at that level; a path above the list takes you back up. Removing a folder only removes the folder: what was inside moves up one level and nothing is deleted. Imported folders (Bitwarden writes `Work/Clients`) keep their structure.
+* **A search that looks inside everything.** Words are matched one by one, in any order and in any field: titles, websites, usernames, notes, the names and descriptions of your own fields, tags and folders. A result says where it found the words ("Found in Notes"). Tick *Include earlier versions* to look in what an item used to say as well. Passwords, card numbers, security codes, one-time-code secrets and private keys are never searched, and the notes of an item that asks for the master password stay sealed.
+* **Order and filters.** One panel under the search box. Nine orders: recently changed, longest ago, newest, oldest, title A to Z and Z to A, by type, most versions and fewest versions. Filters: type, favorites, has a one-time code, asks for the master password, a tag, at least and at most a number of versions, and changed within a day, week, month or year. A filter or a search looks through every folder.
+* **Open in search.** Settings > Vault list: after the vault opens, the cursor is already in the search box (on a phone the keyboard comes up with it). The default order of the list is there too.
+* **Several websites per login.** A box for each address and a button for another; the item shows every address with its own open and copy buttons, and the item menu opens any of them. Bitwarden import and export keep every address.
+* **Works offline, merges when you are back.** Nothing needs a connection: items are made, edited, searched and deleted locally and the changes wait in the queue. When the device comes back online it fetches what your other devices changed and sends what waited. If you changed the same item on two devices, the two are merged field by field, like a notes app does: a field only one side changed takes that side; tags, websites and custom fields are united; notes are merged line by line, and when both sides changed the very same lines both versions are written one after the other, marked, so nothing is dropped. When both sides changed the same single field, the newer change wins and the other value stays in the history. Both earlier states are kept in the history, which labels the merge.
+* **Import: merge matching accounts.** The default way to import. The same account arriving from two apps (a Bitwarden login and its Ente Auth code, say) becomes one item: it matches by one-time-code secret or by the same account and an alike name, and **every note is kept** (Ente's notes included), along with every website, tag and custom field. Nothing is overwritten, and importing the same file twice changes nothing the second time.
+
+### Changed
+
+* **The copy notice is a small notice.** It no longer counts down on top of your buttons: it shows briefly and goes after 5 seconds, or when you swipe it left or right. The clipboard still clears after the time you chose.
+* **The New item menu** lists Login, Code only, Secure note, Identity, Card and SSH key first.
+* **Deleting for good.** An item that has been in the trash for less than six months needs your master password **and** the answer to a long sum; an older one needs only the master password. Hexis checks the age on its own checked clock, and a wrong answer uses the sum up and shows a new one. Typing the item's name is gone.
+* **The password generator under the password box** can be hidden and shown again with a button.
+* **An item changed on two devices** is merged automatically instead of waiting in the history for you to restore it by hand (see Added). A merge is only refused, and the old way kept, for items of different types.
+
 ## [0.3.0] - 2026-11-25
 
 Light and dark themes, the next one-time code, a clean uninstall that leaves nothing behind, and a password generator that remembers its settings.

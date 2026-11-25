@@ -10,6 +10,7 @@ import { Button } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 
 const MODES: { id: ImportMode; title: string; text: string }[] = [
+  { id: "merge", title: "Merge matching accounts (recommended)", text: "The same account from two apps (a Bitwarden login and its Ente Auth code, say) becomes one item. Notes, websites, tags and codes from both are kept, and nothing is overwritten." },
   { id: "skip_duplicates", title: "Skip what is already here", text: "An entry with the same name, username and website is left alone." },
   { id: "append_version", title: "Add as a new version", text: "Same name, username and website: the imported entry becomes a new version in its history." },
   { id: "import_all", title: "Import everything", text: "Every entry becomes a new item, even if you already have it." },
@@ -33,7 +34,7 @@ export function ImportView() {
   const [keyfile, setKeyfile] = useState<{ handle: string; fileName: string } | null>(null);
   const [csv, setCsv] = useState<CsvInspect | null>(null);
   const [mapping, setMapping] = useState<CsvMapping>({});
-  const [mode, setMode] = useState<ImportMode>("skip_duplicates");
+  const [mode, setMode] = useState<ImportMode>("merge");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   const [busy, setBusy] = useState<"pick" | "check" | "import" | null>(null);
@@ -171,7 +172,7 @@ export function ImportView() {
           <ul className="flex flex-wrap gap-2 text-[0.93em]">
             <li className="rounded-full bg-raised px-3 py-1">{plural(preview.totpSeeds, "one-time code")}</li>
             <li className="rounded-full bg-raised px-3 py-1">{plural(preview.attachments, "attachment")}</li>
-            <li className="rounded-full bg-raised px-3 py-1">{plural(preview.duplicates, "duplicate")} found</li>
+            <li className="rounded-full bg-raised px-3 py-1">{mode === "merge" ? `${plural(preview.duplicates, "match", "matches")} to merge` : `${plural(preview.duplicates, "duplicate")} found`}</li>
             {preview.skipped > 0 && <li className="rounded-full bg-raised px-3 py-1">{preview.skipped} not importable</li>}
           </ul>
           {preview.warnings.length > 0 && (
@@ -189,7 +190,7 @@ export function ImportView() {
 
       {outcome && (
         <section className="flex flex-col gap-3 rounded-lg bg-pane/70 p-5 shadow-e1" role="status" aria-label="Import finished">
-          <p className="font-semibold">{plural(outcome.added + outcome.appended, "item")} imported{outcome.appended ? `, ${outcome.appended} as new versions` : ""}{outcome.skipped ? `, ${outcome.skipped} skipped` : ""}{outcome.failed ? `, ${outcome.failed} could not be saved` : ""}.</p>
+          <p className="font-semibold">{plural(outcome.added + outcome.appended, "item")} imported{outcome.appended ? (mode === "merge" ? `, ${outcome.appended} merged into items you already had` : `, ${outcome.appended} as new versions`) : ""}{outcome.skipped ? `, ${outcome.skipped} skipped` : ""}{outcome.failed ? `, ${outcome.failed} could not be saved` : ""}.</p>
           {outcome.warnings.length > 0 && (
             <ul className="flex flex-col gap-1 text-[0.93em] text-mist">{outcome.warnings.slice(0, 6).map((w, i) => <li key={i} className="flex gap-2"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-brass-ink" aria-hidden />{w}</li>)}</ul>
           )}

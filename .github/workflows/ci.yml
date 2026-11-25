@@ -273,7 +273,16 @@ jobs:
           restore-keys: cargo-linux-registry-${{ runner.os }}-
       - run: npm ci
       - name: Build the bundles
-        run: npm run tauri build -- --bundles deb,rpm,appimage
+        # The AppImage step downloads linuxdeploy from GitHub's release CDN, which answers 503 now and then (the push
+        # of 2026-11-25 went red that way after a good compile and good deb and rpm bundles). A second attempt reuses
+        # the compiled release build, so a retry costs seconds; a real error still fails after the third attempt.
+        run: |
+          for attempt in 1 2 3; do
+            npm run tauri build -- --bundles deb,rpm,appimage && exit 0
+            echo "::warning::bundling failed on attempt $attempt of 3, trying again shortly"
+            sleep $((attempt * 20))
+          done
+          exit 1
       - name: Collect, name and archive
         run: |
           set -euo pipefail

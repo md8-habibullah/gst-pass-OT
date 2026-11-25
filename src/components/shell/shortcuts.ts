@@ -2,7 +2,7 @@
 // Installed once by the Shell while a vault is open.
 import { copyText } from "../../lib/clipboard";
 import { CHORD_MS, isMacPlatform, matchKey } from "../../lib/shortcuts";
-import { app, be, lockApp, lockVault, pushToast, select, setFilter, visibleItems, type Filter } from "../../state/app";
+import { app, be, lockApp, lockVault, pushToast, select, setFilter, visibleList, type Filter } from "../../state/app";
 import { handleBack } from "../../state/back";
 import { openNewItem, setSettingsPage, setShortcutsOpen, ui } from "../../state/ui";
 import { cloneItem, copyQuick, editItem, launch, QUICK_COPY, setArchived, trashItem, type Target } from "../items/actions";
@@ -60,9 +60,9 @@ async function copyCode(t: Target) {
 }
 
 function step(dir: 1 | -1) {
-  const { filter, items, trash, query, selectedId } = app.get();
+  const { filter, trash, selectedId } = app.get();
   if (document.querySelector("[data-compact-detail]")) return;
-  const ids = filter === "trash" ? trash.map((t) => t.id) : ITEM_FILTERS.has(filter) ? visibleItems(items, filter, query).map((i) => i.id) : [];
+  const ids = filter === "trash" ? trash.map((t) => t.id) : ITEM_FILTERS.has(filter) ? visibleList(app.get()).items.map((i) => i.id) : [];
   if (ids.length === 0) return;
   const at = selectedId ? ids.indexOf(selectedId) : -1;
   const next = ids[Math.max(0, Math.min(ids.length - 1, at < 0 ? (dir === 1 ? 0 : ids.length - 1) : at + dir))]!;

@@ -12,6 +12,9 @@ const DATA = `${SP}/e2e-data`;
 const FILES = `${SP}/e2e-files`;
 const PORT = 1432;
 const UI = `http://localhost:1431/?e2e=${PORT}`;
+/** The sum on screen (`aria-label="What is ...?"`) and its answer. Refuses anything but digits and operators. */
+const equationOf = (p) => p.eval(`(()=>{const e=document.querySelector('[aria-label^="What is "]'); return e? e.getAttribute('aria-label').slice(8,-1):null})()`);
+const solve = (eq) => { if (!/^[\d+\-*/() ×÷−]+$/.test(eq)) throw new Error("unexpected equation " + eq); return Function(`"use strict";return (${eq.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-")})`)(); };
 const only = process.argv[2];
 
 const results = [];
@@ -344,18 +347,26 @@ step("trash, restore and delete forever", async (p) => {
   await waitGone(p, "GitHub (copy)");
   await nav(p, "Trash"); await p.click("[data-item-row]", "GitHub (copy)");
   await p.click("button", "Delete forever");
-  await waitText(p, "permanently erases"); await p.click("[role=dialog] button", "Continue");
-  await waitText(p, "Confirm with your master password");
-  await p.typeLabel("Master password", "wrong one"); await p.typeLabel("Type “GitHub (copy)” or CONFIRM", "CONFIRM");
+  await waitText(p, "permanently erases");
+  await waitText(p, "less than six months ago");
+  check("a recent deletion says it needs the password and a sum", await has(p, "and the answer to a sum"));
+  await p.click("[role=dialog] button", "Continue");
+  await waitText(p, "Confirm with your password and the sum");
+  const sum1 = await equationOf(p);
+  check("a recent deletion shows a sum", !!sum1, String(sum1));
+  await p.typeLabel("Master password", "wrong one"); await p.typeLabel("Your answer", String(solve(sum1)));
   await p.click("[role=dialog] button[type=submit]");
   await waitText(p, "That master password is not right.");
   check("purge with a wrong master password is refused", true);
-  await p.typeLabel("Master password", MAR_PW); await p.typeLabel("Type “GitHub (copy)” or CONFIRM", "nope");
-  check("purge stays disabled until the name or CONFIRM is typed", await p.eval(`document.querySelector('[role=dialog] button[type=submit]').disabled`));
-  await p.typeLabel("Type “GitHub (copy)” or CONFIRM", "GitHub (copy)");
+  await p.typeLabel("Master password", MAR_PW); await p.typeLabel("Your answer", String(solve(sum1) + 1));
+  await p.click("[role=dialog] button[type=submit]");
+  await waitText(p, "That is not the answer, so nothing was deleted");
+  check("a wrong answer deletes nothing and brings a new sum", !!(await equationOf(p)));
+  const sum2 = await equationOf(p);
+  await p.typeLabel("Master password", MAR_PW); await p.typeLabel("Your answer", String(solve(sum2)));
   await p.click("[role=dialog] button[type=submit]");
   await waitText(p, "was deleted forever");
-  await waitGone(p, "Confirm with your master password");
+  await waitGone(p, "Confirm with your password and the sum");
   check("purged item is gone from Trash", !(await has(p, "Deleted just now")) || (await p.eval(`document.querySelectorAll('[data-item-row]').length`)) === 0);
   await nav(p, "All items");
 });
@@ -467,8 +478,13 @@ step("import Bitwarden JSON and CSV through the UI", async (p) => {
   await btn(p, "Import 1 item");
   await waitText(p, "1 item imported");
   await nav(p, "All items");
-  await waitText(p, "Imported login"); await waitText(p, "CSV site");
-  check("imported items are in the vault", true);
+  // The Bitwarden folder "Work" came with the items, so the top level shows that folder and the item with no folder.
+  await waitText(p, "CSV site");
+  await p.click("[data-folder-row]", "Work");
+  await waitText(p, "Imported login");
+  check("imported items are in the vault, the Bitwarden folder as a folder", true);
+  await p.click('nav[aria-label="Folder path"] button', "All items");
+  await waitText(p, "CSV site");
 });
 
 step("export file is encrypted: no plaintext in the vault files", async () => {

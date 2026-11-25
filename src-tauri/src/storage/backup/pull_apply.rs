@@ -20,10 +20,14 @@ use crate::crypto::{envelope, now_millis, KeyPurpose};
 use crate::storage::db::{Store, VersionRow};
 use crate::storage::drive;
 use crate::storage::error::{Result, StorageError};
-use crate::storage::model::{ItemPayload, ParentRef};
+use crate::storage::merge;
+use crate::storage::model::{changed_fields, ItemEvent, ItemPayload, ParentRef};
 use crate::storage::vault::Vault;
 use rusqlite::{params, Connection, OptionalExtension};
 use zeroize::Zeroizing;
+
+/// How many steps back along a chain a merge looks for the state both sides grew out of.
+const MAX_ANCESTORS: usize = 2_000;
 
 /// An item's state as far as lineage is concerned: its header and the parent it records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,12 +86,16 @@ pub enum Plan {
         /// The states between the old head and the new one that were downloaded on the way.
         snapshots: Vec<Snap>,
     },
-    /// Both devices changed the item: the local head stays, the remote state is kept as an extra
-    /// immutable version ("from another device") for the person to look at.
+    /// Both devices changed the item: the other device's state is kept as an extra immutable version ("from another
+    /// device"), and the two are merged into a new state that grows out of it (`storage::merge`), so the other device
+    /// fast-forwards to the result. When they cannot be merged the local head simply stays.
     OtherDevice {
         id: String,
         expect: (u64, u64),
         head: Vec<u8>,
+        /// The other device's states between its head and the last one this device has as well (newest first),
+        /// downloaded so the merge has its base and the history keeps what the other device did.
+        snapshots: Vec<Snap>,
     },
 }
 
@@ -109,6 +117,8 @@ pub enum Applied {
 pub struct ApplyResult {
     pub applied: Applied,
     pub skipped_snapshots: usize,
+    /// `Some(n)`: the two states were merged into a new one, and `n` things were changed on both sides differently.
+    pub merged: Option<usize>,
 }
 
 impl ApplyResult {
@@ -116,6 +126,7 @@ impl ApplyResult {
         Self {
             applied,
             skipped_snapshots: 0,
+            merged: None,
         }
     }
 }
@@ -291,6 +302,7 @@ impl Store {
         remote_version: u64,
         ts: u64,
         blob: &[u8],
+        reviewed: bool,
     ) -> Result<Wrote> {
         self.in_tx(|c| {
             if head_of(c, id)? != Some(expect) {
@@ -306,8 +318,8 @@ impl Store {
             }
             c.execute(
                 "INSERT INTO versions (item_id, version, ts, blob, uploaded, origin, remote_version, reviewed)
-                 VALUES (?1, ?2, ?3, ?4, 1, 'remote', ?5, 0)",
-                params![id, to_i64(number)?, to_i64(ts)?, blob, to_i64(remote_version)?],
+                 VALUES (?1, ?2, ?3, ?4, 1, 'remote', ?5, ?6)",
+                params![id, to_i64(number)?, to_i64(ts)?, blob, to_i64(remote_version)?, reviewed],
             )?;
             Ok(Wrote::Yes)
         })
@@ -566,38 +578,169 @@ impl Vault {
                 )?;
                 self.finish(&id, wrote, skipped)
             }
-            Plan::OtherDevice { id, expect, head } => {
+            Plan::OtherDevice {
+                id,
+                expect,
+                head,
+                snapshots,
+            } => {
                 let Some((payload, h)) = self.open_remote_head(&id, &head) else {
                     return Ok(ApplyResult::of(Applied::Damaged));
                 };
                 if self.store.snapshot_known(&id, h.version, h.timestamp)? {
                     return Ok(ApplyResult::of(Applied::Unchanged));
                 }
-                // A number above every one in use here: the copy never shares a number with this
-                // device's own states (see `Vault::next_number`).
-                let number = self
-                    .store
-                    .max_version(&id)?
-                    .max(h.version)
-                    .checked_add(1)
-                    .ok_or_else(|| {
-                        StorageError::Storage("This item has too many versions.".into())
-                    })?;
-                let json = Zeroizing::new(serde_json::to_vec(&payload)?);
-                let blob =
-                    self.root
-                        .seal_object(KeyPurpose::Version, &id, number, h.timestamp, &json)?;
-                let wrote = self.store.pull_add_other_device(
-                    &id,
-                    expect,
-                    number,
-                    h.version,
-                    h.timestamp,
-                    &blob,
-                )?;
-                self.finish(&id, wrote, 0)
+                // What the other device did on the way (oldest first): history, and the merge's base.
+                let mut chain = snapshots;
+                chain.sort_by_key(|s| s.version);
+                let mut skipped = 0;
+                for s in chain {
+                    if self.store.snapshot_known(&id, s.version, s.ts)? {
+                        continue;
+                    }
+                    let Some(p) = self.open_remote_snapshot(&id, s.version, s.ts, &s.bytes) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    if self.store_copy(&id, expect, s.version, s.ts, &p, true)?.1 == Wrote::Raced {
+                        return self.finish(&id, Wrote::Raced, skipped);
+                    }
+                }
+                let (number, wrote) =
+                    self.store_copy(&id, expect, h.version, h.timestamp, &payload, false)?;
+                let mut result = self.finish(&id, wrote, skipped)?;
+                if wrote == Wrote::Yes {
+                    // A merge that cannot be made leaves the copy for the person to look at, as before.
+                    result.merged = self
+                        .auto_merge(&id, &payload, (h.version, h.timestamp), number)
+                        .ok()
+                        .flatten();
+                }
+                Ok(result)
             }
         }
+    }
+
+    /// Keep another device's state as a copy of its own in this item's history (a number above every one in use here,
+    /// so it never shares a number with this device's own states; see `Vault::next_number`).
+    fn store_copy(
+        &mut self,
+        id: &str,
+        expect: (u64, u64),
+        version: u64,
+        ts: u64,
+        payload: &ItemPayload,
+        reviewed: bool,
+    ) -> Result<(u64, Wrote)> {
+        let number = self
+            .store
+            .max_version(id)?
+            .max(version)
+            .checked_add(1)
+            .ok_or_else(|| StorageError::Storage("This item has too many versions.".into()))?;
+        let json = Zeroizing::new(serde_json::to_vec(payload)?);
+        let blob = self
+            .root
+            .seal_object(KeyPurpose::Version, id, number, ts, &json)?;
+        let wrote = self
+            .store
+            .pull_add_other_device(id, expect, number, version, ts, &blob, reviewed)?;
+        Ok((number, wrote))
+    }
+
+    /// The states this item's head grew out of, as `(version, timestamp)` (the other device's numbering for the ones
+    /// that came from it), nearest first.
+    pub fn pull_local_ancestors(&self, id: &str) -> Vec<(u64, u64)> {
+        match self.load_latest(id) {
+            Ok((head, _)) => self.ancestors_of(id, &head),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn ancestors_of(&self, id: &str, head: &ItemPayload) -> Vec<(u64, u64)> {
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        let mut parent = head.parent;
+        while let Some(p) = parent {
+            if out.len() >= MAX_ANCESTORS || out.contains(&(p.version, p.ts)) {
+                break;
+            }
+            out.push((p.version, p.ts));
+            let Some(row) = self.store.snapshot_row(id, p.version, p.ts).ok().flatten() else {
+                break;
+            };
+            let Ok((payload, _)) = self.open_snapshot(id, row.version, &row.blob) else {
+                break;
+            };
+            parent = payload.parent;
+        }
+        out
+    }
+
+    /// The state both sides grew out of: the first state on the other device's chain that is also on this
+    /// device's chain. `None` when the chain is not known that far.
+    fn merge_base(
+        &self,
+        id: &str,
+        local: &ItemPayload,
+        remote: &ItemPayload,
+    ) -> Option<ItemPayload> {
+        let mine = self.ancestors_of(id, local);
+        let mut seen: Vec<(u64, u64)> = Vec::new();
+        let mut parent = remote.parent;
+        while let Some(p) = parent {
+            if seen.len() >= MAX_ANCESTORS || seen.contains(&(p.version, p.ts)) {
+                return None;
+            }
+            seen.push((p.version, p.ts));
+            let row = self
+                .store
+                .snapshot_row(id, p.version, p.ts)
+                .ok()
+                .flatten()?;
+            let (payload, _) = self.open_snapshot(id, row.version, &row.blob).ok()?;
+            if mine.contains(&(p.version, p.ts)) {
+                return Some(payload);
+            }
+            parent = payload.parent;
+        }
+        None
+    }
+
+    /// Merge the other device's state (just stored as copy number `copy_number`) into this device's head. The result
+    /// grows out of the other device's state, so that device fast-forwards to it. `Some(n)` with `n` places where
+    /// both sides had changed the same thing differently; `None` when nothing was merged.
+    fn auto_merge(
+        &mut self,
+        id: &str,
+        remote: &ItemPayload,
+        remote_ref: (u64, u64),
+        copy_number: u64,
+    ) -> Result<Option<usize>> {
+        let (local, current) = self.load_latest(id)?;
+        let base = self.merge_base(id, &local, remote);
+        let Some(merged) = merge::merge(base.as_ref(), &local, remote) else {
+            return Ok(None);
+        };
+        let conflicts = merged.conflicts.len();
+        let mut next = merged.payload;
+        // The merged content passes the same limits and tidying as an edit a person makes.
+        let mut draft = next.to_draft();
+        if draft.normalize().is_err() {
+            return Ok(None);
+        }
+        next.apply_draft(&draft);
+        next.changed_fields = changed_fields(&local.to_draft(), &next.to_draft());
+        next.updated_at = now_millis().max(local.updated_at).max(remote.updated_at);
+        // An `edited` state that records the copy it was built with: this is how history tells a merge from an edit.
+        next.event = ItemEvent::Edited;
+        next.restored_from = Some(copy_number);
+        let number = self.next_number(id, current)?;
+        let parent = ParentRef {
+            version: remote_ref.0,
+            ts: remote_ref.1,
+        };
+        self.commit_with_parent(next, Some(current), number, Some(parent))?;
+        Ok(Some(conflicts))
     }
 
     fn finish(&mut self, id: &str, wrote: Wrote, skipped: usize) -> Result<ApplyResult> {
@@ -612,6 +755,7 @@ impl Vault {
         Ok(ApplyResult {
             applied,
             skipped_snapshots: skipped,
+            merged: None,
         })
     }
 

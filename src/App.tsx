@@ -10,6 +10,7 @@ import { VaultMark } from "./components/lock/VaultMark";
 import { RepromptHost } from "./components/reprompt/Reprompt";
 import { Shell } from "./components/shell/Shell";
 import { ItemEditor } from "./components/items/ItemEditor";
+import { FolderDialogHost } from "./components/items/FolderSheets";
 import { ItemMenuHost } from "./components/items/ItemMenu";
 import { ScanOverlay } from "./components/scan/ScanOverlay";
 import { ShortcutsSheet } from "./components/help/ShortcutsSheet";
@@ -84,6 +85,7 @@ export default function App() {
           <Shell />
           <ItemEditor />
           <ItemMenuHost />
+          <FolderDialogHost />
           <FirstRunSheet />
           <ShortcutsSheet />
         </>
