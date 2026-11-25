@@ -236,7 +236,7 @@ the runner needed more than the 10 seconds `e2e/cdp.mjs` waited (the other eight
 
 | Workflow / job | Trigger | What it does |
 |---|---|---|
-| `ci.yml` `plan` | every push, every PR | seconds: is the version in `tauri.conf.json` new (no `vX.Y.Z` tag in the repository)? Only on `main`. If so, fails at once when `package.json` or `Cargo.toml` disagree with it or `CHANGELOG.md` has no section for it, and tells the other jobs it is a release build (clean cache, Android key required) |
+| `ci.yml` `plan` | every push, every PR | seconds: is the version in `tauri.conf.json` new (no `vX.Y.Z` tag in the repository)? Only on `main`. If so, `python3 scripts/version.py check --release` fails at once when any file that carries the version disagrees with `VERSION` or `CHANGELOG.md` has no section for it, and the other jobs are told it is a release build (clean cache, Android key required) |
 | `ci.yml` `checks` | every push, every PR | `scripts/verify_all.sh`: `tsc`, vitest, `vite build`, no dev-only strings in `dist/`, notification check, patch-script tests, `cargo fmt`, `clippy -D warnings`, `cargo test --locked` |
 | `ci.yml` `e2e` | every push, every PR (side by side with `checks`) | `scripts/ci_e2e.sh`: builds the dev shim, starts Vite, runs every `e2e/*.mjs` against the real core in headless Chrome (`CHROME_BIN`) |
 | `ci.yml` `site` | every push, every PR | builds the website and fails on a broken link or anchor or a third-party request |

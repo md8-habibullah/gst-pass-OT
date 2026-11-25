@@ -18,6 +18,10 @@ const PW: &str = "correct horse battery staple";
 const PW2: &str = "a second long master password";
 /// Plaintext that is put in files the app itself writes unencrypted, to prove the wipe removes it.
 const MARKER: &[u8] = b"MARKER-4f2a9c71-plaintext-bytes";
+/// A PIN to search the files for. Sealed files are random bytes, and a short PIN such as `2468` shows up
+/// in a megabyte of them by chance every so often, which a test must not mistake for a leak. Thirteen
+/// digits cannot appear by chance (about 1 in 10^13 per position).
+const FINDABLE_PIN: &str = "7194052863107";
 
 fn cfg() -> SessionConfig {
     SessionConfig {
@@ -150,8 +154,15 @@ impl Fx {
     }
 }
 
+/// Whether the bytes hold `needle`. Sealed files are random bytes, so a short needle turns up in them
+/// by chance and makes a test fail now and then for no reason; this refuses needles under 8 bytes.
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+    assert!(
+        needle.len() >= 8,
+        "a search for {} bytes can match random sealed bytes by chance; use a longer, distinctive value",
+        needle.len()
+    );
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 /// The vault is closed for good: not "unlocked", no item and no password check answers (the keys,
@@ -334,14 +345,14 @@ fn gate_configure_needs_an_unlocked_vault_and_its_master_password() {
     assert!(!fx.root().join("gate.json").exists());
     // a rule failure is reported before any Argon2id work on the master password
     assert_eq!(code(fx.app.gate_configure(pin("12", PW))), "invalid_input");
-    let st = fx.app.gate_configure(pin("2468", PW)).unwrap();
+    let st = fx.app.gate_configure(pin(FINDABLE_PIN, PW)).unwrap();
     assert!(st.enabled && st.open);
     // a locked vault cannot reconfigure it
     fx.app.lock();
     assert_eq!(code(fx.app.gate_configure(pin("1357", PW))), "locked");
     // the master password is not in the gate file
     let file = std::fs::read(fx.root().join("gate.json")).unwrap();
-    assert!(!contains(&file, PW.as_bytes()) && !contains(&file, b"2468"));
+    assert!(!contains(&file, PW.as_bytes()) && !contains(&file, FINDABLE_PIN.as_bytes()));
 }
 
 #[test]
@@ -393,7 +404,7 @@ fn opening_the_gate_never_unlocks_a_vault() {
 fn nothing_that_could_unlock_a_vault_is_ever_written_to_disk() {
     let fx = Fx::new();
     fx.account("Ana", PW);
-    fx.app.gate_configure(pin("2468", PW)).unwrap();
+    fx.app.gate_configure(pin(FINDABLE_PIN, PW)).unwrap();
     fx.app
         .app_settings_set(AppSettings {
             lock_after_minutes: 5,
@@ -401,7 +412,9 @@ fn nothing_that_could_unlock_a_vault_is_ever_written_to_disk() {
         })
         .unwrap();
     fx.app.gate_close();
-    fx.app.gate_submit(Zeroizing::new("2468".into())).unwrap();
+    fx.app
+        .gate_submit(Zeroizing::new(FINDABLE_PIN.into()))
+        .unwrap();
     fx.app.unlock(PW.into()).unwrap();
     fx.app.gate_close();
     let known = ["app-settings.json", "gate.json", "profiles.json", "vaults"];
@@ -411,7 +424,7 @@ fn nothing_that_could_unlock_a_vault_is_ever_written_to_disk() {
     }
     let bytes = fx.all_bytes();
     assert!(!contains(&bytes, PW.as_bytes()));
-    assert!(!contains(&bytes, b"2468"));
+    assert!(!contains(&bytes, FINDABLE_PIN.as_bytes()));
 }
 
 // ------------------------------------------------------------------ the wipe

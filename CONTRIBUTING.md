@@ -67,7 +67,10 @@ all avoidable, so each is now a rule:
 3. **Never assert that a short string is absent from generated text.** A test that does `!text.contains("737")` on a result that holds a random
    id, a UUID, a millisecond timestamp, a hash or base64 fails by chance, about once in fifty runs (`clone_is_password_gated_and_never_returns_secrets`
    did, on CI). Assert the structure instead (exact keys, exact values), and use `contains` only for strings long enough that a chance match is
-   impossible (a full card number, a marker such as `SECRET-BANK-REF`).
+   impossible (a full card number, a marker such as `SECRET-BANK-REF`). The same goes for searching sealed files (random bytes) for a secret:
+   `nothing_that_could_unlock_a_vault_is_ever_written_to_disk` searched about a megabyte of them for the PIN `2468` and failed once in a local
+   `verify_all` run. Search for a long, distinctive value instead (`FINDABLE_PIN`, thirteen digits); the `contains` helper in
+   `src-tauri/src/gate/app_tests.rs` now refuses a needle under 8 bytes, so a short one fails at once and on every run, not now and then.
 4. **A test fixture is a copy of what the real tool writes.** The Android label test used `<string name="app_name">Hexis</string>`, but Tauri
    writes `"Hexis"` (with quoting marks that aapt removes), so the build copied the marks as text and the launcher showed `"Hexis"` with quotes
    until a phone showed it. Take fixtures from a real generated project (`src-tauri/gen/android/...`), not from what you expect it to look like.
@@ -121,14 +124,23 @@ all avoidable, so each is now a rule:
 
 A release is made by raising the version on `main`. Nobody tags or publishes by hand.
 
-1. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - date` (and add a new empty `## [Unreleased]` above it); bump
-   the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` (and `Cargo.lock`
-   by building once) and `packaging/arch/PKGBUILD`.
+1. **One command sets the version everywhere.** The file `VERSION` is the single source of truth; `scripts/version.py` copies it into
+   `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` (the `hexis` entry
+   only) and `packaging/arch/PKGBUILD`, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] - date` with a new empty one above it.
+   ```
+   python3 scripts/version.py suggest      # what the CHANGELOG's [Unreleased] section calls for, and why
+   python3 scripts/version.py bump auto    # do it (or: bump major | minor | patch, or: set 1.0.0)
+   python3 scripts/version.py check        # every file agrees (scripts/verify_all.sh runs it; CI runs it before it publishes)
+   ```
+   **Nobody, and no AI agent, edits a version number by hand.** `auto` reads the CHANGELOG: a `BREAKING` mark or a `### Removed` section is
+   a major bump (a minor one before 1.0.0, when a minor bump may change a stored format), a `### Added`, `### Changed` or `### Deprecated`
+   section is minor, only `### Fixed` or `### Security` is patch, and an empty `[Unreleased]` is refused. So the CHANGELOG entry is written
+   first, and the bump follows from it. Android's version is made by Tauri from `tauri.conf.json` at build time.
 2. Merge or push that to `main`. The `ci.yml` workflow sees that `vX.Y.Z` has no tag yet, builds every variant from a clean
    cache, runs every test and, **only if every job passes**, tags that commit, **publishes** the release (notes, downloads
    table with checksums, the changelog section) and asks the site to rebuild its signed apt and rpm repositories. A version
    with a suffix such as `0.3.0-rc1` is published as a pre-release.
-3. CI stops early, before building anything, if the versions in the three files differ or `CHANGELOG.md` has no section for
+3. CI stops early, before building anything, if any file disagrees with `VERSION` (`python3 scripts/version.py check --release`) or `CHANGELOG.md` has no section for
    the version. A push that does not raise the version is an ordinary build (it only refreshes the rolling `nightly`).
 4. **Where the newest build is.** Every push to `main` builds every variant; when all jobs pass, the rolling **`Nightly (main, <sha>)`**
    pre-release on the Releases page is replaced with that build (Linux packages and the Android APK). The release marked **Latest** is a

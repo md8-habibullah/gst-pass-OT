@@ -91,11 +91,9 @@ jobs:
           fi
           echo "$msg"; echo "$msg" >> "$GITHUB_STEP_SUMMARY"
           if [ "$release" = true ]; then
-            a=$(node -p "require('./package.json').version")
-            c=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
-            echo "release=$version package.json=$a tauri.conf.json=$version Cargo.toml=$c"
-            [ "$version" = "$a" ] && [ "$version" = "$c" ] || { echo "::error::The version differs between package.json ($a), tauri.conf.json ($version) and Cargo.toml ($c). Make them the same, then push again."; exit 1; }
-            grep -qF "## [$version]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$version]' section. Rename '## [Unreleased]' to '## [$version] - $(date -u +%Y-%m-%d)' and push again."; exit 1; }
+            # VERSION is the one source of truth; every file that carries the version, and the CHANGELOG section, must agree with it
+            [ "$(cat VERSION)" = "$version" ] || { echo "::error::VERSION ($(cat VERSION)) and src-tauri/tauri.conf.json ($version) differ. Run: python3 scripts/version.py sync"; exit 1; }
+            python3 scripts/version.py check --release || { echo "::error::The version files or the CHANGELOG disagree with VERSION (see the lines above). Run: python3 scripts/version.py set $(cat VERSION)"; exit 1; }
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
