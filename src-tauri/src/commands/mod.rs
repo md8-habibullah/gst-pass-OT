@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::State;
 
+pub mod bridge;
 pub mod device;
 pub mod disguise;
 pub mod gate;
@@ -37,6 +38,8 @@ pub struct AppState {
     core: Arc<AppCore>,
     gate: Arc<ExitGate>,
     hooks: std::sync::Mutex<Hooks>,
+    /// Passkey requests from browsers on this computer (`crate::bridge`); idle until the setting is switched on.
+    bridge: Arc<crate::bridge::Bridge>,
 }
 
 /// What only the running application can do, handed in by `lib.rs` (the shim and the tests leave them out).
@@ -56,10 +59,15 @@ impl AppState {
     /// Wrap a core that already exists (the Android passkey provider may have opened it first, see `provider::shared`).
     pub fn from_core(core: Arc<AppCore>) -> Self {
         Self {
+            bridge: Arc::new(crate::bridge::Bridge::new(Arc::clone(&core))),
             core,
             gate: Arc::new(ExitGate::default()),
             hooks: std::sync::Mutex::new(Hooks::default()),
         }
+    }
+
+    pub fn bridge(&self) -> &Arc<crate::bridge::Bridge> {
+        &self.bridge
     }
 
     fn hooks(&self) -> std::sync::MutexGuard<'_, Hooks> {
@@ -918,6 +926,13 @@ pub fn invoke_handler<R: tauri::Runtime>(
         device::clock_sync,
         device::demo_spawn,
         device::demo_open,
+        bridge::bridge_status,
+        bridge::bridge_set,
+        bridge::bridge_register,
+        bridge::bridge_unregister,
+        bridge::bridge_wait,
+        bridge::bridge_options,
+        bridge::bridge_answer,
         disguise::disguise_get,
         disguise::disguise_set,
         gate::gate_status,

@@ -11,6 +11,7 @@
 //! hooks the third one: the window `CloseRequested` event on desktop, and the mobile
 //! `Suspended` event (Android `onPause`). There are no timers, no tray icon and no notifications.
 
+pub mod bridge;
 pub mod clock;
 pub mod commands;
 pub mod crypto;
@@ -23,6 +24,13 @@ pub mod scan;
 pub mod storage;
 
 use tauri::Manager;
+
+/// `hexis --native-host`: the program a browser starts for the Hexis extension (`bridge::host`). It never opens a window and
+/// never touches a vault: it passes one message to the running Hexis and prints the answer. Returns the exit code.
+#[cfg(unix)]
+pub fn native_host() -> i32 {
+    bridge::host::run()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -111,6 +119,30 @@ pub fn run() {
                     });
                 });
             }
+            // Browsers on this computer (Linux): say where this installation lives, let a request ask the window to come forward, and
+            // listen if the setting is on.
+            #[cfg(target_os = "linux")]
+            if let (Some(home), Ok(socket)) =
+                (bridge::install::home_dir(), bridge::socket::default_path())
+            {
+                let bridge = state.bridge();
+                bridge.set_env(bridge::Env {
+                    home,
+                    data_dir: dir.clone(),
+                    socket,
+                });
+                let handle = app.handle().clone();
+                bridge.set_attention(move || {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                        let _ =
+                            window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+                    }
+                });
+                bridge.start_if_enabled();
+            }
             app.manage(state);
             // The disguise: install the launcher (window, launcher entry) and re-apply the saved look.
             commands::disguise::install(app.handle());
@@ -126,6 +158,8 @@ pub fn run() {
             // destructors of managed state).
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app.try_state::<commands::AppState>() {
+                    #[cfg(unix)]
+                    state.bridge().stop();
                     state.core().lock();
                 }
             }

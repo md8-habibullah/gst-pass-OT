@@ -119,6 +119,8 @@ pub async fn app_prepare_uninstall(
         )),
     })
     .await?;
+    // Nothing of Hexis stays in a browser's folder either (a no-op where no browser was ever told about it).
+    state.bridge().forget_browsers();
     state.request_exit();
     Ok(())
 }

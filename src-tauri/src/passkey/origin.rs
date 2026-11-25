@@ -39,11 +39,20 @@ pub fn rp_matches_origin(rp_id: &str, origin: &str) -> bool {
         && plain_host(&host)
         && super::record::check_rp_id(rp_id).is_ok()
         && (host == rp_id || host.ends_with(&format!(".{rp_id}")))
+        && may_name_a_site(rp_id)
+}
+
+/// May a page name `rp_id` as its website? Only a registrable domain or a subdomain of one: `example.com` and
+/// `login.example.com` yes, `com`, `co.uk` and `github.io` (names a whole family of unrelated sites share) no. A browser
+/// applies this rule to its own pages with the Public Suffix List; a caller that is not a browser must apply it here,
+/// or any page could claim the name of everyone under a shared suffix. `localhost` is allowed for development.
+pub fn may_name_a_site(rp_id: &str) -> bool {
+    rp_id == "localhost" || psl::domain(rp_id.as_bytes()).is_some()
 }
 
 /// Only what a host name is made of. A parser that reads the address differently from this function (`evil.com\.example.com`
 /// is the host `evil.com` to a browser) must not get an origin accepted here, so anything else is refused outright.
-fn plain_host(host: &str) -> bool {
+pub(crate) fn plain_host(host: &str) -> bool {
     !host.is_empty()
         && host
             .bytes()
@@ -204,6 +213,31 @@ mod tests {
             host_of_origin("https://Login.Example.com:8443/x").as_deref(),
             Some("login.example.com")
         );
+    }
+
+    #[test]
+    fn a_page_cannot_name_a_suffix_that_many_sites_share() {
+        for (rp, origin) in [
+            ("co.uk", "https://evil.co.uk"),
+            ("com", "https://evil.com"),
+            ("github.io", "https://evil.github.io"),
+            ("github.io", "https://github.io"),
+            ("appspot.com", "https://evil.appspot.com"),
+        ] {
+            assert!(!rp_matches_origin(rp, origin), "{rp} from {origin}");
+            assert!(!may_name_a_site(rp), "{rp}");
+        }
+        // a registrable domain, and a name below a private suffix, are fine
+        assert!(rp_matches_origin(
+            "example.co.uk",
+            "https://login.example.co.uk"
+        ));
+        assert!(rp_matches_origin(
+            "evil.github.io",
+            "https://evil.github.io"
+        ));
+        assert!(rp_matches_origin("example.com", "https://example.com"));
+        assert!(rp_matches_origin("localhost", "http://localhost:3000"));
     }
 
     #[test]

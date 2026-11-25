@@ -1719,6 +1719,33 @@ fn activity_postpones_the_lock_and_polling_does_not() {
 }
 
 #[test]
+fn the_browsers_long_poll_does_not_postpone_the_lock_and_is_refused_while_the_app_lock_is_closed() {
+    // it runs every few seconds while Settings > Browsers is on: if it counted as activity the timer could never run out
+    assert!(is_passive("bridge_wait") && !is_polling("bridge_wait"));
+    assert!(!allowed_while_closed("bridge_wait"));
+    let fx = Fx::new();
+    fast_idle(&fx, 1000);
+    fx.gate.before_command("item_list").unwrap();
+    let start = std::time::Instant::now();
+    while fx.locks.load(Ordering::SeqCst) == 0 && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(50));
+        fx.gate.before_command("bridge_wait").unwrap();
+    }
+    assert_eq!(fx.locks.load(Ordering::SeqCst), 1);
+    assert!(
+        start.elapsed() < Duration::from_millis(4000),
+        "the long poll postponed the lock: {:?}",
+        start.elapsed()
+    );
+    // with the app lock closed the poll is refused like any other command
+    fx.pin_gate("2468");
+    assert!(matches!(
+        fx.gate.before_command("bridge_wait"),
+        Err(StorageError::Locked)
+    ));
+}
+
+#[test]
 fn a_deadline_that_passed_while_the_machine_slept_is_enforced_by_the_next_command() {
     let fx = Fx::new();
     fx.pin_gate("2468");

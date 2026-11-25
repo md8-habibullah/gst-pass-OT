@@ -326,7 +326,7 @@ Passwords through the same service (`BeginCreatePasswordCredentialRequest` / `Be
 | **P2** | Passkey item, Rust engine, `schema 2` safety, search, desktop manage UI, Bitwarden passkey import | Decisions D-4, D-7 | 4-6 d | `webauthn-rs` round-trip tests green for all algorithms; old-core compatibility test green; e2e sync test green |
 | **P3** | Android provider (create + get + unlock + verify + settings toggle + origin rules) | Phone with Android 14+ that supports providers; test accounts | 5-8 d | `adb` shows the service registered; **real passkey created and used on a test site, in Chrome, from a native app test, and via the QR/"phone" sign-in** (tests T-5 to T-11) |
 | **P4** | CXF file import/export + Android Credential Transfer | Decision D-6 | 2-3 d | Round-trip of a CXF file; transfer with a second provider on a phone that offers it |
-| **P5** | Desktop browser extension + host | Add-on signing / store account, D-2 | 6-10 d | Passkey created/used in Firefox and Chromium on Linux |
+| **P5** (BUILT 2026-11-25 for Linux, branch `feature/passkeys-linux-browsers`; design in `PASSKEYS.md` §10) | Desktop browser extension + host | Add-on signing / store account, D-2 | 6-10 d | Passkey created/used in Firefox and Chromium on Linux (done with a real Chromium and a real Firefox as a temporary add-on; **Mozilla signing and the stores are the owner's steps**) |
 | **P6** | RS256/ES384, conditional create, RP signals, AAGUID decision, `/security-review` + `/security-audit`, docs, CHANGELOG, PRIVACY | none | 3-4 d | Audit findings closed or accepted in writing |
 
 Spikes, before the phases they protect (each ends with a short written result):

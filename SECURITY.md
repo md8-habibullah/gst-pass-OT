@@ -46,6 +46,7 @@ you ask not to be.
   screen lock, to make it answer while the app lock is closed, to learn a passkey's private key from any view, error or export other than the
   master-password-protected Bitwarden export, or to get an app accepted that its website does not list (design in [`ai-docs/PASSKEYS.md`](ai-docs/PASSKEYS.md)).
   The provider is new and **has not been run on a real phone by its author yet**; read its status there before relying on it.
+* **Browsers on Linux (Settings > Browsers):** a way to make Hexis sign or save a passkey without a person choosing in its window (or without the master password when the website requires verification), for a website name that is not the page's own or that many sites share, while the switch is off or the app lock is closed, or to reach the socket as another user; a web page or extension other than Hexis's own starting the native host; a private key in any message on the socket. The socket cannot tell a browser from another program of the same user, so the window is the guard (`ai-docs/PASSKEYS.md` §9). The extension is checked with a real Chromium and Firefox on the author's computer; it has not been through Mozilla's signing or a store review.
 
 ## Out of scope
 

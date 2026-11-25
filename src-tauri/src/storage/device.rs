@@ -10,6 +10,7 @@
 //! * `clipboardClear`: how many seconds a copied secret stays on the clipboard (15, 30 or 60).
 //! * `openInSearch`: after the vault opens, put the cursor in the search box (the keyboard comes up on a phone).
 //! * `listSort`: how the item list is ordered until the person picks another order (one of [`SORT_CHOICES`]).
+//! * `browserBridge`: browsers on this computer may ask Hexis for passkeys through the Hexis extension (Linux desktop, default off).
 //! * `passkeyAppCheck`: may Hexis ask an app's website, once, whether that app is allowed to use the website's passkeys
 //!   (Android's passkey provider; `ai-docs/PASSKEYS.md`)? On by default. Off, no request leaves the phone and apps get no passkeys.
 //!
@@ -92,6 +93,9 @@ pub struct DeviceSettings {
     pub list_sort: String,
     #[serde(default = "yes")]
     pub passkey_app_check: bool,
+    /// Linux desktop: browsers may ask Hexis for passkeys through the Hexis browser extension (off until switched on).
+    #[serde(default)]
+    pub browser_bridge: bool,
 }
 
 fn yes() -> bool {
@@ -110,6 +114,7 @@ impl Default for DeviceSettings {
             open_in_search: false,
             list_sort: default_sort(),
             passkey_app_check: true,
+            browser_bridge: false,
         }
     }
 }
@@ -131,6 +136,8 @@ pub struct DeviceInfo {
     pub list_sort: String,
     /// Hexis may ask an app's website whether that app may use its passkeys (one request, no vault data).
     pub passkey_app_check: bool,
+    /// Browsers on this computer may ask Hexis for passkeys through the Hexis extension (Linux desktop; off until switched on).
+    pub browser_bridge: bool,
 }
 
 impl From<&DeviceSettings> for DeviceInfo {
@@ -144,6 +151,7 @@ impl From<&DeviceSettings> for DeviceInfo {
             open_in_search: s.open_in_search,
             list_sort: s.list_sort.clone(),
             passkey_app_check: s.passkey_app_check,
+            browser_bridge: s.browser_bridge,
         }
     }
 }
@@ -269,6 +277,7 @@ mod tests {
             open_in_search: true,
             list_sort: "title-desc".into(),
             passkey_app_check: false,
+            browser_bridge: true,
         };
         store(dir.path(), &s).unwrap();
         assert_eq!(load(dir.path()), s);

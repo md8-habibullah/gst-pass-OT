@@ -14,14 +14,21 @@ export async function launch(opts = {}) {
   throw last;
 }
 
-async function launchOnce({ width = 1440, height = 900, port = 9333, profile, mobile = false } = {}) {
+// `extension`: a folder to load as an unpacked extension (the one browser a script starts for the Hexis extension); every other
+// script runs with extensions off. `env`: extra environment for the browser (HOME and XDG_RUNTIME_DIR of a throw-away home,
+// so a native messaging host the browser starts reaches the shim and never the real app).
+async function launchOnce({ width = 1440, height = 900, port = 9333, profile, mobile = false, extension, env } = {}) {
   mkdirSync(profile, { recursive: true });
+  // Chrome 137 and later (the branded builds) ignore --load-extension unless this feature is switched off; Chromium ignores the flag.
+  const extensions = extension
+    ? [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--disable-features=DisableLoadExtensionCommandLineSwitch"]
+    : ["--disable-extensions"];
   // CHROME_BIN lets CI use the runner's google-chrome; on the dev machine the default is the `chromium` on the PATH.
   const proc = spawn(process.env.CHROME_BIN || "chromium", [
-    "--headless=new", "--disable-gpu", "--no-first-run", "--disable-extensions", "--hide-scrollbars",
+    "--headless=new", "--disable-gpu", "--no-first-run", ...extensions, "--hide-scrollbars",
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
     "--force-device-scale-factor=1", "--disable-background-networking", "--no-sandbox", "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], { stdio: ["ignore", "ignore", "pipe"], env: env ? { ...process.env, ...env } : process.env });
   let errTail = "", spawnError;
   proc.on("error", (e) => { spawnError = e; }); // for example ENOENT: the browser binary does not exist
   proc.stderr?.on("data", (d) => { if (errTail.length < 2000) errTail += d; });

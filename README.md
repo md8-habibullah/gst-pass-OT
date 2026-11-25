@@ -44,6 +44,7 @@ The webview never sees a key, a seed or a master-password hash.
 |---|---|
 | Items | Logins (with several websites each), cards, identities, SSH keys, secure notes, media; one-time codes (RFC 6238) with QR setup on phones; nested folders, tags, favourites |
 | Passkeys | Passkeys are stored in the vault with the login they belong to and synced like everything else; on Android 14 and later Hexis can be your passkey provider (opt-in; **not yet tried on a real phone**). The private key never leaves the core |
+| Browsers on Linux | Firefox and Chromium-family browsers can use the passkeys in your vault through the Hexis extension (Settings > Browsers, off until you turn it on): the request opens in Hexis, nothing is signed until you click, and a website that requires verification gets your master password typed in the Hexis window. Chromium loads the extension unpacked; a release Firefox needs it signed (not done yet), so for now Firefox loads it as a temporary add-on |
 | Scanner | One camera button for one-time-code QR codes, passkey codes and links: it suggests the logins with the same account, website or name, always lists the others and offers "Create a new login" |
 | Find | One search over titles, websites, notes, field names, tags and folders (never a password), an option to look in earlier versions too, nine orders and filters by type, tag, code, favourites and number of versions; an option to open straight into search |
 | History | Immutable version history per item, trash with a permanent delete that asks for the master password and, within six months, a sum; archive, clone |
@@ -191,7 +192,7 @@ The whole design is written down in [`ai-docs/`](ai-docs/). Read them in this or
 | [`IPC_CONTRACT.md`](ai-docs/IPC_CONTRACT.md) | Every command the UI can call, its inputs, outputs and error codes |
 | [`UI_DESIGN_SYSTEM.md`](ai-docs/UI_DESIGN_SYSTEM.md) | The "Strongroom" design language: tokens, layouts, motion, accessibility |
 | [`BUILD_TARGETS.md`](ai-docs/BUILD_TARGETS.md) | System packages, Linux bundles, the Android toolchain, mock S3, what leaves the app and when |
-| [`PASSKEYS.md`](ai-docs/PASSKEYS.md) | How a passkey is stored, the authenticator, the Android provider, the scanner and the smart match, Bitwarden passkeys, what is and is not built |
+| [`PASSKEYS.md`](ai-docs/PASSKEYS.md) | How a passkey is stored, the authenticator, the Android provider, the scanner and the smart match, Bitwarden passkeys, passkeys in Linux browsers (§10), what is and is not built |
 | [`FEATURE_QUEUE.md`](ai-docs/FEATURE_QUEUE.md) | The queued feature specs (sync, gate, disguise, drive, importer) and how each was built |
 | [`CHANGELOG_AND_STATE.md`](ai-docs/CHANGELOG_AND_STATE.md) | Where the project is right now, what is verified, and the honest list of what is not |
 

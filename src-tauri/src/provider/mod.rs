@@ -118,6 +118,9 @@ enum CallerIn {
         package: String,
         cert_sha256: String,
     },
+    /// A web page in a browser on a Linux computer, reached through the Hexis extension (`crate::bridge`): the origin the
+    /// extension saw, which must belong to the website named. Hexis builds the client data itself.
+    Page { origin: String },
 }
 
 impl CallerIn {
@@ -136,6 +139,7 @@ impl CallerIn {
                     &client_data_hash,
                 )?,
             },
+            Self::Page { origin } => Caller::Own { origin },
             Self::App {
                 package,
                 cert_sha256,
@@ -329,7 +333,28 @@ impl Provider {
         let (req, matches) = self
             .core
             .passkey_candidates(&input.request, host.as_deref())?;
-        Ok(json!({"rpId": req.rp_id, "matches": matches}))
+        // the passkeys of a website are listed only to a page that may use them, so a page cannot make the window show
+        // another website's accounts
+        Self::page_may_name(&caller, &req.rp_id)?;
+        Ok(json!({
+            "rpId": req.rp_id,
+            "verification": req.verification.as_str(),
+            "matches": matches,
+        }))
+    }
+
+    /// A page in a browser on Linux may name only a website its own address belongs to (the same check signing and saving make,
+    /// made here too so the window never lists passkeys the page could not use).
+    fn page_may_name(caller: &Caller, rp_id: &str) -> Result<(), Failure> {
+        if let Caller::Own { origin } = caller {
+            if !origin::rp_matches_origin(rp_id, origin) {
+                return Err(StorageError::invalid(
+                    "This page may not use passkeys of that website.",
+                )
+                .into());
+            }
+        }
+        Ok(())
     }
 
     fn sign(&self, input: SignIn) -> Answer {
@@ -353,6 +378,7 @@ impl Provider {
         let caller = input.caller.into_caller(self.core.passkey_app_check())?;
         let host = caller.origin_host();
         let (req, suggestions) = self.core.passkey_suggest(&input.request, host.as_deref())?;
+        Self::page_may_name(&caller, &req.rp_id)?;
         let taken: std::collections::HashSet<&str> =
             suggestions.iter().map(|s| s.id.as_str()).collect();
         let mut others: Vec<LoginOut> = self
@@ -375,6 +401,7 @@ impl Provider {
         others.truncate(MAX_OTHER_LOGINS);
         Ok(json!({
             "rpId": req.rp_id,
+            "verification": req.verification.as_str(),
             "rpName": req.rp_name,
             "userName": req.user_name,
             "displayName": req.display_name,

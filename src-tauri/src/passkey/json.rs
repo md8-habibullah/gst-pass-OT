@@ -23,6 +23,15 @@ pub enum Verification {
 }
 
 impl Verification {
+    /// The word WebAuthn uses for it, for a screen that says whether the master password is asked.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Preferred => "preferred",
+            Self::Discouraged => "discouraged",
+        }
+    }
+
     fn of(text: Option<&str>) -> Self {
         match text {
             Some("required") => Self::Required,

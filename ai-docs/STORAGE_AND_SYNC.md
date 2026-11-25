@@ -439,7 +439,7 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 **`device.json`** (data folder, owner-only 0600, atomic replace; read at start, never an error: a missing, unreadable, oversized (over 4 KiB) or damaged file is the defaults). Plaintext JSON:
 
 ```json
-{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "theme": "system", "clipboardClear": 30, "passkeyAppCheck": true, "demoProfile": "<uuid>"}
+{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "theme": "system", "clipboardClear": 30, "passkeyAppCheck": true, "browserBridge": false, "demoProfile": "<uuid>"}
 ```
 
 * `timeZone`: the IANA name from the first page, only used to *show* UTC times and to read times the person types. Absent until chosen.
@@ -448,6 +448,7 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 * `theme`: `system` (follow the device, the default), `light` or `dark`. Any other value reads as `system`.
 * `clipboardClear`: seconds a copied secret stays on the clipboard, 15, 30 (default) or 60. Added 2026-11-25; before that it was web view storage and is not carried over.
 * `passkeyAppCheck`: whether the passkey provider may fetch a website's list of allowed apps (`https://<site>/.well-known/assetlinks.json`) to answer a native app (D47). On by default; off means apps get no passkey and the provider makes no request. A browser is not affected. Added 2026-11-25; an older build ignores the key, and a file without it reads as on.
+* `browserBridge`: Linux desktop only. Whether browsers on this computer may ask Hexis for passkeys through the Hexis extension (D52). Off by default; on opens the private socket at start. Never synced, like every device setting. Added 2026-11-25; an older build ignores the key, and a file without it reads as off.
 * `demoProfile`: the id of the demo vault while one exists. It stays inside the core; `DeviceInfo` (what the screen reads) has no such field.
 
 It leaks a place name, a colour preference, a few switches and a random id; no name, item or key. **It survives the erase on purpose** (D30): the wipe only knows its fixed list of files, and `forget_demo_if_any` clears just the demo id. A reset therefore opens straight into a fresh demo vault with no zone page.
@@ -483,3 +484,12 @@ A passkey is a login field, not an item type: keys `passkey`, `passkey#2` … `p
 * **An import** (Bitwarden `fido2Credentials`) that finds the slot `passkey` taken by another credential uses the next free slot and never replaces one.
 * **A copy** (clone, copy to another account) carries no passkeys: the private key stays with the original.
 * **Backups and exports.** A vault backup holds passkeys sealed like every field. The plain-text export writes them only into Bitwarden JSON (`fido2Credentials`), and only after the master password; CSV skips them with a warning.
+
+## Files written for browsers on Linux (D52, D54)
+
+Only when Settings > Browsers is used, and never part of a vault, a backup or a sync:
+
+* `<data folder>/extension/chromium/` and `.../firefox/`: the extension's files (the same scripts and icons, each family's `manifest.json`), rewritten from the copies inside the program whenever the switch is turned on or a browser is connected. A file that is already right is left alone.
+* `<data folder>/hexis-native-host`: a two-line script (`exec '<program>' --native-host "$@"`), mode 0700, pointing at this program (the AppImage file when run from one).
+* In the user's home, one small manifest per connected browser (`~/.config/<browser>/NativeMessagingHosts/dev.habibullah.hexis.passkeys.json`, `~/.mozilla/native-messaging-hosts/...`), mode 0644; they hold no secret.
+* `$XDG_RUNTIME_DIR/hexis/bridge.sock` (folder 0700, socket 0600) while the switch is on, removed when it is turned off or Hexis ends. "Remove Hexis from this device" closes the socket, disconnects every browser and removes the launcher and the extension folders.

@@ -23,6 +23,15 @@
 //!   reachable at `POST /e2e/provider` with `{"op": "create", "args": {...}}` and answers its own text as JSON, so a test can
 //!   make a passkey in the open vault the way a website would, then look at it in the UI. It always answers a browser or
 //!   Own-window caller; an app caller would look the website up on the network, which this tool never does.
+//! * Browsers on Linux (`hexis_lib::bridge`): with `--bridge-home <folder>` the shim tells the bridge that this stand-in is "the
+//!   home folder": the browsers' per-user folders are below it (`<folder>/.config/chromium/NativeMessagingHosts`, ...) and
+//!   the private socket is `<folder>/run/hexis/bridge.sock` (so a browser started with `HOME=<folder>` and
+//!   `XDG_RUNTIME_DIR=<folder>/run` reaches this Hexis, never the real one). The switch and the registration are the real
+//!   commands (`bridge_set`, `bridge_register`, ...), served through `POST /ipc`; `GET /e2e/bridge` answers
+//!   `{"ok": {"listening", "socket", "home", "waiting"}}`. The window's long poll `bridge_wait` is cut to 250 ms here, because
+//!   this tool handles one request at a time. The shim also starts as the native messaging host when its first argument is
+//!   `--native-host` (the launcher script the bridge writes starts it that way). The folder must be absolute, empty or
+//!   created by this tool, and is never the real home folder or one that contains it.
 //! * `open_url` opens nothing here: the address is validated exactly as in the app and then only
 //!   recorded. `GET /e2e/opened` answers `{"ok": ["https://..."]}`; `POST /e2e/opened` with
 //!   `{}` clears the list.
@@ -102,6 +111,8 @@ const ALLOWED_ORIGINS: [&str; 2] = ["http://localhost:1431", "http://127.0.0.1:1
 const OPEN_VAR: &str = "HEXIS_E2E_OPEN_PATH";
 const SAVE_VAR: &str = "HEXIS_E2E_SAVE_PATH";
 const MARKER: &str = ".hexis-e2e";
+/// The longest the window's `bridge_wait` may wait here (production: 30 s).
+const BRIDGE_WAIT_MAX_MS: u64 = 250;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Most paths one `pick-next` entry may carry (the drive accepts 100 files per add).
@@ -183,6 +194,8 @@ struct Options {
     fast_kdf: bool,
     fast_backup: bool,
     xdg_data_home: Option<PathBuf>,
+    /// Stand-in for the home folder in the bridge's eyes (`--bridge-home`): browsers' folders and the socket live below it.
+    bridge_home: Option<PathBuf>,
     /// How long one "minute" of the inactivity timer lasts (production: 60 000 ms).
     idle_unit_ms: Option<u64>,
     /// How long one "minute" of the wait after wrong passcodes lasts (production: 60 000 ms; 0: no waits).
@@ -192,7 +205,7 @@ struct Options {
 }
 
 fn usage() -> String {
-    "usage: e2e_server --data-dir <folder> [--port <n>] [--fast-kdf] [--fast-backup] [--xdg-data-home <folder>] [--idle-unit-ms <n>] [--lock-unit-ms <n>] [--no-time-check]"
+    "usage: e2e_server --data-dir <folder> [--port <n>] [--fast-kdf] [--fast-backup] [--xdg-data-home <folder>] [--bridge-home <folder>] [--idle-unit-ms <n>] [--lock-unit-ms <n>] [--no-time-check]"
         .into()
 }
 
@@ -202,6 +215,7 @@ fn parse_args() -> Result<Options, String> {
     let mut fast_kdf = false;
     let mut fast_backup = false;
     let mut xdg_data_home = None;
+    let mut bridge_home = None;
     let mut idle_unit_ms = None;
     let mut lock_unit_ms = 0;
     let mut no_time_check = false;
@@ -220,6 +234,9 @@ fn parse_args() -> Result<Options, String> {
             "--fast-backup" => fast_backup = true,
             "--xdg-data-home" => {
                 xdg_data_home = Some(PathBuf::from(args.next().ok_or_else(usage)?));
+            }
+            "--bridge-home" => {
+                bridge_home = Some(PathBuf::from(args.next().ok_or_else(usage)?));
             }
             "--idle-unit-ms" => {
                 idle_unit_ms = Some(
@@ -247,6 +264,7 @@ fn parse_args() -> Result<Options, String> {
         fast_kdf,
         fast_backup,
         xdg_data_home,
+        bridge_home,
         idle_unit_ms,
         lock_unit_ms,
         no_time_check,
@@ -430,6 +448,53 @@ fn shim_launcher(
     Ok(ShimLauncher { recorder, files })
 }
 
+/// The folder the shim may use as a stand-in for the home folder (`--bridge-home`): absolute, empty or created by this tool,
+/// and neither the real home folder nor a folder that contains it. Browsers' registrations and the socket are written below it.
+fn check_bridge_home(dir: &Path) -> Result<(), String> {
+    if !dir.is_absolute() {
+        return Err("refusing: --bridge-home must be an absolute path".into());
+    }
+    let mine = resolved(dir);
+    if let Some(h) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+        let real = resolved(Path::new(&h));
+        if real.starts_with(&mine) {
+            return Err(format!(
+                "refusing: {} is or contains the real home folder",
+                mine.display()
+            ));
+        }
+    }
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => {
+            if entries.next().is_some() && !dir.join(MARKER).is_file() {
+                return Err(format!(
+                    "refusing: {} is not empty and was not created by this tool",
+                    dir.display()
+                ));
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("cannot read {}: {e}", dir.display())),
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::write(
+        dir.join(MARKER),
+        "created by hexis examples/e2e_server.rs; safe to delete\n",
+    )
+    .map_err(|e| format!("cannot write into {}: {e}", dir.display()))?;
+    // the runtime folder (`$XDG_RUNTIME_DIR` of the browser the test starts): private, like the real one
+    let run = dir.join("run");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        match std::fs::DirBuilder::new().mode(0o700).create(&run) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("cannot create {}: {e}", run.display())),
+        }
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ the backend
 
 struct Backend {
@@ -437,6 +502,7 @@ struct Backend {
     window: WebviewWindow<MockRuntime>,
     opener: Arc<RecordingOpener>,
     launcher: Arc<RecordingLauncher>,
+    bridge_home: Option<PathBuf>,
 }
 
 /// Replication timing for tests: a waiting queue shows as `lagging` after a second.
@@ -447,15 +513,25 @@ fn fast_backup_timing() -> Timing {
     }
 }
 
-fn build_backend(
-    data_dir: &Path,
-    fast_kdf: bool,
-    fast_backup: bool,
-    xdg_data_home: Option<&Path>,
-    idle_unit_ms: Option<u64>,
-    lock_unit_ms: u64,
-    no_time_check: bool,
-) -> Result<Backend, String> {
+fn build_backend(opts: &Options) -> Result<Backend, String> {
+    let Options {
+        data_dir,
+        fast_kdf,
+        fast_backup,
+        idle_unit_ms,
+        lock_unit_ms,
+        no_time_check,
+        ..
+    } = opts;
+    let (data_dir, fast_kdf, fast_backup, lock_unit_ms, no_time_check) = (
+        data_dir.as_path(),
+        *fast_kdf,
+        *fast_backup,
+        *lock_unit_ms,
+        *no_time_check,
+    );
+    let idle_unit_ms = *idle_unit_ms;
+    let (xdg_data_home, bridge_home) = (opts.xdg_data_home.as_deref(), opts.bridge_home.as_deref());
     let mut cfg = SessionConfig::default();
     if fast_kdf {
         // the smallest parameters the format accepts: for tests only
@@ -489,8 +565,27 @@ fn build_backend(
         core.device_set_time_check(false)
             .map_err(|e| e.to_string())?;
     }
+    let state = AppState::new(core);
+    if let Some(home) = bridge_home {
+        // Browsers on this computer, with a stand-in home: nothing of the real one is read or written.
+        #[cfg(target_os = "linux")]
+        {
+            let bridge = state.bridge();
+            bridge.set_env(hexis_lib::bridge::Env {
+                home: home.to_path_buf(),
+                data_dir: data_dir.to_path_buf(),
+                socket: home.join("run").join("hexis").join("bridge.sock"),
+            });
+            bridge.start_if_enabled();
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (home, &state);
+            return Err("--bridge-home works on Linux only".into());
+        }
+    }
     let app = mock_builder()
-        .manage(AppState::new(core))
+        .manage(state)
         .invoke_handler(invoke_handler())
         .build(mock_context(noop_assets()))
         .map_err(|e| e.to_string())?;
@@ -502,6 +597,7 @@ fn build_backend(
         window,
         opener,
         launcher,
+        bridge_home: bridge_home.map(Path::to_path_buf),
     })
 }
 
@@ -515,7 +611,13 @@ enum Reply {
 
 impl Backend {
     /// Run one command.
-    fn call(&self, cmd: &str, args: Value) -> Reply {
+    fn call(&self, cmd: &str, mut args: Value) -> Reply {
+        // The window's long poll must not hold this single-threaded tool for seconds: it asks again at once.
+        if cmd == "bridge_wait" {
+            if let Some(ms) = args.get("ms").and_then(Value::as_u64) {
+                args["ms"] = json!(ms.min(BRIDGE_WAIT_MAX_MS));
+            }
+        }
         let result = get_ipc_response(
             &self.window,
             InvokeRequest {
@@ -684,7 +786,8 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
     match (req.method.as_str(), req.path.as_str()) {
         (
             "OPTIONS",
-            "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next" | "/e2e/provider",
+            "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next" | "/e2e/provider"
+            | "/e2e/bridge",
         ) => respond(stream, "204 No Content", cors, &Value::Null),
         ("GET", "/health") => respond(stream, "200 OK", cors, &json!({"ok": true})),
         ("GET", "/e2e/disguise-applied") => {
@@ -699,6 +802,7 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
             );
         }
         ("GET", "/e2e/last-saved") => last_saved(stream, cors),
+        ("GET", "/e2e/bridge") => bridge_state(stream, cors, backend),
         ("POST", "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next" | "/e2e/provider") => {
             let json_type = req
                 .header("content-type")
@@ -876,7 +980,44 @@ fn last_saved(stream: &mut TcpStream, cors: Option<&str>) {
     );
 }
 
+/// `GET /e2e/bridge`: whether the bridge listens, where, and whether a request waits for the window.
+fn bridge_state(stream: &mut TcpStream, cors: Option<&str>, backend: &Backend) {
+    use tauri::Manager;
+    let Some(home) = &backend.bridge_home else {
+        return respond(
+            stream,
+            "200 OK",
+            cors,
+            &json!({"err": "started without --bridge-home"}),
+        );
+    };
+    let bridge = backend._app.state::<AppState>().inner().bridge().clone();
+    #[cfg(unix)]
+    let listening = bridge.listening();
+    #[cfg(not(unix))]
+    let listening = false;
+    let waiting = serde_json::to_value(bridge.front())
+        .ok()
+        .and_then(|v| v.get("front").cloned())
+        .is_some_and(|f| !f.is_null());
+    respond(
+        stream,
+        "200 OK",
+        cors,
+        &json!({"ok": {
+            "listening": listening,
+            "socket": home.join("run").join("hexis").join("bridge.sock").display().to_string(),
+            "home": home.display().to_string(),
+            "waiting": waiting,
+        }}),
+    );
+}
+
 fn main() {
+    // The launcher script the bridge writes starts this program as the browsers' native messaging host.
+    if std::env::args().nth(1).as_deref() == Some("--native-host") {
+        std::process::exit(hexis_lib::native_host());
+    }
     let opts = match parse_args() {
         Ok(o) => o,
         Err(msg) => {
@@ -894,15 +1035,13 @@ fn main() {
             std::process::exit(2);
         }
     }
-    let backend = match build_backend(
-        &opts.data_dir,
-        opts.fast_kdf,
-        opts.fast_backup,
-        opts.xdg_data_home.as_deref(),
-        opts.idle_unit_ms,
-        opts.lock_unit_ms,
-        opts.no_time_check,
-    ) {
+    if let Some(home) = &opts.bridge_home {
+        if let Err(msg) = check_bridge_home(home) {
+            eprintln!("{msg}");
+            std::process::exit(2);
+        }
+    }
+    let backend = match build_backend(&opts) {
         Ok(b) => b,
         Err(msg) => {
             eprintln!("could not start the backend: {msg}");

@@ -2,6 +2,25 @@
 
 Update this file after every major milestone. Newest entries first.
 
+## Update (2026-11-25, passkeys in Linux browsers): built, run end to end with a real Chromium and a real Firefox
+
+**The request:** "make for linux device also if possible". Chosen with the owner: passkeys in Linux browsers through an extension and a native bridge, Firefox and the Chromium family with one shared extension, the prompt and the master password in the Hexis window. This is plan item P5 (option D2). Branch `feature/passkeys-linux-browsers` (from `main` at the merge of PR #3); the owner commits. Version stays 0.4.0.
+
+**Built.** Decisions D52 to D55 in `ARCHITECTURE.md`; the design is `PASSKEYS.md` §10; the contract is `IPC_CONTRACT.md` §14.4a; the files written are in `STORAGE_AND_SYNC.md` (last section); the screens are `UI_DESIGN_SYSTEM.md` §14.
+* `extension/` (Manifest V3, one source, a manifest per family, three small scripts, 23 unit tests) and `scripts/build_extension.py` (reproducible store zips; checks the sources against what the app writes).
+* `src-tauri/src/bridge/` (wire checks, queue and rules, private Unix socket, native messaging host framing and `hexis --native-host`, per-user browser manifests, the embedded extension files) and `commands/bridge.rs` (`bridge_status/set/register/unregister/wait/options/answer`); the provider gained a page caller; `device.json` gained `browserBridge`; "Remove Hexis from this device" disconnects every browser.
+* Settings > Browsers and the request sheet (`BrowsersPage.tsx`, `BridgeHost.tsx`), the note over the lock screen, the phone layout.
+* The e2e shim gained `--bridge-home`, `GET /e2e/bridge` and `--native-host`; `cdp.mjs` can load an extension.
+
+**Checked on this computer.** `e2e/bridge-ui.mjs` (Settings > Browsers and the sheet, in the preview); `e2e/real-bridge.mjs` (a headless Chromium with the extension, the browser starting the host, the socket, the real core, the sheet in the Hexis UI, a page that makes a passkey, signs in and verifies the signature with WebCrypto; two accounts, a wrong then a right master password, Use another way and a switched-off bridge reaching the browser's own flow, another website's name refused, a program on the socket getting no signature without a click, switching off removing the socket, Disconnect); `e2e/real-bridge-firefox.mjs` (the same chain in Firefox 160 with the extension as a temporary add-on, driven over Marionette).
+
+**Security review of the bridge (read-only agent, same day), all fixed with regression tests:** the inactivity lock did not fire while Browsers was on (the window's long poll counted as activity: now passive, and refused while the app lock is closed); a wrong master password on a *new* login was not checked before `userVerified` was set (the core now verifies it first); the host did not re-check the socket's folder and file before connecting; a request id could be reused; `status` told any page whether the app lock was closed; the extension's files were created and then chmodded (now created with the final mode); a hidden tab could raise the window (`not_visible`). Details: `PASSKEYS.md` §10.
+
+**NOT verified.**
+* **Mozilla's signing and add-on validation** (a release Firefox runs only a signed add-on; `data_collection_permissions` with `strict_min_version` 128 was accepted by Firefox 160 as a temporary add-on, which is not the validator). **The Chrome Web Store**: a store item gets its own id, which would have to be added to the host manifest's `allowed_origins`.
+* The Hexis window coming to the front on a real Wayland compositor (Hyprland): the code asks, a compositor may refuse; a real WebKitGTK window (the sheet was seen in headless Chromium); Snap and Flatpak browsers (detected and explained, not run); an AppImage's launcher path; browsers other than Chromium 158 and Firefox 160.
+* **Not built:** passkeys in frames other than the top one; autofill-style (conditional) and security-key requests (they go to the browser on purpose); RS256, EdDSA, PRF; macOS and Windows; `credentialsd`.
+
 ## Update (2026-11-25, passkeys and the all-in-one scanner): built, tested without a phone
 
 **The request:** finish the passkey work from `PLAN_NATIVE_CAMERA_AND_PASSKEYS.md`, and add a camera button inside the app that opens one scanner for a one-time code, a passkey code or anything else, that works out what it saw, suggests the existing login with the same email or user name, lists the other logins, and always offers "Create a new login". Several sign-ins and codes per login already existed (D46).

@@ -377,6 +377,73 @@ fn an_app_needs_the_website_to_list_it_and_the_check_runs_only_for_apps() {
 }
 
 #[test]
+fn a_page_in_a_browser_on_linux_is_checked_against_its_own_address() {
+    let f = fx();
+    let page = |origin: &str| json!({"kind": "page", "origin": origin});
+    let make = |rp: &str, origin: &str| {
+        json!({
+            "request": create_request(rp, "ana@example.com"), "caller": page(origin),
+            "target": {"new": {"title": null}}, "userVerified": true,
+        })
+    };
+    // a page may use its own website, and a site's subdomain may use the site's name
+    let made = ok(
+        &f,
+        "create",
+        make("example.com", "https://login.example.com"),
+    );
+    let reg: Value = serde_json::from_str(made["responseJson"].as_str().unwrap()).unwrap();
+    // the client data is built here from the address the extension saw, never taken from the page
+    let cd: Value = serde_json::from_slice(
+        &b64::decode(reg["response"]["clientDataJSON"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cd["type"], "webauthn.create");
+    assert_eq!(cd["origin"], "https://login.example.com");
+    assert_eq!(cd["crossOrigin"], false);
+    // another website's name, a name many sites share and a plain-http page are all refused
+    assert_eq!(
+        fail(
+            &f,
+            "create",
+            make("bank.example", "https://evil.example.com")
+        ),
+        "invalid_input"
+    );
+    assert_eq!(
+        fail(&f, "create", make("com", "https://example.com")),
+        "invalid_input"
+    );
+    assert_eq!(
+        fail(&f, "create", make("example.com", "http://example.com")),
+        "invalid_input"
+    );
+    // the passkey is found for the page, and not for a page on another website
+    let g = |rp: &str, origin: &str| {
+        ok(
+            &f,
+            "getOptions",
+            json!({"request": get_request(rp), "caller": page(origin)}),
+        )
+    };
+    assert_eq!(
+        g("example.com", "https://example.com")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fail(
+            &f,
+            "getOptions",
+            json!({"request": get_request("example.com"), "caller": page("https://evil.test")})
+        ),
+        "invalid_input"
+    );
+}
+
+#[test]
 fn with_the_website_check_switched_off_apps_get_nothing_and_no_request_is_made() {
     let f = fx();
     let cert = [7u8; 32];
