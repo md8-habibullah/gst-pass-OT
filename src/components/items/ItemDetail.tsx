@@ -15,6 +15,7 @@ import { CopyButton, FieldRow, HiddenPill, PasswordText, RevealToggle, TotpValue
 import { editItem, openLink, setArchived, type Target } from "./actions";
 import { openItemMenu } from "./ItemMenu";
 import { FileList } from "../files/FileList";
+import { PasskeyLine } from "./PasskeyRows";
 import { VersionHistory } from "./VersionHistory";
 
 /** How long revealed secrets stay in the UI before they are wiped (spec: nothing lingers). */
@@ -156,6 +157,8 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
       <div className="surface overflow-hidden rounded-lg">
         {groupSignIns(view.fields.filter((f) => f.hasValue)).map((f) => {
           const shown = secrets?.fields[f.key];
+          // A passkey is shown by the website and account it belongs to; its key is never shown, copied or revealed.
+          if (f.kind === "passkey") return <FieldRow key={f.key} label={f.label}>{f.passkey ? <PasskeyLine info={f.passkey} /> : <span className="text-mist">A passkey</span>}</FieldRow>;
           if (f.kind === "totp") return <TotpValue key={f.key} id={id} title={title} fieldKey={f.key} label={f.label} onCopy={(c) => copyPlain(f.label, c)} />;
           // Several web addresses: a row each, so any one can be opened or copied.
           if (f.kind === "url" && f.value && urlsOf(f.value).length > 1) {

@@ -33,6 +33,8 @@ use zeroize::Zeroizing;
 // Import state and the plaintext export (slice Q4). A child module, so it can reach `Unlocked`.
 #[path = "session_import.rs"]
 pub mod import;
+#[path = "session_passkey.rs"]
+pub mod passkeys;
 use self::import::ImportStash;
 
 pub const MIN_PASSWORD_CHARS: usize = 8;

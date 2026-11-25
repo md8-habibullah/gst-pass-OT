@@ -59,6 +59,8 @@ pub struct ImportedEntry {
     pub tags: Vec<String>,
     /// One-time code values as found in the source (otpauth link or Base32 key).
     pub totp: Vec<String>,
+    /// Passkeys as the stored records (`crate::passkey::PasskeyRecord`, JSON), already checked by the reader.
+    pub passkeys: Vec<String>,
     pub custom_fields: Vec<ImportedField>,
     /// Values for cards, identities, SSH keys and codes, keyed by the Hexis field key
     /// (`number`, `firstName`, `privateKey`, `issuer`, ...). A card may also carry a pseudo key
@@ -85,6 +87,7 @@ impl std::fmt::Debug for ImportedEntry {
             .field("kind", &self.kind)
             .field("urls", &self.urls.len())
             .field("totp", &self.totp.len())
+            .field("passkeys", &self.passkeys.len())
             .field("custom_fields", &self.custom_fields.len())
             .field("typed", &self.typed.len())
             .field("attachments", &self.attachments.len())
@@ -162,6 +165,13 @@ impl ImportedEntry {
         }
     }
 
+    /// Add a passkey (the stored record's JSON). One that is on this record already is ignored.
+    pub fn add_passkey(&mut self, record_json: &str) {
+        if !self.passkeys.iter().any(|p| p == record_json) {
+            self.passkeys.push(record_json.to_string());
+        }
+    }
+
     pub fn add_totp(&mut self, value: &str) {
         let v = value.trim();
         if !v.is_empty() {
@@ -193,6 +203,7 @@ impl ImportedEntry {
             && self.urls.is_empty()
             && self.notes.trim().is_empty()
             && self.totp.is_empty()
+            && self.passkeys.is_empty()
             && self.typed.iter().all(|(_, v)| v.trim().is_empty())
             && self.custom_fields.is_empty()
     }
@@ -271,6 +282,7 @@ impl ImportedEntry {
             && self.password.is_empty()
             && self.urls.is_empty()
             && self.notes.trim().is_empty()
+            && self.passkeys.is_empty()
             && self.custom_fields.is_empty()
         {
             kind = EntryKind::Totp;
@@ -313,6 +325,21 @@ impl ImportedEntry {
                     });
                 }
                 put(&mut fields, "notes", &self.notes);
+                // passkeys: one `passkey` field each, never more than a login holds
+                for (i, record) in self.passkeys.iter().enumerate() {
+                    if i < crate::storage::model::MAX_INSTANCES as usize {
+                        fields.insert(
+                            crate::storage::model::instance_key("passkey", i as u32 + 1),
+                            record.clone(),
+                        );
+                    } else {
+                        warnings.push(format!(
+                            "\u{201c}{label}\u{201d} has more than {} passkeys; the extra ones were left out.",
+                            crate::storage::model::MAX_INSTANCES
+                        ));
+                        break;
+                    }
+                }
             }
             EntryKind::Note => {
                 put(&mut fields, "body", &self.notes);

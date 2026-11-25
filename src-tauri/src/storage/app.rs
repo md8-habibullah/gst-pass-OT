@@ -26,15 +26,20 @@ use super::profiles::{
     name_key, normalize_display_name, Entry, ProfileInfo, ProfileList, Registry, LEGACY_DIR,
     VAULTS_DIR, VAULT_FILE,
 };
+use super::session::passkeys::{
+    AssertInput, LinksFn, RegisterInput, Registered, ScanChoice, ScanReply,
+};
 use super::session::{PurgePlan, Session, SessionConfig};
 use super::uuid;
+use super::vault::passkeys::{PasskeyMatch, Suggestion};
 use super::vault::search::SearchHit;
 use crate::crypto::{now_millis, VaultKeyBundle};
 use crate::gate::GateCore;
+use crate::passkey::json::{CreateRequest, GetRequest};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -78,11 +83,12 @@ pub struct SyncFlush {
 pub struct AppCore {
     dir: PathBuf,
     cfg: SessionConfig,
-    picker: Arc<dyn FilePicker>,
+    /// Native file dialogs. Replaceable: on Android the passkey provider may open the core before the window exists.
+    picker: RwLock<Arc<dyn FilePicker>>,
     /// How backup targets are reached; every session this core makes shares it.
     runtime: Arc<BackupRuntime>,
     /// Shows a web link in the system browser (`open_url`).
-    opener: Arc<dyn UrlOpener>,
+    opener: RwLock<Arc<dyn UrlOpener>>,
     /// Q2 disguise: the launcher, its last note, the change lock (`app_disguise.rs`).
     pub(super) disguise: super::app_disguise::DisguiseRuntime,
     /// Serializes the operations that create or delete a profile's folder (create, import,
@@ -140,9 +146,9 @@ impl AppCore {
         Ok(Self {
             dir: dir.to_path_buf(),
             cfg,
-            picker,
+            picker: RwLock::new(picker),
             runtime: BackupRuntime::production(),
-            opener: Arc::new(NoOpener),
+            opener: RwLock::new(Arc::new(NoOpener)),
             disguise: Default::default(),
             ops: Mutex::new(()),
             registry: Mutex::new(registry),
@@ -162,9 +168,27 @@ impl AppCore {
 
     /// Use another way of showing links (the app installs the system opener).
     #[must_use]
-    pub fn with_opener(mut self, opener: Arc<dyn UrlOpener>) -> Self {
-        self.opener = opener;
+    pub fn with_opener(self, opener: Arc<dyn UrlOpener>) -> Self {
+        self.set_opener(opener);
         self
+    }
+
+    /// Install the window's file dialogs and link opener on a core that was made without them (the Android passkey
+    /// provider opens the core first when the system starts the process for a passkey request).
+    pub fn set_picker(&self, picker: Arc<dyn FilePicker>) {
+        *self.picker.write().unwrap_or_else(|p| p.into_inner()) = picker;
+    }
+
+    pub fn set_opener(&self, opener: Arc<dyn UrlOpener>) {
+        *self.opener.write().unwrap_or_else(|p| p.into_inner()) = opener;
+    }
+
+    pub(super) fn picker(&self) -> Arc<dyn FilePicker> {
+        Arc::clone(&self.picker.read().unwrap_or_else(|p| p.into_inner()))
+    }
+
+    fn opener(&self) -> Arc<dyn UrlOpener> {
+        Arc::clone(&self.opener.read().unwrap_or_else(|p| p.into_inner()))
     }
 
     fn new_session(&self, path: PathBuf) -> Session {
@@ -423,7 +447,7 @@ impl AppCore {
         if self.reg().key_taken(&name_key(&name), None) {
             return Err(StorageError::ProfileNameTaken);
         }
-        let Some(src) = self.picker.open_vault_file()? else {
+        let Some(src) = self.picker().open_vault_file()? else {
             return Ok(None);
         };
         if files::is_inside(&self.dir, &src) {
@@ -512,7 +536,7 @@ impl AppCore {
             .get(&id)
             .map_or_else(|| "vault".to_string(), |e| e.display_name.clone());
         let suggested = files::suggested_export_name(&name, now_millis());
-        let picker = Arc::clone(&self.picker);
+        let picker = self.picker();
         let data_dir = self.dir.clone();
         let written = session.export_with(password, move || {
             let chosen = picker.save_vault_file(&suggested)?;
@@ -678,7 +702,7 @@ impl AppCore {
     /// Show a web address in the system browser (the only door the webview has to do that).
     pub fn open_url(&self, url: &str) -> Result<()> {
         let checked = links::validate_open_url(url)?;
-        self.opener.open(&checked)
+        self.opener().open(&checked)
     }
 
     // ------------------------------------------------------------------ vault lifecycle
@@ -942,6 +966,68 @@ impl AppCore {
         password: Option<String>,
     ) -> Result<TotpNow> {
         self.session()?.totp_now_of(id, key, password)
+    }
+
+    // ------------------------------------------------------------------ the scanner and passkeys
+
+    /// Refuse unless the vault is open and the master password opened it (or was typed since): what changes how the system
+    /// may use this app (the passkey provider switch) is not something the PIN alone may do.
+    pub fn require_full(&self) -> Result<()> {
+        self.session()?.require_full()
+    }
+
+    /// What a scanned or pasted text is, and the logins it may belong to (`session_passkey.rs`).
+    pub fn scan_classify(&self, text: &str, allow_bare_key: bool) -> Result<ScanReply> {
+        self.session()?.scan_classify(text, allow_bare_key)
+    }
+
+    /// Put a scanned one-time code on a login, or make a login for it.
+    pub fn scan_apply(
+        &self,
+        text: &str,
+        choice: ScanChoice,
+        password: Option<String>,
+    ) -> Result<ItemSummary> {
+        self.session()?.scan_apply(text, choice, password)
+    }
+
+    /// The logins a new passkey for this request probably belongs on.
+    pub fn passkey_suggest(
+        &self,
+        request_json: &str,
+        origin_host: Option<&str>,
+    ) -> Result<(CreateRequest, Vec<Suggestion>)> {
+        self.session()?.passkey_suggest(request_json, origin_host)
+    }
+
+    /// The passkeys held for a sign-in request.
+    pub fn passkey_candidates(
+        &self,
+        request_json: &str,
+        origin_host: Option<&str>,
+    ) -> Result<(GetRequest, Vec<PasskeyMatch>)> {
+        self.session()?
+            .passkey_candidates(request_json, origin_host)
+    }
+
+    /// Make a passkey for a website's request and save it; the answer comes back only once it is stored.
+    pub fn passkey_register(
+        &self,
+        input: &RegisterInput,
+        password: Option<String>,
+        links: LinksFn<'_>,
+    ) -> Result<Registered> {
+        self.session()?.passkey_register(input, password, links)
+    }
+
+    /// Sign a website's request with one stored passkey.
+    pub fn passkey_assert(
+        &self,
+        input: &AssertInput,
+        password: Option<String>,
+        links: LinksFn<'_>,
+    ) -> Result<String> {
+        self.session()?.passkey_assert(input, password, links)
     }
 }
 

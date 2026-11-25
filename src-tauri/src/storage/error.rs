@@ -55,6 +55,12 @@ pub enum StorageError {
     ProfileNameTaken,
     #[error("{0}")]
     UnsupportedFile(String),
+    /// The website asks for a kind of passkey this version cannot make.
+    #[error("{0}")]
+    PasskeyUnsupported(String),
+    /// The website lists a passkey that is saved here already.
+    #[error("A passkey for this account is already saved here.")]
+    PasskeyExcluded,
     /// The storage service could not be reached (offline, DNS, TLS, timeout).
     #[error("{0}")]
     Network(String),
@@ -87,6 +93,8 @@ impl StorageError {
             Self::Crypto(_) => "crypto",
             Self::ProfileNameTaken => "profile_name_taken",
             Self::UnsupportedFile(_) => "unsupported_file",
+            Self::PasskeyUnsupported(_) => "passkey_unsupported",
+            Self::PasskeyExcluded => "passkey_excluded",
             Self::Network(_) => "network",
             Self::Remote(_) => "remote",
         }

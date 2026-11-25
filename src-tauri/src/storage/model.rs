@@ -6,6 +6,7 @@
 use super::error::{Result, StorageError};
 use super::profiles::ProfileInfo;
 use crate::crypto::{CryptoError, TotpAccount, TotpParams};
+use crate::passkey::{KeepMarker, PasskeyInfo, PasskeyRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zeroize::Zeroize;
@@ -52,12 +53,17 @@ pub enum FieldKind {
     Totp,
     /// Non-secret multi-line text (for example an SSH public key).
     Paragraph,
+    /// A passkey: a small JSON record with the private key inside (`crate::passkey::record`). Only the core makes one.
+    Passkey,
 }
 
 impl FieldKind {
     /// Secret fields are never returned by `item_get`; they need the re-prompt.
     pub fn is_secret(self) -> bool {
-        matches!(self, Self::Password | Self::Note | Self::Totp)
+        matches!(
+            self,
+            Self::Password | Self::Note | Self::Totp | Self::Passkey
+        )
     }
 }
 
@@ -133,6 +139,7 @@ fn slot_group(base: &str) -> &'static [&'static str] {
     match base {
         "username" | "password" => &["username", "password"],
         "totp" => &["totp"],
+        "passkey" => &["passkey"],
         _ => &[],
     }
 }
@@ -160,6 +167,7 @@ const LOGIN: &[FieldSpec] = &[
     repeating("password", "Password", FieldKind::Password),
     spec("url", "Website", FieldKind::Url),
     repeating("totp", "One-time code", FieldKind::Totp),
+    repeating("passkey", "Passkey", FieldKind::Passkey),
     spec("notes", "Notes", FieldKind::Note),
 ];
 const CARD: &[FieldSpec] = &[
@@ -376,6 +384,7 @@ impl ItemDraft {
                 validate_totp(value)?;
             }
         }
+        self.check_passkeys()?;
         if self.item_type == ItemType::Totp && !self.fields.contains_key("totp") {
             return Err(StorageError::invalid(
                 "Add the secret key or an otpauth:// link for this code.",
@@ -413,6 +422,116 @@ impl ItemDraft {
 }
 
 impl ItemDraft {
+    /// Every passkey field holds a good record, and no passkey is on the item twice.
+    fn check_passkeys(&self) -> Result<()> {
+        let mut seen: Vec<String> = Vec::new();
+        for (key, value) in &self.fields {
+            if !self
+                .item_type
+                .spec(key)
+                .is_some_and(|s| s.kind == FieldKind::Passkey)
+            {
+                continue;
+            }
+            let record =
+                PasskeyRecord::parse(value).map_err(|e| StorageError::invalid(e.to_string()))?;
+            if seen.contains(&record.credential_id) {
+                return Err(StorageError::invalid(
+                    "The same passkey is on this item twice.",
+                ));
+            }
+            seen.push(record.credential_id.clone());
+        }
+        Ok(())
+    }
+
+    /// The editable copy that goes to the screen: each passkey is a marker with its public facts and no key.
+    pub fn redact_passkeys(&mut self) {
+        for (key, value) in self.fields.iter_mut() {
+            if !self
+                .item_type
+                .spec(key)
+                .is_some_and(|s| s.kind == FieldKind::Passkey)
+            {
+                continue;
+            }
+            *value = match PasskeyRecord::parse(value) {
+                Ok(r) => serde_json::to_string(&KeepMarker {
+                    keep: true,
+                    info: r.info(),
+                })
+                .unwrap_or_default(),
+                Err(_) => String::new(),
+            };
+        }
+        self.fields.retain(|_, v| !v.is_empty());
+    }
+
+    /// Put the stored passkeys back where the screen's copy has a marker. The screen can keep or drop a passkey; it
+    /// cannot make one or change one, so anything that is not a marker of a passkey the item holds is refused.
+    pub fn restore_passkeys(&mut self, stored: &ItemPayload) -> Result<()> {
+        let held: Vec<PasskeyRecord> = stored
+            .fields
+            .iter()
+            .filter(|(k, _)| {
+                stored
+                    .item_type
+                    .spec(k)
+                    .is_some_and(|s| s.kind == FieldKind::Passkey)
+            })
+            .filter_map(|(_, v)| PasskeyRecord::parse(v).ok())
+            .collect();
+        let mut next: Vec<(String, String)> = Vec::new();
+        for (key, value) in &self.fields {
+            if !self
+                .item_type
+                .spec(key)
+                .is_some_and(|s| s.kind == FieldKind::Passkey)
+            {
+                continue;
+            }
+            let marker: KeepMarker = serde_json::from_str(value)
+                .ok()
+                .filter(|m: &KeepMarker| m.keep)
+                .ok_or_else(|| StorageError::invalid("Passkeys can only be made by the app."))?;
+            let record = held
+                .iter()
+                .find(|r| r.credential_id == marker.info.credential_id)
+                .ok_or_else(|| {
+                    StorageError::invalid("A passkey on this item is no longer there.")
+                })?;
+            next.push((key.clone(), record.to_json().to_string()));
+        }
+        for (key, value) in next {
+            self.fields.insert(key, value);
+        }
+        Ok(())
+    }
+
+    /// Take every passkey out (a copy of an item must not share a passkey with it).
+    pub fn strip_passkeys(&mut self) {
+        let item_type = self.item_type;
+        self.fields.retain(|k, _| {
+            !item_type
+                .spec(k)
+                .is_some_and(|s| s.kind == FieldKind::Passkey)
+        });
+    }
+
+    /// The item as the person typed it must not carry a passkey they could have made up.
+    pub fn forbid_passkeys(&self) -> Result<()> {
+        if self.fields.keys().any(|k| {
+            self.item_type
+                .spec(k)
+                .is_some_and(|s| s.kind == FieldKind::Passkey)
+        }) {
+            return Err(StorageError::invalid(
+                "Passkeys can only be made by the app.",
+            ));
+        }
+        Ok(())
+    }
+
     /// Light, never-in-the-way checks for cards: the number looks like a number, the expiry like
     /// a date. Values are stored trimmed. Luhn is deliberately not enforced (gift and store cards).
     fn normalize_card(&mut self) -> Result<()> {
@@ -690,6 +809,7 @@ impl ItemPayload {
                 .into_iter()
                 .map(|(_, key, _)| key.to_string())
                 .collect(),
+            has_passkey: !instances(&self.fields, "passkey").is_empty(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             version,
@@ -717,6 +837,9 @@ impl ItemPayload {
                     secret,
                     value: (!secret).then(|| value.to_string()),
                     has_value: true,
+                    passkey: (s.kind == FieldKind::Passkey)
+                        .then(|| PasskeyRecord::parse(value).ok().map(|r| r.info()))
+                        .flatten(),
                 });
             }
         }
@@ -854,6 +977,8 @@ pub struct ItemSummary {
     pub has_totp: bool,
     /// Stored keys of the item's one-time codes in order (`totp`, `totp#2` …): what to ask `totp_now` for.
     pub code_keys: Vec<String>,
+    /// The login holds at least one passkey.
+    pub has_passkey: bool,
     pub created_at: u64,
     pub updated_at: u64,
     pub version: u64,
@@ -870,6 +995,9 @@ pub struct FieldView {
     pub secret: bool,
     pub value: Option<String>,
     pub has_value: bool,
+    /// Only on a passkey: its public facts (the key stays in the core).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<PasskeyInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

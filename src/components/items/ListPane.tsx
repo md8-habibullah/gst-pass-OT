@@ -13,6 +13,7 @@ import { Button, IconButton } from "../ui/Button";
 import { Keycap } from "../ui/Keycap";
 import { TextInput } from "../ui/Inputs";
 import { AccountBar } from "../shell/AccountMenu";
+import { ScanButton } from "../scan/ScanButton";
 import { FilterChips } from "../shell/FilterChips";
 import { FILTER_TYPE, TITLE } from "../shell/nav";
 import { ItemRow } from "./ItemRow";
@@ -190,6 +191,7 @@ export function ListPane() {
       <div className="flex items-center justify-between gap-3 px-4 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
         <h2 className="font-display text-[1.45rem] leading-none font-semibold tracking-[-0.005em]">{TITLE[filter]}</h2>
         <div className="flex items-center gap-2">
+          {!compact && <ScanButton />}
           <IconButton label={folder ? `Add folder inside ${trail(folder).at(-1)?.name ?? "this folder"}` : "Add folder"} onClick={() => openFolderDialog({ kind: "create", parent: folder })}>
             <FolderPlus className="size-[18px]" />
           </IconButton>

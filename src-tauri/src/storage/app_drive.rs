@@ -7,7 +7,6 @@
 use super::{files, AppCore, ExportedFile, StorageError};
 use crate::storage::drive::FileEntry;
 use crate::storage::error::Result;
-use std::sync::Arc;
 use zeroize::Zeroizing;
 
 const MSG_OUTSIDE: &str = "Choose a place outside the app's own data folder.";
@@ -23,7 +22,7 @@ impl AppCore {
         let session = self.session()?;
         // A request that cannot succeed must not open a dialog.
         session.file_add_check(item_id)?;
-        let Some(paths) = self.picker.open_files()? else {
+        let Some(paths) = self.picker().open_files()? else {
             return Ok(None);
         };
         if paths.is_empty() {
@@ -53,7 +52,7 @@ impl AppCore {
     /// the dialog is cancelled.
     pub fn file_save_copy(&self, id: &str, password: String) -> Result<Option<ExportedFile>> {
         let session = self.session()?;
-        let picker = Arc::clone(&self.picker);
+        let picker = self.picker();
         let data_dir = self.dir.clone();
         let saved = session.file_save_copy(id, password, move |suggested| {
             let chosen = picker.save_file(suggested)?;

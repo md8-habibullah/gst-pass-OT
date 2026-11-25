@@ -19,6 +19,10 @@
 //!   (the one-file spelling; `{"path": null}` is "the person cancels") answers the next
 //!   `import_pick`, `import_pick_keyfile` or `export_plain` save dialog; an empty queue cancels.
 //!   After a successful `export_plain`, `GET /e2e/last-saved` describes the file it wrote.
+//! * The Android passkey provider's façade (`hexis_lib::provider`, the one entry the Kotlin service calls through JNI) is
+//!   reachable at `POST /e2e/provider` with `{"op": "create", "args": {...}}` and answers its own text as JSON, so a test can
+//!   make a passkey in the open vault the way a website would, then look at it in the UI. It always answers a browser or
+//!   Own-window caller; an app caller would look the website up on the network, which this tool never does.
 //! * `open_url` opens nothing here: the address is validated exactly as in the app and then only
 //!   recorded. `GET /e2e/opened` answers `{"ok": ["https://..."]}`; `POST /e2e/opened` with
 //!   `{}` clears the list.
@@ -678,9 +682,10 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
     let cors = origin; // already known to be allowed (or absent)
 
     match (req.method.as_str(), req.path.as_str()) {
-        ("OPTIONS", "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next") => {
-            respond(stream, "204 No Content", cors, &Value::Null)
-        }
+        (
+            "OPTIONS",
+            "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next" | "/e2e/provider",
+        ) => respond(stream, "204 No Content", cors, &Value::Null),
         ("GET", "/health") => respond(stream, "200 OK", cors, &json!({"ok": true})),
         ("GET", "/e2e/disguise-applied") => {
             respond(stream, "200 OK", cors, &disguise_applied(&backend.launcher));
@@ -694,7 +699,7 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
             );
         }
         ("GET", "/e2e/last-saved") => last_saved(stream, cors),
-        ("POST", "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next") => {
+        ("POST", "/ipc" | "/e2e/picker" | "/e2e/opened" | "/e2e/pick-next" | "/e2e/provider") => {
             let json_type = req
                 .header("content-type")
                 .is_some_and(|t| t.to_ascii_lowercase().starts_with("application/json"));
@@ -714,6 +719,9 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
             }
             if req.path == "/e2e/pick-next" {
                 return pick_next(stream, cors, &parsed);
+            }
+            if req.path == "/e2e/provider" {
+                return provider_call(stream, cors, backend, &parsed);
             }
             if req.path == "/e2e/opened" {
                 backend.opener.clear();
@@ -736,6 +744,30 @@ fn handle(stream: &mut TcpStream, backend: &Backend, port: u16) {
         }
         _ => respond(stream, "404 Not Found", cors, &json!({"err": "not found"})),
     }
+}
+
+/// `POST /e2e/provider`: one operation of the passkey provider on the open vault. An app caller is refused here (it would need
+/// the network); the answer is the façade's own JSON text.
+fn provider_call(stream: &mut TcpStream, cors: Option<&str>, backend: &Backend, body: &Value) {
+    use tauri::Manager;
+    let op = body.get("op").and_then(Value::as_str).unwrap_or("");
+    let args = body.get("args").cloned().unwrap_or_else(|| json!({}));
+    if args.pointer("/caller/kind").and_then(Value::as_str) == Some("app") {
+        respond(
+            stream,
+            "400 Bad Request",
+            cors,
+            &json!({"err": "an app caller needs the network"}),
+        );
+        return;
+    }
+    let core = backend._app.state::<AppState>().inner().core();
+    let provider = hexis_lib::provider::Provider::new(core).with_links(Box::new(|_| {
+        Err(hexis_lib::passkey::PasskeyError::invalid("no network here"))
+    }));
+    let answer = provider.call(op, &args.to_string());
+    let value: Value = serde_json::from_str(&answer).unwrap_or(Value::Null);
+    respond(stream, "200 OK", cors, &value)
 }
 
 /// `GET /e2e/disguise-applied`: the last look the launcher was asked to apply (`ok` is `null` before

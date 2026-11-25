@@ -42,6 +42,10 @@ you ask not to be.
 * Tampering or rollback that the design claims to detect but does not.
 * A build or release-pipeline problem that could ship altered binaries (see `.github/workflows/`).
 * Plaintext secrets in logs, error messages, temporary files or crash output.
+* **Passkeys:** a way to make the passkey provider sign for a website or app that did not ask, to use a passkey without the fingerprint or
+  screen lock, to make it answer while the app lock is closed, to learn a passkey's private key from any view, error or export other than the
+  master-password-protected Bitwarden export, or to get an app accepted that its website does not list (design in [`ai-docs/PASSKEYS.md`](ai-docs/PASSKEYS.md)).
+  The provider is new and **has not been run on a real phone by its author yet**; read its status there before relying on it.
 
 ## Out of scope
 

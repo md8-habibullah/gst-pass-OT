@@ -218,6 +218,11 @@ class ManifestTests(Base):
         self.apply()
         text = self.manifest.read_text(encoding="utf-8")
         after = parse(self.manifest)
+        # the passkey provider's service and sheet are added on purpose: ProviderTests checks them
+        added = [e for e in after.find("application") if e.get(A + "name") in (apm.PROVIDER_SERVICE, apm.PROVIDER_ACTIVITY)]
+        self.assertEqual(len(added), 2)
+        for e in added:
+            after.find("application").remove(e)
         self.assertTrue(text.startswith('<?xml version="1.0" encoding="utf-8" ?>\n<manifest'), text[:80])
         self.assertTrue(text.endswith("</manifest>\n"))
         self.assertIn('xmlns:android="http://schemas.android.com/apk/res/android"', text)
@@ -280,7 +285,10 @@ class ManifestTests(Base):
                 self.assertNotIn("android.permission", p.read_text(encoding="utf-8"), p)
                 self.assertNotIn("POST_NOTIFICATIONS", p.read_text(encoding="utf-8"), p)
                 self.assertNotIn("FOREGROUND_SERVICE", p.read_text(encoding="utf-8"), p)
-        self.assertNotIn("<service", self.manifest.read_text(encoding="utf-8"))
+        # the only service is the passkey provider, which only the platform may bind (a permission the app does not hold)
+        services = parse(self.manifest).find("application").findall("service")
+        self.assertEqual([e.get(A + "name") for e in services], [apm.PROVIDER_SERVICE])
+        self.assertEqual(services[0].get(A + "permission"), "android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE")
 
     def test_the_new_elements_are_indented_like_the_rest(self):
         self.apply()
@@ -552,6 +560,179 @@ class ActivityAndKeepRuleTests(Base):
         self.assertIn("MainActivity", out)
         self.apply()
         self.assertIn("moveTaskToBack", self.activity().read_text(encoding="utf-8"))
+
+
+class ProviderTests(Base):
+    """The passkey provider (Android 14 and later): manifest entries, Kotlin files, resources, the allowlist and Gradle."""
+
+    def main(self):
+        return self.project / "app" / "src" / "main"
+
+    def kt(self, name):
+        return self.main() / "java" / "dev" / "habibullah" / "hexis" / "provider" / name
+
+    def service(self):
+        return next(e for e in parse(self.manifest).find("application").findall("service") if e.get(A + "name") == apm.PROVIDER_SERVICE)
+
+    def activity(self):
+        return next(e for e in parse(self.manifest).find("application").findall("activity") if e.get(A + "name") == apm.PROVIDER_ACTIVITY)
+
+    def test_the_service_is_off_exported_for_the_system_only_and_describes_itself(self):
+        self.apply()
+        svc = self.service()
+        self.assertEqual(svc.get(A + "enabled"), "false", "off until Settings > Passkeys switches it on")
+        self.assertEqual(svc.get(A + "exported"), "true")
+        self.assertEqual(svc.get(A + "permission"), "android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE")
+        self.assertEqual(svc.get(A + "label"), "@string/app_label_original", "the system lists the real name, not a disguise")
+        actions = [a.get(A + "name") for f in svc.findall("intent-filter") for a in f.findall("action")]
+        self.assertEqual(actions, ["android.service.credentials.CredentialProviderService"])
+        meta = svc.find("meta-data")
+        self.assertEqual((meta.get(A + "name"), meta.get(A + "resource")), ("android.credentials.provider", "@xml/hexis_credential_provider"))
+
+    def test_the_sheet_cannot_be_started_by_another_app(self):
+        self.apply()
+        act = self.activity()
+        self.assertEqual(act.get(A + "exported"), "false")
+        self.assertEqual(act.findall("intent-filter"), [])
+        self.assertEqual(act.get(A + "excludeFromRecents"), "true")
+        self.assertEqual(act.get(A + "theme"), "@style/Theme.Hexis.PasskeySheet")
+        self.assertIn("orientation", act.get(A + "configChanges"), "a turned phone must not start the request again")
+
+    def test_a_damaged_provider_entry_is_repaired(self):
+        self.apply()
+        tree = parse(self.manifest)
+        app = tree.find("application")
+        svc = next(e for e in app.findall("service"))
+        svc.set(A + "enabled", "true")
+        svc.set(A + "permission", "")
+        svc.remove(svc.find("meta-data"))
+        act = next(e for e in app.findall("activity") if e.get(A + "name") == apm.PROVIDER_ACTIVITY)
+        act.set(A + "exported", "true")
+        ET.SubElement(ET.SubElement(act, "intent-filter"), "action", {A + "name": "android.intent.action.VIEW"})
+        ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
+        ET.register_namespace("tools", "http://schemas.android.com/tools")
+        ET.ElementTree(tree).write(self.manifest, encoding="utf-8", xml_declaration=True)
+        code, out, _ = self.run_script("--check")
+        self.assertEqual(code, 1)
+        self.apply()
+        self.assertEqual(self.service().get(A + "enabled"), "false")
+        self.assertEqual(self.service().get(A + "permission"), "android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE")
+        self.assertEqual(self.service().find("meta-data").get(A + "resource"), "@xml/hexis_credential_provider")
+        self.assertEqual(self.activity().get(A + "exported"), "false")
+        self.assertEqual(self.activity().findall("intent-filter"), [])
+        self.assertEqual(self.run_script("--check")[0], 0)
+
+    def test_the_kotlin_files_sit_in_the_package_the_rust_side_names(self):
+        self.apply()
+        for name in apm.PROVIDER_KOTLIN:
+            src = self.kt(name).read_text(encoding="utf-8")
+            self.assertIn("package dev.habibullah.hexis.provider\n", src, name)
+            self.assertNotIn("__PACKAGE__", src)
+            self.assertNotIn("__PROVIDER_PACKAGE__", src)
+            self.assertEqual(src.count("{"), src.count("}"), name)
+        # the same package, spelled the way the Rust side spells it
+        jni = (REPO / "src-tauri/src/provider/jni.rs").read_text(encoding="utf-8")
+        self.assertIn("Java_" + apm.PROVIDER_PACKAGE.replace(".", "_") + "_ProviderNative_init", jni)
+        self.assertIn("Java_" + apm.PROVIDER_PACKAGE.replace(".", "_") + "_ProviderNative_call", jni)
+        plugin = (REPO / "src-tauri/src/commands/passkey_provider.rs").read_text(encoding="utf-8")
+        self.assertIn(f'"{apm.PROVIDER_PACKAGE}", "ProviderPlugin"', plugin)
+        self.assertIn(f'"{apm.PROVIDER_SERVICE}"', self.kt("ProviderPlugin.kt").read_text(encoding="utf-8"))
+
+    def test_the_package_is_fixed_but_r_follows_the_apps_namespace(self):
+        shutil.rmtree(self.project)
+        self.project = make_project(self.root, namespace="com.example.notes")
+        self.manifest = self.project / "app" / "src" / "main" / "AndroidManifest.xml"
+        self.apply()
+        sheet = self.project / "app/src/main/java/dev/habibullah/hexis/provider/PasskeyActivity.kt"
+        self.assertIn("import com.example.notes.R\n", sheet.read_text(encoding="utf-8"))
+        self.assertIn("package dev.habibullah.hexis.provider\n", sheet.read_text(encoding="utf-8"))
+
+    def test_every_word_the_sheet_uses_exists_and_none_is_left_over(self):
+        self.apply()
+        used = set()
+        for name in apm.PROVIDER_KOTLIN:
+            used |= set(re.findall(r"R\.string\.(hexis_passkey_\w+)", (REPO / "scripts/android" / name).read_text(encoding="utf-8")))
+        strings = ET.parse(self.res / "values" / "hexis_provider_strings.xml").getroot()
+        defined = {e.get("name"): e.text for e in strings}
+        self.assertEqual(used, set(defined), "a string a Kotlin file uses is missing, or one nobody uses is still defined")
+        self.assertEqual(len(defined), len(apm.PROVIDER_STRINGS), "duplicate string ids")
+        for name in ("hexis_passkey_sign_in_title", "hexis_passkey_save_title", "hexis_passkey_save_for"):
+            self.assertIn("%1$s", defined[name], name)
+
+    def test_the_provider_description_offers_passkeys_and_nothing_else(self):
+        self.apply()
+        root = ET.parse(self.res / "xml" / "hexis_credential_provider.xml").getroot()
+        self.assertEqual(root.tag, "credential-provider")
+        self.assertEqual([c.get("name") for c in root.iter("capability")], ["androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL"])
+        theme = ET.parse(self.res / "values" / "hexis_provider_themes.xml").getroot()
+        self.assertEqual(theme.find("style").get("name"), "Theme.Hexis.PasskeySheet")
+
+    def test_the_browser_allowlist_is_the_repositorys_own_snapshot(self):
+        self.apply()
+        shipped = (self.res / "raw" / "hexis_privileged_apps.json").read_text(encoding="utf-8")
+        self.assertEqual(shipped, (REPO / "assets/passkey/privileged_apps.json").read_text(encoding="utf-8"))
+        self.assertGreater(len(json.loads(shipped)["apps"]), 20)
+
+    def test_an_empty_or_unreadable_allowlist_stops_the_script(self):
+        tmp = self.root / "fake-repo"
+        write(tmp / "assets/passkey/privileged_apps.json", '{"apps": []}')
+        with self.assertRaises(apm.ScriptError):
+            apm.provider_allowlist(tmp)
+        write(tmp / "assets/passkey/privileged_apps.json", "not json")
+        with self.assertRaises(apm.ScriptError):
+            apm.provider_allowlist(tmp)
+        with self.assertRaises(apm.ScriptError):
+            apm.provider_allowlist(self.root / "nowhere")
+
+    def test_gradle_gets_the_two_dependencies_once(self):
+        self.apply()
+        gradle = (self.project / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertEqual(gradle.count('implementation("androidx.credentials:credentials:'), 1)
+        self.assertEqual(gradle.count('implementation("androidx.biometric:biometric:'), 1)
+        self.assertEqual(gradle.count("dependencies {"), 1)
+
+    def test_gradle_dependencies_go_into_the_existing_block_and_keep_a_chosen_version(self):
+        build = self.project / "app" / "build.gradle.kts"
+        build.write_text(
+            'plugins { id("com.android.application") }\nandroid {\n    namespace = "dev.habibullah.hexis"\n}\n\n'
+            'dependencies {\n    implementation("androidx.appcompat:appcompat:1.7.1")\n    implementation("androidx.credentials:credentials:1.5.0")\n}\n'
+            'apply(from = file("tauri.build.gradle.kts"))\n', encoding="utf-8")
+        self.apply()
+        text = build.read_text(encoding="utf-8")
+        self.assertIn('implementation("androidx.credentials:credentials:1.5.0")', text, "a version the project chose is not replaced")
+        self.assertNotIn("credentials:1.6", text)
+        self.assertEqual(text.count("androidx.credentials:credentials"), 1)
+        self.assertEqual(text.count("dependencies {"), 1)
+        self.assertLess(text.index("dependencies {"), text.index("androidx.biometric:biometric"))
+        self.assertLess(text.index("androidx.biometric:biometric"), text.index("androidx.appcompat"))
+        self.assertTrue(text.endswith('apply(from = file("tauri.build.gradle.kts"))\n'))
+
+    def test_a_groovy_build_file_gets_groovy_syntax(self):
+        text, added = apm.with_dependencies("dependencies {\n    implementation 'a:b:1'\n}\n", kts=False)
+        self.assertEqual(len(added), 2)
+        self.assertIn("    implementation 'androidx.credentials:credentials:1.6.0'\n", text)
+        again, added = apm.with_dependencies(text, kts=False)
+        self.assertEqual((again, added), (text, []))
+
+    def test_a_project_without_a_gradle_file_is_warned_about_not_stopped(self):
+        (self.project / "app" / "build.gradle.kts").unlink()
+        code, out, err = self.run_script("--package", "dev.habibullah.hexis")
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("androidx.credentials", out)
+        self.assertIn("warning:", out)
+
+    def test_the_keep_rules_protect_the_native_bridge_and_the_plugin(self):
+        self.apply()
+        rules = (self.project / "app" / apm.KEEP_RULES_NAME).read_text(encoding="utf-8")
+        self.assertIn("-keep class dev.habibullah.hexis.provider.ProviderNative { *; }", rules)
+        self.assertIn("-keepclasseswithmembernames class * { native <methods>; }", rules)
+        self.assertIn("-keep class dev.habibullah.hexis.provider.ProviderPlugin { *; }", rules)
+
+    def test_check_names_the_provider_work_on_a_fresh_project(self):
+        code, out, _ = self.run_script("--check")
+        self.assertEqual(code, 1)
+        for needle in ("passkey provider", "hexis_provider_strings.xml", "hexis_privileged_apps.json", "ProviderNative.kt", "androidx.credentials"):
+            self.assertIn(needle, out)
 
 
 class IdempotencyTests(Base):

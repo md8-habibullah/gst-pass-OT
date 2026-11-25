@@ -1405,6 +1405,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
             "createdAt",
             "favorite",
             "folder",
+            "hasPasskey",
             "hasTotp",
             "id",
             "reprompt",

@@ -14,8 +14,10 @@ import {
   BackendError,
   LIST_SORTS,
   FIELD_SCHEMA,
+  instanceKey,
   instancesOf,
   isSecretKind,
+  MAX_INSTANCES,
   parseFieldKey,
   specOf,
   type AppSettings,
@@ -39,7 +41,11 @@ import {
   type ItemSummary,
   type ItemType,
   type ItemView,
+  type PasskeyInfo,
   type PrefsView,
+  type LoginSuggestion,
+  type ScanChoice,
+  type ScanReply,
   type FolderChange,
   type PurgePlan,
   type SearchHit,
@@ -204,6 +210,11 @@ function matchPieces(d: ItemDraft, words: string[], reprompt = d.reprompt): stri
     const spec = specOf(d.type, key);
     if (!spec || value === "") continue;
     const kind: FieldKind = spec.kind;
+    if (kind === "passkey") {
+      const info = passkeyInfoOf(value);
+      pieces.push({ label: spec.label, hay: `${spec.label}\n${info ? `${info.rpId}\n${info.rpName}\n${info.userName}` : ""}`.toLowerCase() });
+      continue;
+    }
     const searchable = kind === "text" || kind === "url" || kind === "paragraph" || (kind === "note" && NOTE_KEYS.includes(spec.key) && !reprompt);
     pieces.push({ label: spec.label, hay: `${spec.label}\n${searchable ? value : ""}`.toLowerCase() });
   }
@@ -274,6 +285,7 @@ function summarize(s: Stored): ItemSummary {
     folder: d.folder,
     hasTotp: instancesOf(d.fields, "totp").length > 0,
     codeKeys: instancesOf(d.fields, "totp").map((x) => x.key),
+    hasPasskey: instancesOf(d.fields, "passkey").length > 0,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     version: s.version,
@@ -296,7 +308,25 @@ function diff(a: ItemDraft | null, b: ItemDraft): string[] {
   return out;
 }
 
-function cleanDraft(d: ItemDraft): ItemDraft {
+/** The preview keeps a passkey as its public facts (there is no key to hide): the same marker the core hands the editor. */
+function passkeyInfoOf(raw: string): PasskeyInfo | null {
+  try {
+    const v = JSON.parse(raw) as Partial<PasskeyInfo> & { keep?: boolean };
+    return typeof v.credentialId === "string" && typeof v.rpId === "string"
+      ? { credentialId: v.credentialId, rpId: v.rpId, rpName: v.rpName ?? v.rpId, userName: v.userName ?? "", displayName: v.displayName ?? v.userName ?? "", alg: v.alg ?? -7, createdAt: v.createdAt ?? 0 }
+      : null;
+  } catch { return null; }
+}
+const passkeyMarker = (info: PasskeyInfo): string => JSON.stringify({ keep: true, ...info });
+
+function cleanDraft(d: ItemDraft, stored: ItemDraft | null = null): ItemDraft {
+  // The screen can keep or drop a passkey, never make or change one (the core's rule).
+  for (const [k, v] of Object.entries(d.fields)) {
+    if (specOf(d.type, k)?.kind !== "passkey" || v === "") continue;
+    const info = passkeyInfoOf(v);
+    const held = stored && instancesOf(stored.fields, "passkey").some((x) => passkeyInfoOf(x.value)?.credentialId === info?.credentialId);
+    if (!info || !held) err("invalid_input", "Passkeys can only be made by the app.");
+  }
   const title = d.title.trim();
   if (!title) err("invalid_input", "Give the item a title.");
   const fields: Record<string, string> = {};
@@ -477,7 +507,8 @@ function view(s: Stored): ItemView {
       const secret = isSecretKind(spec.kind);
       return instancesOf(d.fields, spec.key).filter((x) => x.value).map((x) => {
         const place = slots.indexOf(parseFieldKey(x.key)?.n ?? 1);
-        return { key: x.key, label: slots.length > 1 && place >= 0 ? `${spec.label} ${place + 1}` : spec.label, kind: spec.kind, secret, value: secret ? null : x.value, hasValue: true };
+        const passkey = spec.kind === "passkey" ? passkeyInfoOf(x.value) ?? undefined : undefined;
+        return { key: x.key, label: slots.length > 1 && place >= 0 ? `${spec.label} ${place + 1}` : spec.label, kind: spec.kind, secret, value: secret ? null : x.value, hasValue: true, ...(passkey ? { passkey } : {}) };
       });
     }),
     customFields: d.customFields.map((c) => ({ name: c.name, hidden: c.hidden, value: c.hidden ? null : c.value })),
@@ -494,7 +525,7 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
 }
 
 // ---- device settings and the demo vault (same rules as the core; see storage/device.rs and storage/demo.rs) ----
-const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc" };
+const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc", passkeyAppCheck: true };
 let device: DeviceInfo = { ...FRESH_DEVICE };
 let demoId: string | null = null;
 const profileInfo = (p: MockProfile): ProfileInfo => ({
@@ -556,6 +587,7 @@ function clockView(): ClockStatus {
 
 export const gate = new MockGate();
 gate.onWipe = () => { profiles.length = 0; selectedId = null; wipeAll(); pins.clear(); demoId = null; };
+let providerOn = false; // the preview's passkey provider switch
 let appSettings: AppSettings = { lockAfterMinutes: 5, lockAfterLeaveSeconds: 300 };
 // "After leaving the app": the preview follows the same rule as the core (the vault and, when on, the gate lock when the time away runs out).
 let leaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -567,6 +599,82 @@ function disguiseView(): DisguiseView {
   const base = disguise.customName ?? preset?.name ?? "Hexis";
   return { ...disguise, appliedName: disguise.lowercase ? base.toLowerCase() : base, note: "Preview only: nothing outside this page changes." };
 }
+
+// ---- the scanner (the same rules as the core's scan.rs and vault_passkey.rs) ----
+const POINTS = { account: 100, site: 60, name: 40 } as const;
+const SCAN_MAX_CHARS = 4096;
+const looksLikeBareKey = (t: string): boolean => {
+  const chars = [...t].filter((c) => c !== " " && c !== "-");
+  return chars.length >= 16 && chars.every((c) => /[A-Za-z2-7]/.test(c));
+};
+/** The issuer and account named by an `otpauth://` link, or null when it is not a usable time-based code. */
+function otpFacts(raw: string): { issuer: string | null; account: string; digits: number; period: number } | null {
+  try { parseTotp(raw); } catch { return null; }
+  if (!raw.trim().toLowerCase().startsWith("otpauth://")) return { issuer: null, account: "", digits: 6, period: 30 };
+  const u = new URL(raw.trim());
+  const label = decodeURIComponent(u.pathname.replace(/^\/+/, ""));
+  const colon = label.indexOf(":");
+  const labelIssuer = colon >= 0 ? label.slice(0, colon).trim() : "";
+  const account = (colon >= 0 ? label.slice(colon + 1) : label).trim();
+  const issuer = (u.searchParams.get("issuer") ?? labelIssuer).trim() || null;
+  return { issuer, account, digits: Number(u.searchParams.get("digits") ?? 6) || 6, period: Number(u.searchParams.get("period") ?? 30) || 30 };
+}
+const relatedSites = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+const secretOf = (raw: string): string => { try { return [...parseTotp(raw).key].join(","); } catch { return ""; } };
+/** The logins a scanned code probably belongs to, best first. */
+function suggest(hints: { accounts: string[]; sites: string[]; names: string[]; secret: string | null }): LoginSuggestion[] {
+  const lc = (x: string) => x.trim().toLowerCase();
+  const accounts = hints.accounts.map(lc).filter(Boolean);
+  const sites = hints.sites.map(lc).filter(Boolean);
+  const names = hints.names.map(lc).filter((n) => n.length >= 3);
+  const out: LoginSuggestion[] = [];
+  for (const st of items().values()) {
+    if (st.deleted || st.archived || st.draft.type !== "login") continue;
+    const d = st.draft;
+    const usernames = instancesOf(d.fields, "username").map((x) => lc(x.value));
+    const hosts = urlsOf(d.fields.url ?? "").map((u) => lc(hostOf(u) ?? "")).filter(Boolean);
+    const labels = hosts.flatMap((h) => h.split(".").slice(0, -1)).filter((l) => l.length >= 3);
+    const title = lc(d.title);
+    const reasons: LoginSuggestion["reasons"] = [];
+    let score = 0;
+    if (accounts.some((a) => usernames.includes(a))) { reasons.push("account"); score += POINTS.account; }
+    if (names.some((n) => labels.includes(n.replace(/ /g, ""))) || sites.some((x) => hosts.some((h) => relatedSites(h, x)))) { reasons.push("site"); score += POINTS.site; }
+    if (title.length >= 3 && names.some((n) => title.includes(n) || n.includes(title))) { reasons.push("name"); score += POINTS.name; }
+    const codes = instancesOf(d.fields, "totp");
+    const hasThisCode = !!hints.secret && codes.some((c) => secretOf(c.value) === hints.secret);
+    if (score === 0 && !hasThisCode) continue;
+    const passkeys = instancesOf(d.fields, "passkey").map((x) => passkeyInfoOf(x.value)).filter((x): x is PasskeyInfo => !!x);
+    out.push({
+      id: st.id, title: d.title, subtitle: subtitleOf(d), reasons, score, codes: codes.length, passkeys: passkeys.length, hasThisCode,
+      hasSitePasskey: passkeys.some((k) => sites.includes(k.rpId)), full: codes.length >= MAX_INSTANCES && passkeys.length >= MAX_INSTANCES, reprompt: d.reprompt,
+    });
+  }
+  return out.sort((a, b) => b.score - a.score || a.title.toLowerCase().localeCompare(b.title.toLowerCase())).slice(0, 8);
+}
+function scanReply(text: string, bareKey: boolean): ScanReply {
+  const t = text.trim();
+  const low = t.toLowerCase();
+  if (!t || [...t].length > SCAN_MAX_CHARS) return { kind: "text" };
+  if (low.startsWith("otpauth-migration://")) return { kind: "migration" };
+  if (low.startsWith("otpauth://")) {
+    const f = otpFacts(t);
+    return f ? { kind: "totp", ...f, suggestions: [] } : { kind: "invalid", message: "This is a one-time code link, but it has no valid secret or is not a time-based code." };
+  }
+  if (low.startsWith("fido:/")) return { kind: "fido" };
+  if (low.startsWith("https://") || low.startsWith("http://")) return { kind: "link", host: hostOf(t) ?? "" };
+  if (bareKey && looksLikeBareKey(t)) { const f = otpFacts(t); if (f) return { kind: "totp", ...f, suggestions: [] }; }
+  return { kind: "text" };
+}
+/** DEV deep link only: a passkey a website made through the passkey provider, saved on an item (the preview has no phone). */
+export function simulatePasskeySaved(id: string, rpId = "example.com", userName = "ana@example.com"): void {
+  const s = active(id);
+  const prev = clone(s.draft);
+  const key = instanceKey("passkey", Array.from({ length: MAX_INSTANCES }, (_, i) => i + 1).find((n) => !s.draft.fields[instanceKey("passkey", n)]) ?? 1);
+  s.draft.fields[key] = passkeyMarker({ credentialId: crypto.randomUUID().replace(/-/g, ""), rpId, rpName: rpId, userName, displayName: userName, alg: -7, createdAt: Date.now() });
+  s.version += 1; s.updatedAt = Date.now();
+  snapshot(s, "edited", prev);
+}
+
 
 export const previewBackend: Backend = {
   kind: "preview",
@@ -720,7 +828,7 @@ export const previewBackend: Backend = {
     items(); await delay(150);
     const s = active(id); consumeToken(token, id, expectedVersion);
     if (s.version !== expectedVersion) err("version_conflict", "This item changed since you opened it.");
-    const next = cleanDraft(draft);
+    const next = cleanDraft(draft, s.draft);
     if (next.type !== s.draft.type) err("invalid_input", "An item cannot change type.");
     const prev = clone(s.draft);
     s.draft = next; s.version += 1; s.updatedAt = Date.now();
@@ -855,6 +963,7 @@ export const previewBackend: Backend = {
     const store = items(); const src = active(id); await gateItem(src, password);
     const now = Date.now();
     const d = clone(src.draft); d.title = `${d.title} (copy)`.slice(0, 256);
+    for (const k of Object.keys(d.fields)) if (specOf(d.type, k)?.kind === "passkey") delete d.fields[k]; // one credential, one place
     const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
     snapshot(s, "created", null); store.set(s.id, s); touchQueue();
     return summarize(s);
@@ -868,6 +977,14 @@ export const previewBackend: Backend = {
   async syncFlush() { return { complete: true }; },
   async syncReconnect() { /* the preview has no network */ },
   async screenSecure() { /* nothing to block in a browser preview */ },
+  // The preview pretends to be an Android 14 phone so the page can be reviewed; the real answer comes from the core.
+  async passkeyProviderStatus() { return { supported: true, enabled: providerOn }; },
+  async passkeyProviderSet(on) {
+    if (limited) err("master_required", "Type your master password to do this. This vault was opened with the PIN.");
+    providerOn = on;
+    return { supported: true, enabled: providerOn };
+  },
+  async passkeyProviderOpenSettings() { /* the system's own screen: nothing to open in a browser preview */ },
   async getVersion(id, version, password) {
     const s = active(id); await gateItem(s, password);
     const snap = s.history.find((h) => h.version === version);
@@ -890,6 +1007,37 @@ export const previewBackend: Backend = {
     const raw = key === undefined ? instancesOf(s.draft.fields, "totp")[0]?.value : specOf(s.draft.type, key)?.kind === "totp" ? s.draft.fields[key] : undefined;
     if (!raw) err("invalid_input", "This item has no one-time code.");
     return totpAt(raw, Date.now());
+  },
+
+  async scanClassify(text, bareKey) {
+    items(); await delay(40);
+    const r = scanReply(text, bareKey === true);
+    if (r.kind !== "totp") return r;
+    const f = otpFacts(text.trim())!;
+    return { ...r, suggestions: suggest({ accounts: [f.account], sites: f.issuer?.includes(".") ? [f.issuer] : [], names: f.issuer ? [f.issuer] : [], secret: secretOf(text.trim()) || null }) };
+  },
+  async scanApply(text, choice: ScanChoice, password) {
+    const store = items(); await delay(120);
+    const r = scanReply(text, true);
+    if (r.kind !== "totp") err("invalid_input", "That is not a one-time code.");
+    const value = text.trim();
+    if ("existing" in choice) {
+      const s = active(choice.existing); await gateItem(s, password);
+      if (s.draft.type !== "login") err("invalid_input", "A one-time code can only be added to a login.");
+      if (instancesOf(s.draft.fields, "totp").some((c) => secretOf(c.value) === secretOf(value))) err("invalid_input", "This login already has this one-time code.");
+      const slot = Array.from({ length: MAX_INSTANCES }, (_, i) => i + 1).find((n) => !s.draft.fields[instanceKey("totp", n)]);
+      if (!slot) err("invalid_input", `This login already holds ${MAX_INSTANCES} one-time codes.`);
+      const prev = clone(s.draft);
+      s.draft.fields[instanceKey("totp", slot)] = value; s.version += 1; s.updatedAt = Date.now();
+      snapshot(s, "edited", prev); touchQueue();
+      return summarize(s);
+    }
+    const now = Date.now();
+    const title = (choice.new.title?.trim() || r.issuer || r.account || "New login").slice(0, 256);
+    const d = cleanDraft({ type: "login", title, favorite: false, reprompt: false, tags: [], folder: null, customFields: [], fields: { ...(r.account ? { username: r.account } : {}), totp: value } });
+    const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
+    snapshot(s, "created", null); store.set(s.id, s); touchQueue();
+    return summarize(s);
   },
 
   async listBackups() {
@@ -1133,6 +1281,7 @@ export const previewBackend: Backend = {
     return { ...device };
   },
   async deviceSetOpenInSearch(on) { device = { ...device, openInSearch: on === true }; return { ...device }; },
+  async deviceSetPasskeyAppCheck(on) { device = { ...device, passkeyAppCheck: on === true }; return { ...device }; },
   async deviceSetListSort(order) {
     if (!(LIST_SORTS as readonly string[]).includes(order)) err("invalid_input", "Choose one of the orders in the list.");
     device = { ...device, listSort: order };

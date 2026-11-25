@@ -229,6 +229,8 @@ pub struct PlainWritten {
     pub path: PathBuf,
     /// Items that could not be decrypted and are not in the file.
     pub unreadable: usize,
+    /// Passkeys that the chosen format cannot carry (a CSV has no place for one).
+    pub passkeys_left_out: usize,
 }
 
 /// Build the preview numbers for `parsed` against the vault's duplicate index.
@@ -454,11 +456,12 @@ impl Session {
         let Some(dest) = choose()? else {
             return Ok(None);
         };
-        let (buf, unreadable): (SecretBuf, usize) = self.with_unlocked(|u| {
-            let set = u.vault.export_records()?;
-            let buf = format.render(&set.records)?;
-            Ok((buf, set.unreadable))
-        })?;
+        let (buf, unreadable, passkeys_left_out): (SecretBuf, usize, usize) =
+            self.with_unlocked(|u| {
+                let set = u.vault.export_records()?;
+                let buf = format.render(&set.records)?;
+                Ok((buf, set.unreadable, format.passkeys_left_out(&set.records)))
+            })?;
         files::write_atomic(&dest, buf.as_slice()).map_err(|_| {
             StorageError::Storage(
                 "The export file could not be saved. Check the folder and try again.".into(),
@@ -467,6 +470,7 @@ impl Session {
         Ok(Some(PlainWritten {
             path: dest,
             unreadable,
+            passkeys_left_out,
         }))
     }
 }

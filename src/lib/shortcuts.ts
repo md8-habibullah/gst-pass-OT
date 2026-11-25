@@ -22,6 +22,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "help", group: "General", label: "Show keyboard shortcuts", combos: ["?", "mod+/", "F1"] },
   { id: "search", group: "General", label: "Search items", combos: ["/", "mod+k"] },
   { id: "new", group: "General", label: "New item", combos: ["n", "mod+n"] },
+  { id: "scan", group: "General", label: "Scan a code or passkey", combos: ["s", "mod+shift+s"] },
   { id: "settings", group: "General", label: "Open settings", combos: ["mod+,", "g s"] },
   { id: "lock", group: "General", label: "Lock the vault", combos: ["mod+l"] },
   { id: "lockApp", group: "General", label: "Lock the app", combos: ["mod+shift+l"] },

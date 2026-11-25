@@ -7,6 +7,8 @@ use super::entry::{EntryKind, ImportedEntry};
 use super::jsonutil::{self, lax, lax_bool, lax_i64, nullable, parse_iso, s};
 use super::limits::{unsupported, MSG_ENCRYPTED_EXPORT};
 use super::ParsedImport;
+use crate::crypto::now_millis;
+use crate::passkey::bitwarden::{record_from, BwCredential};
 use crate::storage::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -26,6 +28,34 @@ struct Uri {
     uri: Option<String>,
 }
 
+/// Bitwarden's entry for a passkey (`login.fido2Credentials`). Every value is read as text: Bitwarden writes its counter and
+/// its "discoverable" flag as text and a credential id either as a GUID or as base64url.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+struct Fido2 {
+    #[serde(default, rename = "credentialId", deserialize_with = "lax")]
+    credential_id: Option<String>,
+    #[serde(default, rename = "keyType", deserialize_with = "lax")]
+    key_type: Option<String>,
+    #[serde(default, rename = "keyAlgorithm", deserialize_with = "lax")]
+    key_algorithm: Option<String>,
+    #[serde(default, rename = "keyCurve", deserialize_with = "lax")]
+    key_curve: Option<String>,
+    #[serde(default, rename = "keyValue", deserialize_with = "lax")]
+    key_value: Option<String>,
+    #[serde(default, rename = "rpId", deserialize_with = "lax")]
+    rp_id: Option<String>,
+    #[serde(default, rename = "rpName", deserialize_with = "lax")]
+    rp_name: Option<String>,
+    #[serde(default, rename = "userHandle", deserialize_with = "lax")]
+    user_handle: Option<String>,
+    #[serde(default, rename = "userName", deserialize_with = "lax")]
+    user_name: Option<String>,
+    #[serde(default, rename = "userDisplayName", deserialize_with = "lax")]
+    user_display_name: Option<String>,
+    #[serde(default, rename = "creationDate", deserialize_with = "lax")]
+    created: Option<String>,
+}
+
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
 struct Login {
     #[serde(default, deserialize_with = "nullable")]
@@ -37,8 +67,7 @@ struct Login {
     #[serde(default, deserialize_with = "lax")]
     totp: Option<String>,
     #[serde(default, rename = "fido2Credentials", deserialize_with = "nullable")]
-    #[zeroize(skip)]
-    passkeys: Vec<serde::de::IgnoredAny>,
+    passkeys: Vec<Fido2>,
 }
 
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -275,11 +304,28 @@ fn convert(
                     e.add_url(s(&u.uri));
                 }
                 e.add_totp(s(&l.totp));
-                if !l.passkeys.is_empty() {
-                    out.warn(format!(
-                        "\u{201c}{}\u{201d} has a passkey, which this app cannot keep. Its other data was imported.",
-                        super::limits::warn_title(s(&item.name))
-                    ));
+                for pk in &l.passkeys {
+                    let cred = BwCredential {
+                        credential_id: s(&pk.credential_id),
+                        key_type: s(&pk.key_type),
+                        key_algorithm: s(&pk.key_algorithm),
+                        key_curve: s(&pk.key_curve),
+                        key_value: s(&pk.key_value),
+                        rp_id: s(&pk.rp_id),
+                        rp_name: s(&pk.rp_name),
+                        user_handle: s(&pk.user_handle),
+                        user_name: s(&pk.user_name),
+                        user_display_name: s(&pk.user_display_name),
+                        created_at: pk.created.as_deref().and_then(parse_iso),
+                    };
+                    match record_from(&cred, now_millis()) {
+                        Ok(record) => e.add_passkey(&record.to_json()),
+                        Err(why) => out.warn(format!(
+                            "\u{201c}{}\u{201d} has a passkey that was not imported: {}. Its other data was imported.",
+                            super::limits::warn_title(s(&item.name)),
+                            why
+                        )),
+                    }
                 }
             }
         }

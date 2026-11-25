@@ -29,7 +29,7 @@ library, which Google documents as able to send technical usage metrics (see "An
   are yours to delete. Hexis never touches system-wide folders, such as a font cache or your desktop's recent-files list.
 * **Android.** Android's automatic backup (to your Google account, or to a new phone) is switched off for Hexis, so a vault cannot be
   restored behind your back after a reinstall. Uninstalling the app removes its private data folder.
-* **Network.** Two things reach the internet. (1) **Your S3-compatible backup targets**, only when you add one, and then only
+* **Network.** Three things can reach the internet (the third only on an Android phone where you switched passkeys on). (1) **Your S3-compatible backup targets**, only when you add one, and then only
   that endpoint, over HTTPS (plain HTTP is accepted for the loopback address only, for testing). What leaves the device is
   ciphertext plus the object names, sizes and timestamps the storage provider sees by nature. Sync runs on three
   triggers only: unlock, a saved change, and leaving or backgrounding the app. There are no timers and no background services.
@@ -38,10 +38,22 @@ library, which Google documents as able to send technical usage metrics (see "An
   `aws.amazon.com` and reads the `Date` header of the reply: at most once every six hours after a good check, and again
   after the device restarts. Nothing of yours is sent; those sites see your IP address and the request, as with any website.
   Switched off, no such request is made, and after a restart a wait is judged by the device clock.
+  (3) **The passkey website check** (Android 14 and later, only after you switched on Settings > Passkeys, and only when a
+  *native app*, not a browser, asks for a passkey and you chose one for it). Hexis asks that passkey's own website, once, for
+  `https://<the website>/.well-known/assetlinks.json` to see whether the website allows that app. It is one plain `GET` with
+  no cookies and no identifying headers, a 2 second and 64 KB limit, no redirects, only to a name that can be a public website, and the answer is kept in memory only. The website sees
+  your IP address and that someone asked for that file; nothing from your vault is sent. It can be switched off in
+  Settings > Passkeys ("Check an app with its website"); then apps get no passkeys and no request is made. Browsers are
+  checked by Android itself and cause no request from Hexis.
 * **Links** in your items open in your default browser only when you click them, and only `http` and `https` links.
 * **Clipboard.** Copied passwords and codes are cleared after 15, 30 or 60 seconds (your choice). The timer runs inside
   the app, so it only works while the app is open; if the app is closed first, the copied value stays on the clipboard
   until something else replaces it. A system-level clipboard manager can keep its own history that Hexis cannot clear.
+* **Passkeys.** A passkey you save lives inside the encrypted vault like a password (private key included), so it is in your
+  backups and follows the vault to your other devices. Its private key never leaves Hexis's core: a website gets only the signed
+  answer. Android's own passkey list shows the real app name "Hexis" even when you disguised the app. The list of apps Android
+  treats as browsers (a copy of Google's list, dated 2026-11-25) is inside the app and is not fetched at run time. A readable
+  Bitwarden export writes passkeys with their private keys, so it is as sensitive as the vault itself.
 * **Files you import or export** are read or written only where you point the app. A readable (unencrypted) export is
   written with owner-only permissions after you re-enter the master password; delete it when you are done.
 * **No tracking identifiers.** The app generates none and sends none.
@@ -49,10 +61,14 @@ library, which Google documents as able to send technical usage metrics (see "An
 ### Android permissions and the QR scanner
 
 The Android app asks for only what its features need. It declares no notification permission, no foreground
-service and no vibration permission (a build check and the manifest patch enforce this).
+service and no vibration permission (a build check and the manifest patch enforce this). It does declare one
+`<service>`, the passkey provider that Android's own passkey manager binds for a moment while a sign-in sheet is
+open; it is switched off in the manifest until you turn on Settings > Passkeys, it needs a permission only the system
+holds, and it does nothing by itself (it is not a foreground or background service, and the build check allows only
+that one service in only that shape).
 
 * `INTERNET` and `ACCESS_NETWORK_STATE`: to reach the backup endpoint you configure and, unless you switch it off, the time check.
-* `CAMERA` (asked at the moment you scan): to read an `otpauth://` QR code. Scanning is optional; you can type the setup key. The camera is not required to install the app.
+* `CAMERA` (asked at the moment you scan with the camera button in the app): to read an `otpauth://` QR code. Scanning is optional; you can type the setup key. The camera is not required to install the app.
 * `USE_BIOMETRIC` and `USE_FINGERPRINT`: the optional fingerprint for the Stage 1 gate. It never opens a vault; the master password always does.
 * The screen is protected from screenshots and the recent-apps preview while a decrypted file is open.
 

@@ -1,6 +1,9 @@
 # Plan: native camera on Android, and Hexis as a passkey provider
 
-Written 2026-11-25. Status: **plan only, nothing implemented, no source file touched.**
+Written 2026-11-25. Original status: plan only. **Build status (2026-11-25, same day): see [`PASSKEYS.md`](PASSKEYS.md).** What was built and where it departs from this plan:
+P2 (engine, storage, search, manage UI, Bitwarden import and export) and P3 (the Android provider) are written and tested without a phone; the scanner and the camera button are built; P4 (CXF files, Credential Transfer) and P5 (desktop) are **not** built.
+Decisions: D-1 option 1, D-3 (on, switchable), D-5, D-7 and D-8 as recommended. **D-4 was not followed:** a passkey is a field of a login, not an item type, because a payload schema bump would make Hexis 0.4.0 refuse the whole vault (`ARCHITECTURE.md` D47).
+The 1Password `passkey` crates were not used (own ES256 engine, D48). The text below is the plan as written and is left unchanged.
 Audience: the Hexis owner (decisions and owner steps are in sections 9 and 10).
 Rule of this file: every "fact" has a source in section 12 or was read in this repository; everything else is marked
 **UNVERIFIED** and has a test in section 8 that turns it into a fact.

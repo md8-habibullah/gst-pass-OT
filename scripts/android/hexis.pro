@@ -17,3 +17,15 @@
 # their constructors too; AAPT2 already generates keep rules for them, this is the belt for the braces.
 -keep class * extends android.content.ContentProvider { <init>(); }
 -keep class * extends android.app.Service { <init>(); }
+
+# The passkey provider (src-tauri/src/provider/jni.rs): the Rust library exports two functions by NAME,
+# `Java_dev_habibullah_hexis_provider_ProviderNative_init` and `..._call`. R8 renaming that class or its methods would leave the
+# system looking for symbols that no longer match, and the first passkey request would crash the provider.
+-keepclasseswithmembernames class * { native <methods>; }
+-keep class dev.habibullah.hexis.provider.ProviderNative { *; }
+
+# The Tauri plugin of the provider is created from its class name by Tauri (`register_android_plugin`), like the other two.
+-keep class dev.habibullah.hexis.provider.ProviderPlugin { *; }
+-keep @app.tauri.annotation.TauriPlugin class * { *; }
+-keepclassmembers class * { @app.tauri.annotation.Command <methods>; }
+-keep @app.tauri.annotation.InvokeArg class * { *; }

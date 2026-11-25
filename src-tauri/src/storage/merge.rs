@@ -19,9 +19,10 @@
 //! that differs on the two sides is treated as changed by both.
 
 use super::model::{
-    AttachmentRef, CustomField, FieldKind, ItemPayload, MAX_CUSTOM_FIELDS, MAX_FIELD_BYTES,
-    MAX_TAGS, MAX_URLS,
+    instance_key, instances, parse_key, AttachmentRef, CustomField, FieldKind, ItemPayload,
+    MAX_CUSTOM_FIELDS, MAX_FIELD_BYTES, MAX_INSTANCES, MAX_TAGS, MAX_URLS,
 };
+use crate::passkey::PasskeyRecord;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Written above the newer side's lines when both sides changed the same lines of a note.
@@ -206,6 +207,9 @@ pub fn merge(
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     for key in keys {
         let kind = out.item_type.spec(key).map(|s| s.kind);
+        if kind == Some(FieldKind::Passkey) {
+            continue; // merged below, as a set
+        }
         let (l, r) = (field_of(local, key), field_of(remote, key));
         let b = base.map(|p| field_of(p, key));
         let merged: Option<String> = match kind {
@@ -238,6 +242,15 @@ pub fn merge(
             fields.insert(key.to_string(), v);
         }
     }
+    // ---- passkeys: a set by credential id, so two devices that each made one keep both. Losing a passkey locks the
+    // person out of that website, so unlike a password this is never "the newer value wins".
+    for (key, value, overflow) in merge_passkeys(base, local, remote) {
+        if overflow {
+            note("passkey", true);
+        } else {
+            fields.insert(key, value);
+        }
+    }
     out.fields = fields;
 
     // ---- custom fields, by name
@@ -267,6 +280,51 @@ pub fn merge(
         payload: out,
         conflicts,
     })
+}
+
+/// The passkeys of the merged item as `(stored key, record, overflow)`. A passkey keeps its slot when it is free; one
+/// whose slot another passkey took moves to the lowest free slot. `overflow` marks one that found no slot (more than
+/// ten, which only two devices racing can cause); it is reported as a conflict and stays in the history.
+fn merge_passkeys(
+    base: Option<&ItemPayload>,
+    local: &ItemPayload,
+    remote: &ItemPayload,
+) -> Vec<(String, String, bool)> {
+    let of = |p: &ItemPayload| -> Vec<(String, String)> {
+        instances(&p.fields, "passkey")
+            .into_iter()
+            .map(|(_, k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    // a record that cannot be read (written by a newer version) is its own identity: it is carried, never dropped
+    let id = |(_, v): &(String, String)| -> String {
+        PasskeyRecord::parse(v)
+            .map(|r| r.credential_id.clone())
+            .unwrap_or_else(|_| v.clone())
+    };
+    let base_set = base.map(of);
+    let merged = merge_set(base_set.as_deref(), &of(local), &of(remote), id);
+    let mut taken: BTreeSet<u32> = BTreeSet::new();
+    let mut out = Vec::new();
+    let mut moved: Vec<String> = Vec::new();
+    for (key, value) in merged {
+        let n = parse_key(&key).map_or(1, |(_, n)| n);
+        if taken.insert(n) {
+            out.push((instance_key("passkey", n), value, false));
+        } else {
+            moved.push(value);
+        }
+    }
+    for value in moved {
+        match (1..=MAX_INSTANCES).find(|n| !taken.contains(n)) {
+            Some(n) => {
+                taken.insert(n);
+                out.push((instance_key("passkey", n), value, false));
+            }
+            None => out.push((String::new(), value, true)),
+        }
+    }
+    out
 }
 
 /// A set that grows with what either side added and shrinks by what one side removed (and the other left alone).
@@ -975,5 +1033,92 @@ mod tests {
         for line in ["k1", "k2", "k3", "phone-a", "phone-b", "laptop-a"] {
             assert!(t.lines().any(|l| l == line), "{line} missing from {t:?}");
         }
+    }
+
+    fn passkey_value(rp: &str, user: &str) -> String {
+        use crate::passkey::engine::{make_credential, MakeParams};
+        make_credential(&MakeParams {
+            rp_id: rp,
+            rp_name: rp,
+            user_handle: &[1u8; 16],
+            user_name: user,
+            display_name: user,
+            algorithms: &[],
+            user_verified: true,
+            now_ms: 1,
+        })
+        .unwrap()
+        .record
+        .to_json()
+        .to_string()
+    }
+
+    #[test]
+    fn passkeys_made_on_two_devices_are_both_kept() {
+        let (a, b, c) = (
+            passkey_value("a.example", "ana"),
+            passkey_value("b.example", "ana"),
+            passkey_value("c.example", "ana"),
+        );
+        let base = login(&[("username", "ana"), ("passkey", &a)], 10);
+        // both devices put their new passkey in the same free slot
+        let mut local = base.clone();
+        local.fields.insert("passkey#2".into(), b.clone());
+        local.updated_at = 20;
+        let mut remote = base.clone();
+        remote.fields.insert("passkey#2".into(), c.clone());
+        remote.updated_at = 30;
+        let m = merge(Some(&base), &local, &remote).unwrap();
+        let mut held: Vec<&String> = m
+            .payload
+            .fields
+            .iter()
+            .filter(|(k, _)| k.starts_with("passkey"))
+            .map(|(_, v)| v)
+            .collect();
+        held.sort();
+        let mut want = vec![&a, &b, &c];
+        want.sort();
+        assert_eq!(held, want, "all three passkeys survive");
+        assert_eq!(m.payload.fields["passkey"], a, "the old one keeps its slot");
+        assert!(m.conflicts.is_empty(), "{:?}", m.conflicts);
+    }
+
+    #[test]
+    fn a_passkey_one_device_removed_stays_removed_and_one_nobody_touched_stays() {
+        let (a, b) = (
+            passkey_value("a.example", "ana"),
+            passkey_value("b.example", "ana"),
+        );
+        let base = login(&[("passkey", &a), ("passkey#2", &b)], 10);
+        let mut local = base.clone();
+        local.fields.remove("passkey#2");
+        local.updated_at = 20;
+        let mut remote = base.clone();
+        remote.fields.insert("username".into(), "ana".into());
+        remote.updated_at = 30;
+        let m = merge(Some(&base), &local, &remote).unwrap();
+        assert_eq!(m.payload.fields["passkey"], a);
+        assert!(!m.payload.fields.contains_key("passkey#2"));
+        assert_eq!(m.payload.fields["username"], "ana");
+    }
+
+    #[test]
+    fn the_same_passkey_on_both_sides_is_one_passkey() {
+        let a = passkey_value("a.example", "ana");
+        let base = login(&[("username", "x")], 10);
+        let mut local = base.clone();
+        local.fields.insert("passkey".into(), a.clone());
+        let mut remote = base.clone();
+        remote.fields.insert("passkey#3".into(), a.clone());
+        let m = merge(Some(&base), &local, &remote).unwrap();
+        assert_eq!(
+            m.payload
+                .fields
+                .keys()
+                .filter(|k| k.starts_with("passkey"))
+                .count(),
+            1
+        );
     }
 }

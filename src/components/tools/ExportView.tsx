@@ -77,7 +77,7 @@ export function ExportView() {
           <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1"><ShieldAlert className="size-5 text-ember" aria-hidden /></span>
           <div className="min-w-0">
             <h3 className="font-semibold">Readable copy for another app</h3>
-            <p className="mt-1 text-[0.93em] text-mist">A plain file with every password, username and code written out, in a format other managers can import. <span className="text-frost">Nothing in it is encrypted.</span> Keep it off shared folders and cloud sync, and delete it (and empty the trash) as soon as you have imported it.</p>
+            <p className="mt-1 text-[0.93em] text-mist">A plain file with every password, username and code written out, in a format other managers can import. Passkeys go in the Bitwarden JSON file only; a CSV has no place for them. <span className="text-frost">Nothing in it is encrypted, passkeys included.</span> Keep it off shared folders and cloud sync, and delete it (and empty the trash) as soon as you have imported it.</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

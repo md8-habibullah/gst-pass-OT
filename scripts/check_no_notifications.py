@@ -6,7 +6,11 @@ icon, no background daemon, no foreground service. Sync runs on four triggers on
 committed change, app exit or backgrounding, the device coming back online), so none of the following may ever appear:
 
   * Android: any AndroidManifest.xml under src-tauri/gen/android/ that declares POST_NOTIFICATIONS,
-    any FOREGROUND_SERVICE* permission, or a <service> element.
+    any FOREGROUND_SERVICE* permission, or a <service> element. The one exception is the passkey
+    provider (ai-docs/PASSKEYS.md): Android's Credential Manager binds it for a few seconds while
+    a sign-in sheet is open; it never runs by itself, shows nothing and is not a foreground
+    service. It is allowed only in exactly that shape (see `is_credential_provider` below);
+    any other <service>, or this one with a foreground type or another entry point, still fails.
   * Rust: a dependency on tauri-plugin-notification, a tray crate (tray-icon, tauri-plugin-tray,
     ksni, systray, trayicon ...), or the tauri "tray-icon" feature, in Cargo.toml, or such a crate
     in the dependency graph that Cargo.lock describes and Cargo would really compile (Cargo.lock
@@ -30,6 +34,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+# The only <service> Hexis may declare: the passkey provider the system binds on demand.
+PROVIDER_SERVICE = "dev.habibullah.hexis.provider.HexisCredentialProviderService"
+PROVIDER_PERMISSION = "android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE"
+PROVIDER_ACTION = "android.service.credentials.CredentialProviderService"
 
 # Crates and features that put something in a tray or send a notification. Matched against the
 # `name = "..."` lines of Cargo.lock and the dependency/feature text of Cargo.toml.
@@ -61,6 +70,27 @@ def rel(path: Path, root: Path) -> str:
         return str(path)
 
 
+def is_credential_provider(service: ET.Element) -> list[str]:
+    """Why `service` is NOT the plain passkey provider; an empty list means it is exactly that.
+
+    It must be the Hexis provider class, guarded by the platform-only bind permission (so no other
+    app can start it), have no foreground type, and answer to nothing but the Credential Manager's
+    own action (no boot receiver style trigger, no custom action another app could send).
+    """
+    why: list[str] = []
+    name = service.attrib.get(f"{ANDROID_NS}name", "")
+    if name != PROVIDER_SERVICE:
+        why.append(f"it is not the Hexis credential provider service ({PROVIDER_SERVICE})")
+    if service.attrib.get(f"{ANDROID_NS}permission") != PROVIDER_PERMISSION:
+        why.append(f"it is not guarded by {PROVIDER_PERMISSION}")
+    if service.attrib.get(f"{ANDROID_NS}foregroundServiceType") is not None:
+        why.append("it declares a foregroundServiceType")
+    actions = [a.attrib.get(f"{ANDROID_NS}name", "") for f in service.findall("intent-filter") for a in f.findall("action")]
+    if actions != [PROVIDER_ACTION]:
+        why.append(f"its intent filter must answer to {PROVIDER_ACTION} only (found {actions or 'none'})")
+    return why
+
+
 def check_android(root: Path, problems: list[str]) -> None:
     android = root / "src-tauri" / "gen" / "android"
     if not android.is_dir():
@@ -77,11 +107,16 @@ def check_android(root: Path, problems: list[str]) -> None:
         except ET.ParseError as exc:
             problems.append(f"{where}: cannot be parsed as XML ({exc}); fix it so it can be checked")
             continue
+        providers = [e for e in tree.getroot().iter("service") if e.attrib.get(f"{ANDROID_NS}name") == PROVIDER_SERVICE]
+        if len(providers) > 1:
+            problems.append(f"{where}: declares the credential provider <service> {len(providers)} times (once is allowed)")
         for el in tree.getroot().iter():
             tag = el.tag
             name = el.attrib.get(f"{ANDROID_NS}name", "")
             if tag == "service":
-                problems.append(f"{where}: declares a <service> ({name or 'unnamed'})")
+                why = is_credential_provider(el)
+                if why:
+                    problems.append(f"{where}: declares a <service> ({name or 'unnamed'}): {'; '.join(why)}")
             if tag in ("uses-permission", "uses-permission-sdk-23", "permission"):
                 if name.endswith("POST_NOTIFICATIONS") or "FOREGROUND_SERVICE" in name:
                     problems.append(f"{where}: declares {name}")

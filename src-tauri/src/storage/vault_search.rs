@@ -26,6 +26,7 @@
 //! This file is a child module of `vault.rs` (`#[path]` declaration there), so it can use the vault's private index.
 
 use super::{IndexEntry, Vault};
+use crate::passkey::PasskeyRecord;
 use crate::storage::error::{Result, StorageError};
 use crate::storage::model::{FieldKind, ItemPayload, ItemType};
 use serde::Serialize;
@@ -91,7 +92,7 @@ fn value_searchable(kind: FieldKind, key: &str, reprompt: bool) -> bool {
     match kind {
         FieldKind::Text | FieldKind::Url | FieldKind::Paragraph => true,
         FieldKind::Note => NOTE_KEYS.contains(&key) && !reprompt,
-        FieldKind::Password | FieldKind::Totp => false,
+        FieldKind::Password | FieldKind::Totp | FieldKind::Passkey => false,
     }
 }
 
@@ -111,6 +112,14 @@ fn pieces_of(p: &ItemPayload, reprompt: bool) -> Vec<Piece> {
         let Some(spec) = p.item_type.spec(key) else {
             continue;
         };
+        if spec.kind == FieldKind::Passkey {
+            // a passkey is found by its website and account name, never by anything inside its key
+            let facts = PasskeyRecord::parse(value)
+                .map(|r| format!("{}\n{}\n{}", r.rp_id, r.rp_name, r.user_name))
+                .unwrap_or_default();
+            out.push(piece(spec.label, Some(&facts)));
+            continue;
+        }
         let value = value_searchable(spec.kind, key, reprompt).then_some(value.as_str());
         out.push(piece(spec.label, value));
     }
