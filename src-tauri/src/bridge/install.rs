@@ -121,12 +121,22 @@ pub struct BrowsersStatus {
 
 /// The program the launcher starts: the AppImage file when running from one (its inside moves every start), else this program.
 pub fn current_program() -> io::Result<PathBuf> {
-    if let Some(appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+    program_from(std::env::var_os("APPIMAGE"), std::env::current_exe)
+}
+
+/// [`current_program`] with its two inputs given, so the rules can be tested without touching the process environment.
+/// `$APPIMAGE` counts only when it is an absolute path to a file that exists; anything else (unset, empty, relative, gone)
+/// falls back to the running executable.
+pub(crate) fn program_from(
+    appimage: Option<std::ffi::OsString>,
+    exe: impl FnOnce() -> io::Result<PathBuf>,
+) -> io::Result<PathBuf> {
+    if let Some(appimage) = appimage.map(PathBuf::from) {
         if appimage.is_absolute() && appimage.is_file() {
             return Ok(appimage);
         }
     }
-    std::env::current_exe()
+    exe()
 }
 
 fn shell_quote(path: &Path) -> String {
@@ -138,6 +148,37 @@ pub fn launcher_text(program: &Path) -> String {
         "#!/bin/sh\nexec {} --native-host \"$@\"\n",
         shell_quote(program)
     )
+}
+
+/// The program a launcher starts, read back from its text. `None` unless the text is exactly what [`launcher_text`] writes
+/// (a launcher somebody edited is not ours to judge or to rewrite).
+pub fn program_of(text: &str) -> Option<PathBuf> {
+    let quoted = text
+        .strip_prefix("#!/bin/sh\nexec '")?
+        .strip_suffix("' --native-host \"$@\"\n")?;
+    let program = PathBuf::from(quoted.replace("'\\''", "'"));
+    (launcher_text(&program) == text).then_some(program)
+}
+
+/// The program the launcher in `data_dir` starts, when there is a launcher of ours.
+fn launcher_program(launcher: &Path) -> Option<PathBuf> {
+    program_of(&std::fs::read_to_string(launcher).ok()?)
+}
+
+/// Point the launcher at `program` again when the program it names is gone: an AppImage replaced by the next version under a
+/// new file name, or a package moved. The browsers' manifests name the launcher, not the program, so nothing else changes.
+/// It only ever repairs a launcher of ours that exists (somebody connected a browser with the master password); it never
+/// creates one, never touches an edited one, and leaves one that still names a program that exists. `Ok(true)` when it wrote.
+pub fn repair_launcher(data_dir: &Path, program: &Path) -> io::Result<bool> {
+    let launcher = launcher_path(data_dir);
+    let Some(named) = launcher_program(&launcher) else {
+        return Ok(false);
+    };
+    if named.is_file() || !program.is_absolute() || !program.is_file() {
+        return Ok(false);
+    }
+    write_private(&launcher, &launcher_text(program), 0o700)?;
+    Ok(true)
 }
 
 pub fn manifest_text(browser: &Browser, launcher: &Path) -> String {
@@ -176,7 +217,9 @@ pub fn status(home: &Path, data_dir: &Path) -> BrowsersStatus {
         .map(|b| {
             let (registered, stale) = match std::fs::read_to_string(manifest_path(home, b)) {
                 Ok(text) => {
-                    let ours = text == manifest_text(b, &launcher) && launcher.is_file();
+                    // the manifest is ours, the launcher is ours, and the program the launcher starts is still there
+                    let ours = text == manifest_text(b, &launcher)
+                        && launcher_program(&launcher).is_some_and(|p| p.is_file());
                     (ours, !ours)
                 }
                 Err(_) => (false, false),

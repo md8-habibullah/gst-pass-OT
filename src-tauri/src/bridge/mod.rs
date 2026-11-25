@@ -730,6 +730,12 @@ impl Bridge {
     #[cfg(unix)]
     pub fn start_if_enabled(self: &Arc<Self>) {
         if self.core.browser_bridge() && self.env().is_some() {
+            // An AppImage that was replaced by the next version leaves a launcher that names a file that is gone: point it
+            // at this program again. Best effort, and only for a launcher a registration made (see `install::repair_launcher`).
+            #[cfg(target_os = "linux")]
+            if let (Some(env), Ok(program)) = (self.env(), install::current_program()) {
+                let _ = install::repair_launcher(&env.data_dir, &program);
+            }
             if let Err(e) = self.start() {
                 self.extras().error = Some(format!(
                     "Hexis could not open its private socket for browsers: {e}"
