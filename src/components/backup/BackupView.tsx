@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Cloud, CloudUpload, Crown, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { BackendError, type BackupTargetInput, type BackupTargetView, type HealthState } from "../../backend";
+import { BackendError, type BackupTargetInput, type BackupTargetView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { relativeTime } from "../../lib/format";
 import { app, be, pushToast, syncAfterCoreLock } from "../../state/app";
-import { backups, refreshBackups, setBackups, summarize } from "../../state/backup";
+import { backups, refreshBackups, rowState, setBackups, summarize, type RowState } from "../../state/backup";
 import { useStore } from "../../state/store";
 import { reprompt, withMaster } from "../reprompt/Reprompt";
 import { PageBody, PageHeader } from "../shell/PageHeader";
@@ -13,20 +13,22 @@ import { Sheet } from "../ui/Sheet";
 import { useBrandName } from "../../state/brand";
 import { TargetForm } from "./TargetForm";
 
-const STATE_LABEL: Record<HealthState, string> = {
+const STATE_LABEL: Record<RowState, string> = {
   untested: "Not tested yet",
+  backing: "Backing up",
   healthy: "Up to date",
   lagging: "Catching up",
   failing: "Not reaching the bucket",
   disabled: "Switched off",
 };
-const STATE_DOT: Record<HealthState, string> = { untested: "bg-brass-ink", healthy: "bg-verdigris", lagging: "bg-brass-ink", failing: "bg-ember", disabled: "bg-fog" };
+const STATE_DOT: Record<RowState, string> = { untested: "bg-brass-ink", backing: "bg-brass-ink", healthy: "bg-verdigris", lagging: "bg-brass-ink", failing: "bg-ember", disabled: "bg-fog" };
 
 const where = (t: BackupTargetView) => `${t.endpoint ? new URL(t.endpoint).host : "Amazon S3"} / ${t.bucket}${t.prefix ? ` / ${t.prefix.replace(/\/$/, "")}` : ""}`;
 const safeWhere = (t: BackupTargetView) => { try { return where(t); } catch { return `${t.endpoint ?? "Amazon S3"} / ${t.bucket}`; } };
 
 function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit: () => void; onRemove: () => void; busy: boolean; onRun: () => void }) {
   const h = t.health;
+  const state = rowState(h);
   async function copySecret() {
     const clear = app.get().clipboardClear;
     try {
@@ -49,7 +51,7 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
   return (
     <li className="flex flex-col gap-3 border-b border-hairline px-4 py-4 last:border-b-0">
       <div className="flex items-start gap-3">
-        <span className={`mt-[9px] size-2.5 shrink-0 rounded-full ${STATE_DOT[h.state]}`} aria-hidden />
+        <span className={`mt-[9px] size-2.5 shrink-0 rounded-full ${STATE_DOT[state]}`} aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
             {t.name}
@@ -58,7 +60,7 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
           </p>
           <p className="mt-0.5 truncate font-mono text-[0.86em] text-mist">{safeWhere(t)}</p>
           <p className="mt-1.5 text-[0.93em]">
-            <span className={h.state === "failing" ? "text-ember" : "text-frost"}>{STATE_LABEL[h.state]}</span>
+            <span className={h.state === "failing" ? "text-ember" : "text-frost"}>{STATE_LABEL[state]}</span>
             {h.queued > 0 && <span className="text-mist">, {h.queued} {h.queued === 1 ? "change" : "changes"} waiting</span>}
             {h.lastSuccessAt && <span className="text-mist">, last backup {relativeTime(h.lastSuccessAt)}</span>}
           </p>
