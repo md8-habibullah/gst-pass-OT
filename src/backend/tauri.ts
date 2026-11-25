@@ -5,6 +5,10 @@ import {
   type AppSettings,
   type BackupTargetView,
   type BackupTestResult,
+  type BridgeAction,
+  type BridgeOptions,
+  type BridgeStatus,
+  type BridgeWaited,
   type ClockStatus,
   type CsvInspect,
   type DeviceInfo,
@@ -39,7 +43,7 @@ const KNOWN: ReadonlySet<string> = new Set<ErrorCode>([
   "locked", "no_vault", "vault_exists", "wrong_password", "not_found", "in_trash", "not_in_trash",
   "version_conflict", "invalid_input", "confirmation_mismatch", "token_invalid", "storage", "crypto",
   "profile_name_taken", "unsupported_file", "network", "remote", "password_required", "wrong_answer",
-  "wrong_pin", "pin_locked", "master_required",
+  "wrong_pin", "pin_locked", "master_required", "unsupported", "bridge_failed",
 ]);
 
 /** The core rejects with the serialized Rust error ({code,message}) or, for framework errors, a string. */
@@ -140,6 +144,13 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
     passkeyProviderStatus: () => call("passkey_provider_status"),
     passkeyProviderSet: (on) => call("passkey_provider_set", { on }),
     passkeyProviderOpenSettings: () => call("passkey_provider_open_settings"),
+    bridgeStatus: () => call<BridgeStatus>("bridge_status"),
+    bridgeSet: (on) => call<BridgeStatus>("bridge_set", { on }),
+    bridgeRegister: (ids) => call<BridgeStatus>("bridge_register", { ids }),
+    bridgeUnregister: (ids) => call<BridgeStatus>("bridge_unregister", { ids }),
+    bridgeWait: (after, ms) => call<BridgeWaited>("bridge_wait", { after, ms }),
+    bridgeOptions: (id) => call<BridgeOptions>("bridge_options", { id }),
+    bridgeAnswer: (id, action: BridgeAction) => call("bridge_answer", { id, action }),
     importPick: () => call<ImportPick | null>("import_pick"),
     importPickKeyfile: () => call<{ handle: string; fileName: string } | null>("import_pick_keyfile"),
     inspectCsvHeaders: (handle) => call<CsvInspect>("inspect_csv_headers", { handle }),

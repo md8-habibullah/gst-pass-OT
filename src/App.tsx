@@ -7,6 +7,7 @@ import { useStore } from "./state/store";
 import { GateScreen } from "./components/gate/GateScreen";
 import { LockScreen } from "./components/lock/LockScreen";
 import { VaultMark } from "./components/lock/VaultMark";
+import { BridgeHost } from "./components/bridge/BridgeHost";
 import { RepromptHost } from "./components/reprompt/Reprompt";
 import { Shell } from "./components/shell/Shell";
 import { ItemEditor } from "./components/items/ItemEditor";
@@ -93,6 +94,7 @@ export default function App() {
         </>
       )}
       <RepromptHost />
+      <BridgeHost />
       <Toasts />
       <ScanOverlay />
     </MotionConfig>

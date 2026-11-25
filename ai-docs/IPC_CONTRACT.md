@@ -590,6 +590,20 @@ Callers are `{"kind":"browser","origin","clientDataHash"}` or `{"kind":"app","pa
 (Stage 1 is closed: every op), `app_check_off` and `password_required` (a re-prompt login, or a vault opened with the PIN: the sheet asks for the master password and sends the same call again). The e2e shim exposes it as `POST /e2e/provider {"op","args"}`
 (dev only), so the scripts can make and use a passkey for a made-up website without a phone.
 
+### 14.4a Browsers on a Linux computer (Settings > Browsers, D52 to D55)
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `bridge_status` | – | `BridgeStatus` | `{supported, enabled, listening, error, browsers: [{id, name, family, found, registered, stale}], sandboxed: string[], extension: {chromium, firefox} \| null, chromiumId, firefoxId}`. `supported` is true on a Linux desktop only; elsewhere `{supported:false, …}` |
+| `bridge_set` | `on` | `BridgeStatus` | the switch. Needs the master password (`master_required` when the vault was opened with a PIN). On opens the private socket and writes the extension's folders; the setting is kept only if the socket opened (`bridge_failed` otherwise, with a sentence). Off closes the socket and sends every waiting request to the browser. Off Linux: `unsupported` |
+| `bridge_register` | `ids` | `BridgeStatus` | writes the per-user native messaging manifest and the launcher for the chosen browsers (`firefox`, `chrome`, `chromium`, `brave`, `edge`, `vivaldi`); a browser that was never started is skipped. Needs the master password |
+| `bridge_unregister` | `ids` | `BridgeStatus` | takes Hexis away from the chosen browsers (none given: all); the launcher goes when no manifest is left. Needs the master password |
+| `bridge_wait` | `after`, `ms` | `BridgeWaited` | a long poll (at most 30 s): answers when something changed since `after`, or when `ms` is over. `{version, front: {id, kind: "get"\|"create", origin, remainingMs} \| null, locked}`; `locked` means show the lock screen with a note. The window calls it in a loop while the switch is on |
+| `bridge_options` | `id` | `BridgeOptions` | what the sheet shows for a waiting request: `get` → `{origin, rpId, verification, matches: [{itemId, key, title, subtitle, userName, …PasskeyInfo, reprompt}]}`; `create` → `{origin, rpId, rpName, userName, displayName, verification, suggestions: LoginSuggestion[], others: {id, title, subtitle, reprompt}[]}`. `not_found` when the request ended |
+| `bridge_answer` | `id`, `action` | `void` | `action` is `{kind:"use", itemId, key, password?}`, `{kind:"create", target: {existing: id} \| {new: {title}}, password?}`, `{kind:"decline"}` (the browser's own flow) or `{kind:"cancel"}`. Errors: `wrong_password`, `password_required`, `master_required`, `not_found`, `locked`, `invalid_input` |
+
+`DeviceInfo.browserBridge` (default false) is the switch's stored value, read-only for the screen (`bridge_set` changes it). The dev shim serves all of this through `POST /ipc`; with `--bridge-home <folder>` it also starts the bridge, and `GET /e2e/bridge` answers `{listening, socket, home, waiting}` (`e2e/README.md`).
+
 ### 14.5 Bitwarden import and export
 
 `import_preview` / `import_commit` read `login.fido2Credentials` of a Bitwarden JSON file (ECDSA P-256 only; others are skipped with a warning naming the site); `ImportPreview` counts a passkey-only record as a login.

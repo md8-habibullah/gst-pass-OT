@@ -1,10 +1,11 @@
 import { useEffect, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Fingerprint, Info, Keyboard, ListFilter, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Fingerprint, Globe, Info, Keyboard, ListFilter, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
 import { plural } from "../../lib/format";
 import { useLayout } from "../../lib/layout";
 import { zoneLabel } from "../../lib/zones";
 import { app } from "../../state/app";
 import { backups, summarize } from "../../state/backup";
+import { bridge, refreshBridge } from "../../state/bridge";
 import { useBackHandler } from "../../state/back";
 import { useBrandName } from "../../state/brand";
 import { passkeyProvider, refreshPasskeyProvider } from "../../state/passkeyProvider";
@@ -16,6 +17,7 @@ import { IconButton } from "../ui/Button";
 import { AboutPage } from "./AboutPage";
 import { AccountsGroup } from "./Accounts";
 import { AppLockGroup } from "./AppLock";
+import { BrowsersPage } from "./BrowsersPage";
 import { DateTimePage } from "./DateTimePage";
 import { DisguiseGroup } from "./Disguise";
 import { HelpPage } from "./HelpPage";
@@ -38,6 +40,7 @@ const CATEGORIES: Category[] = [
   { id: "list", title: "Vault list", icon: ListFilter, about: "Open straight into search, and how items are ordered." },
   { id: "applock", title: "App lock", icon: LockKeyhole, about: "A passcode before the account list, and when open vaults lock by themselves." },
   { id: "passkeys", title: "Passkeys", icon: Fingerprint, about: "Sign in to websites and apps with the passkeys in this vault." },
+  { id: "browsers", title: "Browsers", icon: Globe, about: "Sign in to websites in your browser with the passkeys in this vault." },
   { id: "accounts", title: "Accounts", icon: UsersRound, about: "The vaults on this device." },
   { id: "time", title: "Date and time", icon: Clock, about: "Hexis saves every time in UTC and writes it in your zone. Changing the zone changes only how times look." },
   { id: "theme", title: "Theme", icon: SunMoon, about: "Light, dark, or the same as your device." },
@@ -56,11 +59,13 @@ function useSummaries(): Record<SettingsPageId, string> {
   const backup = summarize(useStore(backups, (s) => s.targets));
   const name = useBrandName();
   const passkeys = useStore(passkeyProvider, (s) => s);
+  const browsers = useStore(bridge, (s) => s.status);
   return {
     security: `Clipboard clears after ${clipboardClear} seconds`,
     list: device?.openInSearch ? "Opens in search" : "Opens at the list",
     applock: gate?.enabled ? "Passcode on" : "Passcode off",
     passkeys: passkeys?.enabled ? "On" : "Off",
+    browsers: browsers?.enabled ? "On" : "Off",
     accounts: plural(profiles.length, "account"),
     time: device?.timeZone ? zoneLabel(device.timeZone) : "Not chosen",
     theme: device?.theme === "light" ? "Light" : device?.theme === "dark" ? "Dark" : "Same as your device",
@@ -90,6 +95,7 @@ function PageContent({ id }: { id: SettingsPageId }): ReactNode {
     case "list": return <ListPage />;
     case "applock": return <AppLockGroup heading={false} />;
     case "passkeys": return <PasskeysPage />;
+    case "browsers": return <BrowsersPage />;
     case "accounts": return <AccountsGroup heading={false} />;
     case "time": return <DateTimePage />;
     case "theme": return <ThemePage />;
@@ -132,8 +138,10 @@ export function SettingsView() {
   const summaries = useSummaries();
   // The Passkeys page exists only on a phone that can use Hexis as a passkey provider (Android 14 and later).
   const passkeysSupported = useStore(passkeyProvider, (s) => s?.supported === true);
-  useEffect(() => { void refreshPasskeyProvider(); }, []);
-  const categories = CATEGORIES.filter((c) => c.id !== "passkeys" || passkeysSupported);
+  // The Browsers page exists only on a Linux computer, where browsers can reach Hexis through its extension.
+  const browsersSupported = useStore(bridge, (s) => s.status?.supported === true);
+  useEffect(() => { void refreshPasskeyProvider(); void refreshBridge(); }, []);
+  const categories = CATEGORIES.filter((c) => (c.id !== "passkeys" || passkeysSupported) && (c.id !== "browsers" || browsersSupported));
   const active = categories.find((c) => c.id === (page ?? (compact ? null : "security"))) ?? null;
 
   // The Back button closes an open page before it leaves Settings.

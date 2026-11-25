@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Hexis passkeys",
+  "version": "0.1.0",
+  "description": "Use the passkeys kept in the Hexis app on this computer, on any website.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsq6IKSNjYyanniM4LD7G51yPCUcs8N4u/afKcY/3eteqc+ac0pxUGgwIuiPBS2J6T1mU13kQIoXW1MB2Wn6BZIUW4/CFOIJJZAY7bHLzndFlpnUOxjhUAejkFwAgR7nmYJN4qg7Qfw1fQoly1vLjXijDVXIJQrypCmZr7XSRkZxiuKmZABY/sYDu8Jdd3S3EDxhI7xxzc6g/i6HK0Ss01yuDBcc4xeHMaj1mAg1yQQU4T08s5HGfqGUEb+7Ydhgww+pdo+en+vCh5B9Ul9ZLhzQ0fkFyrXoO6qFd3s0TZ6OKv1afFsnrdBFdLNi3j6LP7Ih+aHO3A5atdRyU8Z/yiwIDAQAB",
+  "minimum_chrome_version": "111",
+  "icons": {
+    "32": "icon-32.png",
+    "64": "icon-64.png",
+    "128": "icon-128.png"
+  },
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://*/*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

@@ -24,6 +24,14 @@ import {
   type Backend,
   type BackupTargetInput,
   type BackupTargetView,
+  type BridgeAction,
+  type BridgeBrowser,
+  type BridgeLogin,
+  type BridgeMatch,
+  type BridgeOptions,
+  type BridgeStatus,
+  type BridgeVerification,
+  type BridgeWaited,
   type ClockStatus,
   type DeviceInfo,
   type DisguiseInput,
@@ -525,7 +533,7 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
 }
 
 // ---- device settings and the demo vault (same rules as the core; see storage/device.rs and storage/demo.rs) ----
-const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc", passkeyAppCheck: true };
+const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc", passkeyAppCheck: true, browserBridge: false };
 let device: DeviceInfo = { ...FRESH_DEVICE };
 let demoId: string | null = null;
 const profileInfo = (p: MockProfile): ProfileInfo => ({
@@ -673,6 +681,87 @@ export function simulatePasskeySaved(id: string, rpId = "example.com", userName 
   s.draft.fields[key] = passkeyMarker({ credentialId: crypto.randomUUID().replace(/-/g, ""), rpId, rpName: rpId, userName, displayName: userName, alg: -7, createdAt: Date.now() });
   s.version += 1; s.updatedAt = Date.now();
   snapshot(s, "edited", prev);
+}
+
+// ---- browsers on a Linux computer (the preview pretends to be one, so the page and the request sheet can be reviewed) ----
+interface BridgeAsk {
+  id: string;
+  kind: "get" | "create";
+  origin: string;
+  deadline: number;
+  rpId: string;
+  rpName: string;
+  userName: string;
+  verification: BridgeVerification;
+}
+let bridgeAsks: BridgeAsk[] = [];
+let bridgeVersion = 0;
+let bridgeWake: Array<() => void> = [];
+const bridgeBrowsers: BridgeBrowser[] = [
+  { id: "firefox", name: "Firefox", family: "firefox", found: true, registered: false, stale: false },
+  { id: "chrome", name: "Google Chrome", family: "chromium", found: false, registered: false, stale: false },
+  { id: "chromium", name: "Chromium", family: "chromium", found: true, registered: true, stale: false },
+  { id: "brave", name: "Brave", family: "chromium", found: true, registered: false, stale: true },
+  { id: "edge", name: "Microsoft Edge", family: "chromium", found: false, registered: false, stale: false },
+  { id: "vivaldi", name: "Vivaldi", family: "chromium", found: false, registered: false, stale: false },
+];
+/** What the preview's window answered, newest last (read by the browser tests: `window.__hexisBridgeLog`). */
+const bridgeLog: Array<{ id: string; action: string; target?: unknown; password?: boolean }> = [];
+(globalThis as { __hexisBridgeLog?: unknown }).__hexisBridgeLog = bridgeLog;
+
+function bridgeChanged(): void {
+  bridgeVersion += 1;
+  const wake = bridgeWake;
+  bridgeWake = [];
+  wake.forEach((f) => f());
+}
+function bridgeSnapshot(): BridgeWaited {
+  const now = Date.now();
+  bridgeAsks = bridgeAsks.filter((a) => a.deadline > now);
+  const a = bridgeAsks[0];
+  return {
+    version: bridgeVersion,
+    front: a ? { id: a.id, kind: a.kind, origin: a.origin, remainingMs: Math.max(0, a.deadline - now) } : null,
+    locked: !unlocked,
+  };
+}
+function bridgeAsk(id: string): BridgeAsk {
+  const a = bridgeAsks.find((x) => x.id === id);
+  if (!a) err("not_found", "That request is no longer waiting.");
+  return a;
+}
+function bridgeStatusNow(): BridgeStatus {
+  const on = device.browserBridge;
+  return {
+    supported: true,
+    enabled: on,
+    listening: on,
+    error: null,
+    browsers: bridgeBrowsers.map((b) => ({ ...b })),
+    sandboxed: ["Chrome (Flatpak)"],
+    extension: on ? { chromium: "/home/you/.local/share/dev.habibullah.hexis/extension/chromium", firefox: "/home/you/.local/share/dev.habibullah.hexis/extension/firefox" } : null,
+    chromiumId: "pejbejenceojhjhcanlfnibgdihclnhm",
+    firefoxId: "hexis-passkeys@habibullah.dev",
+  };
+}
+/** DEV deep link and browser tests only: a website asks for a passkey (sign in, or save a new one). */
+export function simulateBridgeRequest(kind: "get" | "create", opts: { origin?: string; rpId?: string; userName?: string; verification?: BridgeVerification; timeoutMs?: number } = {}): string {
+  const origin = opts.origin ?? "https://example.com";
+  const id = `req-${crypto.randomUUID().slice(0, 12)}`;
+  bridgeAsks.push({ id, kind, origin, deadline: Date.now() + (opts.timeoutMs ?? 60_000), rpId: opts.rpId ?? new URL(origin).hostname, rpName: opts.rpId ?? new URL(origin).hostname, userName: opts.userName ?? "ana@example.com", verification: opts.verification ?? "preferred" });
+  bridgeChanged();
+  return id;
+}
+function bridgeMatches(a: BridgeAsk): BridgeMatch[] {
+  const out: BridgeMatch[] = [];
+  for (const st of items().values()) {
+    if (st.deleted || st.archived) continue;
+    for (const inst of instancesOf(st.draft.fields, "passkey")) {
+      const info = passkeyInfoOf(inst.value);
+      if (info && info.rpId === a.rpId) out.push({ ...info, itemId: st.id, key: inst.key, title: st.draft.title, subtitle: subtitleOf(st.draft), reprompt: st.draft.reprompt });
+    }
+  }
+  return out;
 }
 
 
@@ -985,6 +1074,88 @@ export const previewBackend: Backend = {
     return { supported: true, enabled: providerOn };
   },
   async passkeyProviderOpenSettings() { /* the system's own screen: nothing to open in a browser preview */ },
+  async bridgeStatus() { return bridgeStatusNow(); },
+  async bridgeSet(on) {
+    requireFull();
+    device = { ...device, browserBridge: on === true };
+    if (!on) { bridgeAsks = []; }
+    bridgeChanged();
+    return bridgeStatusNow();
+  },
+  async bridgeRegister(ids) {
+    requireFull();
+    for (const b of bridgeBrowsers) if (b.found && ids.includes(b.id)) { b.registered = true; b.stale = false; }
+    return bridgeStatusNow();
+  },
+  async bridgeUnregister(ids) {
+    requireFull();
+    for (const b of bridgeBrowsers) if (ids.length === 0 || ids.includes(b.id)) { b.registered = false; b.stale = false; }
+    return bridgeStatusNow();
+  },
+  async bridgeWait(after, ms) {
+    if (bridgeVersion === after) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, Math.min(ms, 30_000));
+        function done() { clearTimeout(timer); resolve(); }
+        bridgeWake.push(done);
+      });
+    }
+    return bridgeSnapshot();
+  },
+  async bridgeOptions(id): Promise<BridgeOptions> {
+    const a = bridgeAsk(id);
+    if (!unlocked) err("locked", "Unlock Hexis first.");
+    await delay(40);
+    if (a.kind === "get") return { kind: "get", origin: a.origin, rpId: a.rpId, verification: a.verification, matches: bridgeMatches(a) };
+    const suggestions = suggest({ accounts: [a.userName], sites: [a.rpId], names: [a.rpName], secret: null });
+    const taken = new Set(suggestions.map((x) => x.id));
+    const others: BridgeLogin[] = [...items().values()]
+      .filter((st) => !st.deleted && !st.archived && st.draft.type === "login" && !taken.has(st.id))
+      .map((st) => ({ id: st.id, title: st.draft.title, subtitle: subtitleOf(st.draft), reprompt: st.draft.reprompt }))
+      .sort((x, y) => x.title.toLowerCase().localeCompare(y.title.toLowerCase()))
+      .slice(0, 40);
+    return { kind: "create", origin: a.origin, rpId: a.rpId, rpName: a.rpName, userName: a.userName, displayName: a.userName, verification: a.verification, suggestions, others };
+  },
+  async bridgeAnswer(id, action: BridgeAction) {
+    const a = bridgeAsk(id);
+    const end = (extra: { target?: unknown; password?: boolean } = {}) => {
+      bridgeAsks = bridgeAsks.filter((x) => x.id !== id);
+      bridgeLog.push({ id, action: action.kind, ...extra });
+      bridgeChanged();
+    };
+    if (action.kind === "decline" || action.kind === "cancel") return end();
+    if (!unlocked) err("locked", "Unlock Hexis first.");
+    if ((action.kind === "use") !== (a.kind === "get")) err("invalid_input", a.kind === "get" ? "That is not a sign-in request." : "That is not a save request.");
+    if (a.verification === "required" && action.password === undefined) err("password_required", "This website requires your master password.");
+    if (action.kind === "use") {
+      const s = active(action.itemId);
+      await gateItem(s, action.password);
+      if (!instancesOf(s.draft.fields, "passkey").some((x) => x.key === action.key)) err("not_found", "That passkey no longer exists.");
+      return end({ target: { itemId: action.itemId, key: action.key }, password: action.password !== undefined });
+    }
+    // create: on an existing login, or on a new one
+    const info: PasskeyInfo = { credentialId: crypto.randomUUID().replace(/-/g, ""), rpId: a.rpId, rpName: a.rpName, userName: a.userName, displayName: a.userName, alg: -7, createdAt: Date.now() };
+    if ("existing" in action.target) {
+      const s = active(action.target.existing);
+      await gateItem(s, action.password);
+      const slot = Array.from({ length: MAX_INSTANCES }, (_, i) => i + 1).find((n) => !s.draft.fields[instanceKey("passkey", n)]);
+      if (!slot) err("invalid_input", `This login already holds ${MAX_INSTANCES} passkeys.`);
+      const prev = clone(s.draft);
+      s.draft.fields[instanceKey("passkey", slot)] = passkeyMarker(info);
+      s.version += 1; s.updatedAt = Date.now();
+      snapshot(s, "edited", prev); touchQueue();
+    } else {
+      if (action.password !== undefined) await verify(action.password);
+      const now = Date.now();
+      const title = (action.target.new.title?.trim() || a.rpName).slice(0, 256);
+      // The screen cannot hand the core a passkey, so the draft is checked without it and the app's own passkey is added after.
+      const d = cleanDraft({ type: "login", title, favorite: false, reprompt: false, tags: [], folder: null, customFields: [], fields: { username: a.userName, url: `https://${a.rpId}` } });
+      d.fields[instanceKey("passkey", 1)] = passkeyMarker(info);
+      const s: Stored = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, version: 1, deleted: false, deletedAt: null, archived: false, draft: d, history: [] };
+      snapshot(s, "created", null); items().set(s.id, s); touchQueue();
+    }
+    return end({ target: action.target, password: action.password !== undefined });
+  },
   async getVersion(id, version, password) {
     const s = active(id); await gateItem(s, password);
     const snap = s.history.find((h) => h.version === version);

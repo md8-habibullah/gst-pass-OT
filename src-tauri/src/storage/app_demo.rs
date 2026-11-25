@@ -63,6 +63,15 @@ impl AppCore {
         self.device_update(|d| d.open_in_search = on)
     }
 
+    /// Let browsers on this computer ask Hexis for passkeys (Linux desktop, through the Hexis extension).
+    pub fn device_set_browser_bridge(&self, on: bool) -> Result<DeviceInfo> {
+        self.device_update(|d| d.browser_bridge = on)
+    }
+
+    pub fn browser_bridge(&self) -> bool {
+        relock(&self.device).browser_bridge
+    }
+
     /// May Hexis ask an app's website whether that app may use its passkeys? Off: no request is made and apps get no passkeys.
     pub fn device_set_passkey_app_check(&self, on: bool) -> Result<DeviceInfo> {
         self.device_update(|d| d.passkey_app_check = on)

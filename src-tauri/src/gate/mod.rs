@@ -113,12 +113,20 @@ pub const POLLING_COMMANDS: &[&str] = &[
     "clock_status",
 ];
 
+/// Commands the window runs by itself in the background (the browsers' long poll): like the polling commands they must not count
+/// as activity, but unlike them they are **not** allowed while the app lock is closed (they name the website that is waiting).
+pub const PASSIVE_COMMANDS: &[&str] = &["bridge_wait"];
+
 pub fn allowed_while_closed(cmd: &str) -> bool {
     ALLOWED_WHILE_CLOSED.contains(&cmd)
 }
 
 pub fn is_polling(cmd: &str) -> bool {
     POLLING_COMMANDS.contains(&cmd)
+}
+
+pub fn is_passive(cmd: &str) -> bool {
+    PASSIVE_COMMANDS.contains(&cmd)
 }
 
 // ------------------------------------------------------------------ wire types
@@ -631,7 +639,7 @@ impl GateCore {
                 Err(StorageError::Locked)
             };
         }
-        if !is_polling(cmd) {
+        if !is_polling(cmd) && !is_passive(cmd) {
             self.inner.idle.touch();
         }
         Ok(())

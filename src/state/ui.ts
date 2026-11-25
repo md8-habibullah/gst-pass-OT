@@ -11,7 +11,7 @@ export type LockFlow = "create" | "import" | "restore";
 export type LockIntent = LockFlow | "choose";
 
 /** The pages of Settings. `null` is the list of categories (a phone) or the first page (a wide screen). */
-export type SettingsPageId = "security" | "list" | "applock" | "passkeys" | "accounts" | "time" | "theme" | "appearance" | "data" | "help" | "about";
+export type SettingsPageId = "security" | "list" | "applock" | "passkeys" | "browsers" | "accounts" | "time" | "theme" | "appearance" | "data" | "help" | "about";
 
 /** A folder dialog: put items in a folder, make one, rename one, or remove one. Opened from the list, the item menu and the item screen. */
 export type FolderDialog =

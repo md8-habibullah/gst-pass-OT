@@ -317,7 +317,12 @@ impl Session {
             Target::Existing(id) => {
                 self.gated_item(id, password, |u| u.vault.require_active(id), run)
             }
-            Target::New { .. } => self.with_unlocked(run),
+            // A typed password counts as user verification only after the core has checked it (the caller sets
+            // `user_verified` from the presence of one), so a new login checks it first, like every other way in.
+            Target::New { .. } => match password {
+                Some(password) => self.gated(password, |_| Ok(()), run),
+                None => self.with_unlocked(run),
+            },
         }
     }
 

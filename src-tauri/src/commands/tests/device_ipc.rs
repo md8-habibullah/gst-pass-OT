@@ -16,7 +16,7 @@ fn the_defaults_a_new_install_reports() {
             "timeZone": null, "setupDone": false, "timeCheck": true,
             "theme": "system", "clipboardClear": 30,
             "openInSearch": false, "listSort": "updated-desc",
-            "passkeyAppCheck": true
+            "passkeyAppCheck": true, "browserBridge": false
         })
     );
 }

@@ -1,6 +1,6 @@
 # PASSKEYS — how Hexis stores and uses passkeys, and the scanner that fills them in
 
-Status 2026-11-25 (branch `feature/passkeys-and-smart-scanner`, not yet merged). The plan this follows is
+Status 2026-11-25 (passkeys and the scanner are merged, PR #3; browsers on Linux, §10, are on branch `feature/passkeys-linux-browsers`, not yet merged). The plan this follows is
 `PLAN_NATIVE_CAMERA_AND_PASSKEYS.md`; its recommended decisions D-1 … D-8 were taken as approved. The research behind the
 plan is in `REFERENCES_CAMERA_AND_PASSKEYS.md`. Decisions are numbered in `ARCHITECTURE.md` §8 (D47 onward).
 
@@ -14,7 +14,9 @@ plan is in `REFERENCES_CAMERA_AND_PASSKEYS.md`. Decisions are numbered in `ARCHI
 | Settings > Passkeys (switch the provider on, website check on/off, open the system list) | built; the Android half is unverified on a phone |
 | Camera button and smart scanner (one-time codes, passkey codes, links, text) | built, tested in the preview and with the real core |
 | Bitwarden import and export of `fido2Credentials` | built, tested |
-| Desktop passkeys (a browser extension or `credentialsd`) | **not built** (P5) |
+| Passkeys in Firefox and Chromium-family browsers on Linux (an extension, a native host, a private socket; §10) | built; run end to end with a real Chromium and a real Firefox (unsigned, temporary add-on); **not run through Mozilla's signing or a store** |
+| Desktop passkeys through `credentialsd` (the cross-desktop Linux service) | **not built**: its interface for third-party providers is still a draft |
+| Passkeys on macOS and Windows | **not built** |
 | Other algorithms (RS256, EdDSA), PRF / hmac-secret, large blob | **not built** |
 | FIDO Credential Exchange (CXF) and the Android Credential Transfer API | **not built** |
 | Using a phone passkey for a desktop sign-in by scanning the browser's `FIDO:/` code | **not supported by Hexis itself**; the scanner recognises such a code and says to use the system camera (see §6) |
@@ -117,7 +119,7 @@ The master password is asked only when the chosen login is flagged re-prompt, ex
 * **Phone, in a phone browser or an app:** the provider (§4).
 * **Phone, signing in on a computer** ("Use a passkey on a phone or tablet", the QR code): the system camera, not Hexis, reads the browser's code and hands the request to the chosen provider; Hexis only has to
   be the provider. The in-app scanner recognises a `FIDO:/` code only to tell the person this and not to fail silently. Whether it works on the user's phone: unverified.
-* **Computer:** there is no desktop provider (P5 is not built). Passkeys are stored and synced; a computer can show them (site, user, created) and export them, not sign with them.
+* **Computer (Linux):** Firefox and Chromium-family browsers through the Hexis extension (§10). Elsewhere a computer shows the passkeys (site, user, created), syncs and exports them, and cannot sign with them.
 
 ## 7. Moving passkeys in and out (`passkey/bitwarden.rs`, `importer/`)
 
@@ -135,6 +137,11 @@ The master password is asked only when the chosen login is flagged re-prompt, ex
 | Engine, storage, merge, scanner, provider, import | `cd src-tauri && cargo test --locked` (names: `passkey`, `provider`, `scan`, `app_import`) |
 | Android manifest and sources patch | `python3 -m unittest discover -s scripts/tests -t .` |
 | Scanner and passkey rows in the preview | `node e2e/scan-ui.mjs`, `node e2e/provider-ui.mjs` |
+| Settings > Browsers and the request sheet in the preview | `node e2e/bridge-ui.mjs` |
+| The whole chain with a real Chromium and the extension (native host, socket, the real core, the sheet) | `node e2e/real-bridge.mjs` |
+| The same in a headless Firefox (extension as a temporary add-on) | `node e2e/real-bridge-firefox.mjs` |
+| The extension's three scripts with stand-ins for the browser | `node --test extension/tests/` |
+| The two store zips, reproducible | `python3 scripts/build_extension.py` (`--check` only checks the sources) |
 | The real core behind the scanner (no mock) | `node e2e/real-scan.mjs` (needs the `e2e_server` example) |
 | A made-up website's request through the whole provider | `cargo run --example passkey_fixture` |
 | Everything CI runs | `scripts/verify_all.sh` (add `--e2e-only` for the browser scripts) |
@@ -152,3 +159,48 @@ A read-only security review of this work (2026-11-25) found no exploitable issue
 * The one request of the provider cannot be pointed at a private address by an app that names a made-up `rpId`: single-label and local-use names are refused before any request.
 * Known and by design: with the vault open, the sheet lists the matching logins' titles and user names before the fingerprint (the same exposure as the window while the app lock is open; no secret is shown). A new login for a passkey made in a PIN-opened vault needs no master password, as in the app.
 * The privileged-apps list is a trust list: a package on it may name any origin. It is Google's own list, shipped with the app (fetched 2026-11-25) and refreshed by hand before each release; the changelog records the date.
+
+* **Browsers on Linux (§10), by design:** the socket cannot tell a browser from another program of the same user, so the window is the guard. A program that opens it can make the window show a prompt that names a website it claims; the most it gets is that prompt, and never a signature without a click (and the master password when verification is required). The prompt names the website large and says when a page is on this computer. A person who clicks *Sign in* on a prompt they did not start hands a signature to whoever asked; that is the same trust as any program that can already read the browser's own data. The `status` request lets any web page learn that Hexis is switched on (the same way a page learns that a platform authenticator exists). The extension runs in the top frame only.
+
+## 10. Browsers on Linux (`src-tauri/src/bridge/`, `src-tauri/src/commands/bridge.rs`, `extension/`; D52 to D55)
+
+Linux has no passkey provider interface that browsers use (`credentialsd`'s interface for third-party providers is still a draft), so Hexis ships a browser extension, the way KeePassXC and Bitwarden do. **Settings > Browsers** switches it on, and it is **off until then**: with the switch off no socket exists and the extension hands every call back to the browser's own passkey screen.
+
+**The chain** (each arrow is a process or trust boundary):
+
+```
+page   -> page.js        the page's own world: replaces navigator.credentials.create / .get for passkey calls
+       -> content.js     the extension's script: adds location.origin itself, checks the shape of the request
+       -> background.js  takes the page's address from the sender the browser gives it, never from the message
+       -> the native messaging host: <data folder>/hexis-native-host, a two-line script that starts this program with --native-host
+       -> a private Unix socket: $XDG_RUNTIME_DIR/hexis/bridge.sock (folder 0700 and socket 0600, both checked by Hexis when it makes them
+          and by the host before it connects: ours, not a link, not open to others; /tmp/hexis-<uid>/ when there is no runtime folder)
+       -> the running Hexis: checks, a queue, the request sheet in the Hexis window, and the same Provider the Android service uses
+```
+
+**What is said on the socket** (`bridge/wire.rs`; one JSON line per connection, at most 128 KB, a request at most 64 KB):
+request `{"v":1,"id","op":"get"|"create"|"status","origin","request":"<WebAuthn options as JSON text>","timeoutMs"}`;
+answer `{"ok":true,"responseJson"}`, `{"ok":false,"code":"fallback","reason"}` (the extension calls the browser's own function with the same arguments), `"cancelled"`, `"timeout"` or `"error"` with `errorCode` and `message`;
+`status` answers `{"ok":true,"enabled":true}` (nothing about the lock: any page can ask). Fallback reasons: `disabled`, `app_locked`, `no_match`, `declined`, `busy`, `no_vault`, `invalid_request`; the extension adds `not_running`, `not_installed`, `no_answer`, `no_extension`, `not_visible` (a tab nobody is looking at does not get to raise the Hexis window). A request id is used once (a repeat is `busy`).
+
+**What the core decides, whatever the other end says** (`bridge/mod.rs`, `provider/`):
+
+* The caller is `Caller::Own{origin}`, so the Android rules apply: the website name (`rp.id` / `rpId`) must be the page's host or a registrable parent of it and must not be a name many sites share (Public Suffix List: `co.uk`, `github.io` are refused, `localhost` is allowed for development); only `https`, or `http` on `localhost`; the client data is built by the core from that origin; the private key never leaves the core; ES256 only.
+* **Nothing is signed or saved until a person chooses in the Hexis window.** A request waits in a queue (at most 8; at most 16 connections at once). The window's long poll (`bridge_wait`) does not count as activity, so the inactivity lock still runs while Browsers is on (and it is refused while the app lock is closed). The sheet ignores clicks for the first 700 ms. `userVerified` is set only after the core has checked the typed password, for every way a request ends (sign in, save on a login, save on a new login). A request that requires verification keeps waiting for the **master password typed in this window** (`userVerified` is true only when the core checked a password); a login that asks for the master password asks for it. A website that does not require it gets presence only.
+* The app lock closed answers `fallback`/`app_locked`. A locked vault shows the lock screen with a note that a website is waiting; **the lock screen is the only way to unlock**, the request is answered afterwards.
+* Changing the switch, registering or unregistering a browser needs the master password (`require_full`), not only a PIN; the commands sit behind the gate guard like every other command.
+* "Use another way" answers `fallback`/`declined`, "Cancel" (or Esc) answers `cancelled`: the page is told the person said no.
+
+**Install.** The extension's files are inside the program (`bridge/extension.rs`) and are written to `<data folder>/extension/chromium` and `.../firefox` when the switch is turned on. *Connect* writes a per-user native messaging manifest for the chosen browser (`~/.config/{google-chrome,chromium,BraveSoftware/Brave-Browser,microsoft-edge,vivaldi}/NativeMessagingHosts/`, `~/.mozilla/native-messaging-hosts/`) that names the launcher and **one** extension: `allowed_origins` has the Chromium id, `allowed_extensions` the Firefox id. *Disconnect* removes it, and the launcher when no manifest is left. A browser that runs in a Snap or Flatpak sandbox cannot start the host; Settings says so instead of offering a switch that does nothing.
+
+* **Chromium family:** open the extensions page, turn on developer mode, *Load unpacked*, pick `<data folder>/extension/chromium`. The manifest carries a `key`, so the id is the same on every computer (`pejbejenceojhjhcanlfnibgdihclnhm`) and matches the host manifest.
+* **Firefox:** a release Firefox runs only a **signed** add-on. Until Hexis's add-on is signed (an owner step on addons.mozilla.org, id `hexis-passkeys@habibullah.dev`), `about:debugging` > *Load Temporary Add-on* with `<data folder>/extension/firefox/manifest.json` works until Firefox is closed.
+* `scripts/build_extension.py` writes `extension/dist/hexis-passkeys-{chromium,firefox}.zip` for the stores (reproducible; checks that the sources agree with what the app writes). **A Chrome Web Store item gets an id of its own**: it would have to be added to the host manifest's `allowed_origins` before a store build can reach Hexis.
+
+**What is built and checked:** the Rust side (the checks, the queue, the socket, the host framing, registration, the extension files; the provider's page caller) in `cargo test`; the three scripts with stand-ins (`extension/tests`, 23 tests); Settings > Browsers and the sheet in the preview (`bridge-ui`); and the whole chain with nothing pretended in `real-bridge.mjs` (a headless Chromium with the extension loaded, a page that makes and uses a passkey and verifies the signature with WebCrypto, the browser's own flow as a virtual authenticator) and `real-bridge-firefox.mjs` (Firefox 160 with the extension as a temporary add-on).
+
+**Security review (2026-11-25).** A read-only review of this work found no high-severity problem, two medium and four low; all were fixed the same day, each with a test that fails without the fix. (1) The inactivity lock never fired while Browsers was on, because the window's long poll (`bridge_wait`) counted as activity; it is now on a short list of passive commands (`gate::PASSIVE_COMMANDS`) and is refused while the app lock is closed. (2) Saving a passkey on a *new* login set `userVerified` from "a password was typed", not from "the core checked it"; the core now checks the typed password first (`passkey_register`), so a wrong one leaves the request waiting and saves nothing. (3) The native host now checks the socket and its folder (ours, not a link, closed to others) before it connects, not only Hexis when it makes them. (4) A request id is used once (a repeat is `busy`), so a connection cannot replay an id. (5) `status` no longer says whether the app lock is closed; any page could ask. (6) The extension's and the launcher's files are created with their final mode (`bridge::write_new`: removes what is there, `create_new`, mode from the first byte), and a tab that is not showing does not get to raise the Hexis window (`not_visible`). The sheet also shows at most 80 characters of the account name a website sent.
+
+**Known and left as it is.** A request that times out while the person is clicking Save can still end with the passkey saved and the page told "timeout" (the same race the Android service has: the save is the last step before the answer is sent, and a late answer to a gone connection is dropped). The person sees the passkey in the login and can delete it; nothing is signed or leaked.
+
+**Not built, or not verified:** Mozilla's signing and add-on validation; the Chrome Web Store; the window coming to the front on a real Wayland compositor such as Hyprland (the code asks for it; a compositor may refuse); a real WebKitGTK window (the sheet was seen in headless Chromium); Snap and Flatpak browsers (detected only); an AppImage's launcher path; passkeys in frames other than the top one; autofill-style (conditional) requests and security-key requests, which go to the browser on purpose; RS256, EdDSA and PRF; macOS and Windows.

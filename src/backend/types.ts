@@ -61,6 +61,8 @@ export interface DeviceInfo {
   listSort: ListSort;
   /** Hexis may ask an app's website, once, whether that app may use its passkeys (Android). On unless switched off. */
   passkeyAppCheck: boolean;
+  /** Browsers on this Linux computer may ask Hexis for passkeys (through the Hexis extension). Off unless switched on. */
+  browserBridge: boolean;
 }
 
 /** The core's clock: UTC checked online, not the device date. */
@@ -289,6 +291,10 @@ export type ErrorCode =
   | "master_required"
   /** The answer to the sum on the last "erase everything" step was wrong. */
   | "wrong_answer"
+  /** This computer cannot do that (browsers can use Hexis only on Linux). */
+  | "unsupported"
+  /** Hexis could not open its private socket for browsers; the message says why. */
+  | "bridge_failed"
   | "unknown";
 
 export class BackendError extends Error {
@@ -442,6 +448,96 @@ export interface PasskeyProviderStatus {
   supported: boolean;
   enabled: boolean;
 }
+
+/** One browser Hexis can be connected to (Settings > Browsers). */
+export interface BridgeBrowser {
+  id: string;
+  name: string;
+  family: "chromium" | "firefox";
+  /** The browser is installed and has been started once (its settings folder exists). */
+  found: boolean;
+  /** Hexis is connected to it. */
+  registered: boolean;
+  /** A connection exists but is out of date (the program moved, or an older install made it): connecting again fixes it. */
+  stale: boolean;
+}
+
+/** Browsers on this Linux computer: the switch, the connections and where the extension is. */
+export interface BridgeStatus {
+  supported: boolean;
+  enabled: boolean;
+  listening: boolean;
+  /** Why Hexis could not open its socket, when the switch is on and it is not open. */
+  error: string | null;
+  browsers: BridgeBrowser[];
+  /** Browsers found that run in a sandbox (Snap, Flatpak) and cannot start Hexis' helper. */
+  sandboxed: string[];
+  /** The folders holding the extension, once Hexis has written them. */
+  extension: { chromium: string; firefox: string } | null;
+  chromiumId: string;
+  firefoxId: string;
+}
+
+/** The request the window shows. Nothing secret: the website and the kind of request. */
+export interface BridgeRequest {
+  id: string;
+  /** `get`: sign in. `create`: save a new passkey. */
+  kind: "get" | "create";
+  /** The page that asked, as the browser says it (`https://example.com`). */
+  origin: string;
+  /** Milliseconds until the request gives up. */
+  remainingMs: number;
+}
+
+export interface BridgeWaited {
+  version: number;
+  front: BridgeRequest | null;
+  /** The vault is locked: the lock screen shows, with a note that a website is waiting. */
+  locked: boolean;
+}
+
+/** A passkey that fits a sign-in request (what the list shows; the key itself never leaves the core). */
+export interface BridgeMatch extends PasskeyInfo {
+  itemId: string;
+  /** The field it is in (`passkey`, `passkey#2` …). */
+  key: string;
+  title: string;
+  subtitle: string | null;
+  reprompt: boolean;
+}
+
+export interface BridgeLogin {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  reprompt: boolean;
+}
+
+/** `required`: the website will not accept a sign-in without verification, which here is the master password. */
+export type BridgeVerification = "required" | "preferred" | "discouraged";
+
+export type BridgeOptions =
+  | { kind: "get"; origin: string; rpId: string; verification: BridgeVerification; matches: BridgeMatch[] }
+  | {
+      kind: "create";
+      origin: string;
+      rpId: string;
+      rpName: string;
+      userName: string;
+      displayName: string;
+      verification: BridgeVerification;
+      suggestions: LoginSuggestion[];
+      others: BridgeLogin[];
+    };
+
+/** What the person chose in the window. */
+export type BridgeAction =
+  | { kind: "use"; itemId: string; key: string; password?: string }
+  | { kind: "create"; target: { existing: string } | { new: { title: string | null } }; password?: string }
+  /** Let the browser use its own passkey flow for this page. */
+  | { kind: "decline" }
+  /** Stop: the page is told the person did not allow it. */
+  | { kind: "cancel" };
 
 export interface AppSettings {
   lockAfterMinutes: (typeof LOCK_AFTER_MINUTES)[number];
@@ -616,6 +712,20 @@ export interface Backend {
   passkeyProviderSet(on: boolean): Promise<PasskeyProviderStatus>;
   /** Open Android's own passkey settings, where Hexis is chosen as a provider. */
   passkeyProviderOpenSettings(): Promise<void>;
+  // browsers on a Linux computer (everywhere else `supported` is false and nothing else works)
+  bridgeStatus(): Promise<BridgeStatus>;
+  /** The switch. Needs the master password to have opened this vault (not only the PIN). */
+  bridgeSet(on: boolean): Promise<BridgeStatus>;
+  /** Connect Hexis to the chosen browsers (by id). Needs the master password. */
+  bridgeRegister(ids: string[]): Promise<BridgeStatus>;
+  /** Disconnect the chosen browsers; none given means all. Needs the master password. */
+  bridgeUnregister(ids: string[]): Promise<BridgeStatus>;
+  /** Waits until something changed since `after`, or `ms` (at most 30 000) passed, and says what waits. */
+  bridgeWait(after: number, ms: number): Promise<BridgeWaited>;
+  /** The passkeys that fit a waiting sign-in, or the logins a new passkey can go on. */
+  bridgeOptions(id: string): Promise<BridgeOptions>;
+  /** What the person chose. A wrong password, a missing one and a login that wants it reject and leave the request waiting. */
+  bridgeAnswer(id: string, action: BridgeAction): Promise<void>;
   // import / export
   /** Native picker in the core; it sniffs the format from the content. `null` when cancelled. */
   importPick(): Promise<ImportPick | null>;
