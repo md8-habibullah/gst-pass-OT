@@ -140,7 +140,7 @@ The master password is asked only when the chosen login is flagged re-prompt, ex
 | Settings > Browsers and the request sheet in the preview | `node e2e/bridge-ui.mjs` |
 | The whole chain with a real Chromium and the extension (native host, socket, the real core, the sheet) | `node e2e/real-bridge.mjs` |
 | The same in a headless Firefox (extension as a temporary add-on) | `node e2e/real-bridge-firefox.mjs` |
-| The extension's three scripts with stand-ins for the browser | `node --test extension/tests/` |
+| The extension's three scripts with stand-ins for the browser | `node --test extension/tests/*.test.mjs` |
 | The two store zips, reproducible | `python3 scripts/build_extension.py` (`--check` only checks the sources) |
 | The real core behind the scanner (no mock) | `node e2e/real-scan.mjs` (needs the `e2e_server` example) |
 | A made-up website's request through the whole provider | `cargo run --example passkey_fixture` |
@@ -203,4 +203,4 @@ answer `{"ok":true,"responseJson"}`, `{"ok":false,"code":"fallback","reason"}` (
 
 **Known and left as it is.** A request that times out while the person is clicking Save can still end with the passkey saved and the page told "timeout" (the same race the Android service has: the save is the last step before the answer is sent, and a late answer to a gone connection is dropped). The person sees the passkey in the login and can delete it; nothing is signed or leaked.
 
-**Not built, or not verified:** Mozilla's signing and add-on validation; the Chrome Web Store; the window coming to the front on a real Wayland compositor such as Hyprland (the code asks for it; a compositor may refuse); a real WebKitGTK window (the sheet was seen in headless Chromium); Snap and Flatpak browsers (detected only); an AppImage's launcher path; passkeys in frames other than the top one; autofill-style (conditional) requests and security-key requests, which go to the browser on purpose; RS256, EdDSA and PRF; macOS and Windows.
+**Not built, or not verified:** (the owner's steps for the two stores, written from their documentation and never tried, are in `CONTRIBUTING.md`, "Publishing the browser extension") Mozilla's signing and add-on validation; the Chrome Web Store; the window coming to the front on a real Wayland compositor such as Hyprland (the code asks for it; a compositor may refuse); a real WebKitGTK window (the sheet was seen in headless Chromium); Snap and Flatpak browsers (detected only); an AppImage's launcher path; passkeys in frames other than the top one; autofill-style (conditional) requests and security-key requests, which go to the browser on purpose; RS256, EdDSA and PRF; macOS and Windows.

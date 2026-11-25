@@ -399,7 +399,7 @@ fn a_wrong_master_password_on_a_new_login_saves_nothing_and_the_request_keeps_wa
             .unwrap_err();
         assert!(
             ["wrong_password", "password_required"].contains(&e.code.as_str()),
-            "{password:?}: {}",
+            "the answer was {}",
             e.code
         );
         assert_eq!(f.core.item_list().unwrap().len(), 0, "nothing was saved");

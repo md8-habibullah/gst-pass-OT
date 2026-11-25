@@ -583,7 +583,9 @@ fn wait_until(what: &str, cond: impl Fn() -> bool) {
 fn the_idle_lock_over_ipc_with_and_without_a_gate() {
     // no gate: the vault is locked after the scaled minute, `item_list` says `locked`
     let h = harness();
-    core(&h).gate().set_idle_unit(Duration::from_millis(400));
+    // the commands below must come less than one "minute" apart: 400 ms was too tight for a busy machine (a stall of 300 ms locked
+    // the vault in the middle of the loop), so a minute is 1.5 s here
+    core(&h).gate().set_idle_unit(Duration::from_millis(1_500));
     h.ok(
         "app_settings_set",
         json!({"input": {"lockAfterMinutes": 1}}),

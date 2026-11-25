@@ -81,12 +81,15 @@ impl Fx {
 
     /// Time passes: the boot clock and the date setting both move on.
     fn advance(&self, ms: u64) {
+        // a check the gate started by itself must have ended before the clock moves, or it would anchor the time too late
+        self.time.finish_background();
         self.fakes.advance(ms);
         self.fakes.wall_ms.fetch_add(ms, Ordering::SeqCst);
     }
 
     /// The device checks the time online (the fake servers know the real time).
     fn check_time(&self) {
+        self.time.finish_background();
         self.time.sync().expect("the fake servers answer");
     }
 

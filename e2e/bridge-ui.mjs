@@ -13,6 +13,8 @@ const openSheet = async (query) => {
   await p.goto(base + `?vault=unlocked&${query}`);
   await p.waitFor(`!!document.querySelector('[role=dialog]') && !document.querySelector('[role=dialog]').innerText.includes('Looking in your vault')`, { timeout: 15000 });
 };
+// a website name as a whole word of the page text (not a substring test on something that looks like an address)
+const names = (text, host) => new RegExp(`(^|[^\\w.-])${host.replace(/\./g, "\\.")}($|[^\\w-])`).test(text);
 const armed = () => sleep(900); // the sheet ignores the first 700 ms on purpose
 const primary = () => p.eval(`(()=>{const b=[...document.querySelectorAll('[role=dialog] footer button')].find(x=>/^(Sign in|Save passkey)$/.test(x.textContent.trim())); return b?{disabled:b.disabled}:null})()`);
 try {
@@ -52,7 +54,7 @@ try {
   // ---- a website asks to sign in: one passkey, picked already; a click is ignored for the first moment
   await openSheet("bridge=get");
   const early = await primary();
-  check("the sheet asks for what the website asked", (await dialog()).includes("Sign in with a passkey") && (await dialog()).includes("example.com") && (await dialog()).includes("wants to sign you in"));
+  check("the sheet asks for what the website asked", (await dialog()).includes("Sign in with a passkey") && names(await dialog(), "example.com") && (await dialog()).includes("wants to sign you in"));
   check("the passkey is listed with the account and the login it is on", (await dialog()).includes("ana@example.com") && (await dialog()).includes("Hetzner Cloud"));
   check("the sign-in button does not work in the first moment", early?.disabled === true);
   check("the page's own list is not changed by a request", !(await text()).includes("Saved a passkey"));
@@ -98,7 +100,7 @@ try {
   // ---- save a new passkey: a new login by default for an unknown website; another website's name is shown as is
   await openSheet("bridge=create&site=https://shop.example.org");
   t = await dialog();
-  check("the website is the title and the sheet says what it wants", t.includes("Save a passkey") && t.includes("shop.example.org") && t.includes("wants to save a passkey for ana@example.com"));
+  check("the website is the title and the sheet says what it wants", t.includes("Save a passkey") && names(t, "shop.example.org") && t.includes("wants to save a passkey for ana@example.com"));
   check("a new login is offered, and others can be chosen", t.includes("Create a new login") && t.includes("Choose another login"));
   await p.shot(`${SP}/shots2/bridge-create.png`);
   await armed();
@@ -108,7 +110,7 @@ try {
   check("saving made a new login", entries.at(-1)?.action === "create" && entries.at(-1)?.target?.new !== undefined, JSON.stringify(entries.at(-1)));
   check("and a toast says where", (await text()).includes("Saved a passkey for shop.example.org"));
   await p.click("nav[aria-label=Main] button", "Logins").catch(() => undefined);
-  check("the new login is in the vault", (await text()).includes("shop.example.org"));
+  check("the new login is in the vault", names(await text(), "shop.example.org"));
 
   // ---- a page on this computer is named as one
   await openSheet("bridge=get&site=http://localhost:3000");
@@ -121,7 +123,7 @@ try {
   await p.goto(base + "?vault=locked&bridge=get");
   await p.waitFor(`document.body.innerText.includes('is asking for a passkey') || document.body.innerText.includes('wants to sign you in with a passkey')`, { timeout: 15000 });
   t = await text();
-  check("while locked a note names the website and says to unlock", t.includes("example.com") && t.includes("Unlock Hexis to answer"), t);
+  check("while locked a note names the website and says to unlock", names(t, "example.com") && t.includes("Unlock Hexis to answer"), t);
   check("there is no sheet over the lock screen, so the password can be typed", !(await dialog()));
   await p.shot(`${SP}/shots2/bridge-locked.png`);
   await p.typeLabel("Master password", "preview-vault-1");

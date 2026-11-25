@@ -28,7 +28,8 @@ describe("decoy equation", () => {
       for (const op of text.match(/[+\-*/]/g)!) seen.add(op);
     }
     expect([...seen].sort()).toEqual(["*", "+", "-", "/"].sort());
-  });
+    // 20,000 rounds of several checks take about two seconds on a quiet machine and five or more on a busy one
+  }, 30_000);
 });
 
 describe("gate rules (preview mirror of the core)", () => {

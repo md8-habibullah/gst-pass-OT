@@ -22,7 +22,7 @@ step "shellcheck: installer and repository scripts" bash -c 'if command -v shell
 # CI runs on ubuntu-22.04, whose shellcheck (0.8.0) flags things a newer local one does not (SC2015 failed a push once). Same version, in a container.
 step "shellcheck as CI runs it (ubuntu:22.04, shellcheck 0.8.0)" bash -c 'if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then docker run --rm -v "$PWD":/w:ro -w /w ubuntu:22.04 bash -c "apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq shellcheck >/dev/null 2>&1 && shellcheck --version | sed -n 2p && shellcheck -s sh scripts/install.sh scripts/tests/container_case.sh && shellcheck scripts/make-repos.sh scripts/make-arch-repo.sh scripts/test_installer_containers.sh scripts/check_installer_in_containers.sh"; else echo "(Docker is not available; the CI version of shellcheck was not run)"; fi'
 step "android patch script tests" bash -c 'if [ -d scripts/tests ]; then python3 -m unittest discover -s scripts/tests -t . ; else echo "(no script tests)"; fi'
-step "extension unit tests (node --test)" node --test extension/tests/
+step "extension unit tests (node --test)" node --test extension/tests/*.test.mjs
 step "extension sources agree with what the app writes" python3 scripts/build_extension.py --check
 # Not in a subshell: a failed step sets `fail` in this shell, so the final line and the exit status tell the truth.
 step "rust format"  bash -c 'cd src-tauri && cargo fmt --check'

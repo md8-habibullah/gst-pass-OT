@@ -122,6 +122,9 @@ pub struct TrustedClock {
     wall: Arc<dyn Fn() -> u64 + Send + Sync>,
     state: Mutex<State>,
     busy: AtomicBool,
+    /// The background checks started so far, so a test can wait for them (see `finish_background`).
+    #[cfg(test)]
+    background: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 fn relock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -154,6 +157,8 @@ impl TrustedClock {
                 last_try: None,
             }),
             busy: AtomicBool::new(false),
+            #[cfg(test)]
+            background: Mutex::new(Vec::new()),
         }
     }
 
@@ -305,11 +310,27 @@ impl TrustedClock {
             return;
         }
         let me = Arc::clone(self);
-        let _ = std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("hexis-clock".into())
             .spawn(move || {
                 let _ = me.sync();
             });
+        #[cfg(test)]
+        if let Ok(handle) = started {
+            relock(&self.background).push(handle);
+        }
+        #[cfg(not(test))]
+        let _ = started;
+    }
+
+    /// Test only: wait until every check the gate started on its own has ended. A check that is still on its way when a test
+    /// moves the servers or the clock would land afterwards and anchor the time at the wrong moment.
+    #[cfg(test)]
+    pub(crate) fn finish_background(&self) {
+        let handles: Vec<_> = relock(&self.background).drain(..).collect();
+        for handle in handles {
+            let _ = handle.join();
+        }
     }
 
     fn due(&self) -> bool {
