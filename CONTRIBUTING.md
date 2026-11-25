@@ -159,6 +159,82 @@ A release is made by raising the version on `main`. Nobody tags or publishes by 
    `scripts/release_notes.py` from the `## [X.Y.Z] - date` section of `CHANGELOG.md`.
 8. One-time repository setup and the signing secrets: [`scripts/github-setup.sh`](scripts/github-setup.sh).
 
+### What a release contains, and what it does not
+
+CI builds and attaches the Debian package, the RPM, the AppImage and the tarball (64-bit x86), the Android arm64 APK signed with the
+repository's release key, and `SHA256SUMS`; then it starts the Pages workflow, which rebuilds the signed apt, rpm and pacman repositories
+and the installer from the newest stable release. **Not built by this pipeline, so not released:** Linux on aarch64, Windows, macOS, iOS.
+The browser extension is not a release file: the app carries it and writes it to the data folder (see below for the stores).
+**The order for a release:** merge the feature pull requests; write the `[Unreleased]` section of `CHANGELOG.md` (it becomes the release
+notes, so it needs a summary line and, when something needs care while updating, an "Upgrading from X" paragraph); on a branch of its own
+run `python3 scripts/version.py bump auto`; open the pull request; merge it with a merge commit once its checks pass; watch the CI run on
+`main` (the `release` job is the last one); then open the release page and check the files, the checksums and the notes, and that the
+Pages run that follows has finished. A release of a version with a suffix such as `0.6.0-rc1` is a pre-release.
+
+### Publishing the browser extension (owner steps, not automated)
+
+A release of Hexis never needs a store: the app carries the extension and writes it to `<data folder>/extension/` when Settings >
+Browsers is switched on. A store only makes installing easier, and for Firefox it is the only way to a permanent install, because a
+release Firefox runs an add-on only when Mozilla has signed it. Nothing below runs in CI (it needs your accounts and keys) and **none of it
+has been tried**: it was written on 2026-11-25 from Mozilla's and Google's own pages, so expect the dashboards to differ in small ways.
+
+Before either store, and again for every new submission:
+
+1. `node --test extension/tests/*.test.mjs` and `python3 scripts/build_extension.py`. The second writes `extension/dist/hexis-passkeys-chromium.zip`
+   and `extension/dist/hexis-passkeys-firefox.zip` (ignored by git). Nothing is minified or compiled, so the zip is also the source a
+   reviewer may ask for.
+2. Raise `"version"` in **both** `extension/manifest.chromium.json` and `extension/manifest.firefox.json` (the extension's version is its
+   own, 0.1.0 now, not Hexis's), because a store refuses a version it has seen. Run the script again (it also checks that the two
+   manifests and the file list agree). The app embeds these exact files, so a changed manifest is a changed app: it goes out in a Hexis
+   release too.
+3. Have a privacy policy to point at (`PRIVACY.md`, published on the site) and the plain facts for the forms: the extension sends a
+   website's passkey request and the page's address to the Hexis program on the same computer through the browser's native messaging, never
+   to a server; it keeps nothing. Its permission is `nativeMessaging`, and its scripts run on every `https` page and on `localhost`,
+   because any website may ask for a passkey.
+
+**Firefox (addons.mozilla.org).** The add-on id is already in the manifest (`hexis-passkeys@habibullah.dev`), which a Manifest V3 add-on
+needs before it can be signed.
+
+1. Create an account on addons.mozilla.org and make an API key pair on its credentials page (`/developers/addon/api/key/`): a JWT issuer
+   (`user:12345:67`) and a secret. Keep both out of the repository.
+2. Unpack the Firefox zip and sign it. Without a public page (self-distribution), then with one:
+   ```
+   unzip -q extension/dist/hexis-passkeys-firefox.zip -d /tmp/hexis-firefox-ext
+   npx web-ext sign --source-dir /tmp/hexis-firefox-ext --artifacts-dir extension/dist --channel=unlisted \
+       --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+   # a public listing instead: --channel=listed --amo-metadata=<your metadata JSON file> (web-ext 8 or newer)
+   ```
+   Mozilla's automatic checks can take up to a day, longer when a person reviews it. The result is a signed `.xpi`.
+3. **Unlisted:** host the `.xpi` yourself, for example as a file on the release page (`gh release upload vX.Y.Z <file>.xpi`, which is not
+   in `SHA256SUMS`, so say its checksum in the notes). A server must answer with `Content-Type: application/x-xpinstall` for Firefox to
+   offer the install from a click; a release asset does not, so people save it and use *Add-ons > gear > Install Add-on From File*.
+   **Listed:** Firefox updates it by itself. Either way, Mozilla's policies apply to what is sent to a native application: the listing
+   must say what is sent. The manifest declares `data_collection_permissions` as `none` because nothing leaves the computer; if the
+   review asks for something else, change it and say so in `CHANGELOG.md`.
+4. When the signed add-on exists, change what the app and the docs say about Firefox (Settings > Browsers, `README.md`,
+   `PASSKEYS.md` §10, `CHANGELOG.md`: "not signed by Mozilla").
+
+**Chrome Web Store (Brave and Vivaldi install from it too; Microsoft Edge has its own add-ons store).**
+
+1. Register on the Chrome Web Store developer dashboard: a one-time registration fee (the dashboard shows the amount), and a developer
+   email that cannot be changed later.
+2. **The extension's id is decided by the store, so settle it before you publish.** Upload the Chromium zip with *Add new item* and do
+   **not** publish. If the dashboard refuses the manifest because of its `key` field, upload a copy without it. On the *Package* tab,
+   *View public key* shows the key of the store item. Put that one line (no line breaks) in `extension/manifest.chromium.json` as `"key"`,
+   so that an unpacked copy and the store item have **one** id, then check `chrome://extensions` shows the dashboard's Item ID.
+3. Replace the old id (`pejbejenceojhjhcanlfnibgdihclnhm`, made from the key in the repository today) with the new one everywhere it
+   is written: `src-tauri/src/bridge/mod.rs` (the `CHROMIUM` constant, which the host manifest's `allowed_origins` is made from),
+   `src/backend/mock.ts`, `e2e/real-bridge.mjs`, `ai-docs/PASSKEYS.md`, `ai-docs/ARCHITECTURE.md`, `extension/README.md`. Then
+   `python3 scripts/build_extension.py`, `cargo test`, `node e2e/real-bridge.mjs`, and ship a Hexis release. **Publish the store item
+   only after that release is out**: until then the store's id is not one the host allows, and the store item cannot reach Hexis. People
+   who already connected a browser press *Connect again* (Settings > Browsers marks the old registration), which rewrites the host manifest.
+4. Fill in the listing (description, at least one screenshot, the icon is inside the package), the *Privacy* tab (the single purpose: lets
+   the Hexis app on this computer answer a website's passkey request; a reason for `nativeMessaging` and for running on every `https`
+   page; the data-use answers; the privacy policy address) and the *Distribution* tab (public or unlisted). A reviewer sees nothing
+   without Hexis installed and an account, so give test instructions (the install command and the steps); expect questions about the
+   broad page access.
+5. *Submit for Review*, wait, then publish (a staged approval reverts to a draft after 30 days).
+
 ### Who can build and release an Android app
 
 * **Anyone** can build an APK on their own computer (`npm run tauri android build`). It is signed with a debug key, so it

@@ -4,7 +4,7 @@
 
 [package]
 name = "hexis"
-version = "0.4.0"
+version = "0.5.0"
 description = "Post-quantum, zero-knowledge password, TOTP, note and media vault that syncs to one or several S3-compatible buckets"
 homepage = "https://md8-habibullah.github.io/post-quantum-passman-gst/"
 repository = "https://github.com/md8-habibullah/post-quantum-passman-gst"
