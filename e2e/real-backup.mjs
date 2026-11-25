@@ -49,11 +49,11 @@ step("add a backup target: test, then save as the master", async (p) => {
   await waitText(p, "Home bucket");
   await p.waitFor(`(document.querySelector('ul[aria-label="Backup targets"]')?.innerText??'').includes('Up to date')`, { timeout: 20000 });
   check("the target becomes 'Up to date' after the first upload", true);
-  // The page can say "Up to date" while the first upload is still on its way (a slow runner showed the key bundle and one version
-  // object at that moment), so look until both items are there instead of once.
-  let keys = bucketKeys();
+  // "Up to date" now means an empty queue (a target that still has uploads waiting says "Backing up"), so the bucket must be
+  // complete the moment the label appears. This used to be polled because a slow runner showed the label with only the key
+  // bundle and one version object in the bucket.
+  const keys = bucketKeys();
   const complete = () => keys.some((k) => k.includes("vault/meta/keybundle.json")) && keys.filter((k) => /vault\/items\/.+\.enc$/.test(k)).length === 2;
-  for (let i = 0; i < 60 && !complete(); i++) { await sleep(250); keys = bucketKeys(); }
   check("the bucket holds the key bundle and both items", complete(), keys.join("\n"));
 });
 

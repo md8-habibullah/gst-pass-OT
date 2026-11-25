@@ -1301,6 +1301,151 @@ mod on_linux {
         list.iter().map(|s| (*s).to_string()).collect()
     }
 
+    /// A program that exists (the launcher is only trusted while the file it starts is there).
+    fn program_file(root: &Path, relative: &str) -> std::path::PathBuf {
+        let path = root.join("programs").join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn state_of(home: &Path, data: &Path, id: &str) -> (bool, bool) {
+        let s = install::status(home, data);
+        let b = s.browsers.iter().find(|b| b.id == id).unwrap();
+        (b.registered, b.stale)
+    }
+
+    #[test]
+    fn the_program_is_the_appimage_file_only_when_it_is_a_real_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = program_file(dir.path(), "Hexis_0.5.0_amd64.AppImage");
+        let exe = || Ok(std::path::PathBuf::from("/usr/bin/hexis"));
+        let os = |p: &Path| Some(p.as_os_str().to_owned());
+        assert_eq!(install::program_from(os(&image), exe).unwrap(), image);
+        // not running from an AppImage
+        assert_eq!(
+            install::program_from(None, exe).unwrap(),
+            Path::new("/usr/bin/hexis")
+        );
+        // set but empty, relative, or pointing at a file that is gone: the running program is the better answer
+        for bad in [
+            os(Path::new("")),
+            os(Path::new("Hexis.AppImage")),
+            os(&dir.path().join("gone.AppImage")),
+            os(dir.path()),
+        ] {
+            assert_eq!(
+                install::program_from(bad.clone(), exe).unwrap(),
+                Path::new("/usr/bin/hexis"),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_launcher_is_read_back_only_when_it_is_exactly_what_this_program_writes() {
+        for program in [
+            "/usr/bin/hexis",
+            "/opt/Hexis app/it's.AppImage",
+            "/home/a b/'quoted'/x",
+            "/home/ü/Hexis_0.5.0_amd64.AppImage",
+        ] {
+            let text = install::launcher_text(Path::new(program));
+            assert_eq!(
+                install::program_of(&text).as_deref(),
+                Some(Path::new(program)),
+                "{program}"
+            );
+        }
+        for edited in [
+            "",
+            "#!/bin/sh\nexec '/usr/bin/hexis'\n",
+            "#!/bin/sh\nexec '/usr/bin/hexis' --native-host \"$@\"\necho hi\n",
+            "#!/bin/sh\nexec '/a' ; rm -rf ~ ; '/b' --native-host \"$@\"\n",
+            "#!/bin/bash\nexec '/usr/bin/hexis' --native-host \"$@\"\n",
+        ] {
+            assert_eq!(install::program_of(edited), None, "{edited:?}");
+        }
+    }
+
+    #[test]
+    fn a_launcher_whose_program_is_gone_is_stale_and_start_up_points_it_at_the_running_program() {
+        let (dir, home, data) = home_with(&["firefox", "chrome"]);
+        let old = program_file(dir.path(), "old/Hexis_0.5.0_amd64.AppImage");
+        install::install(&home, &data, &old, &ids(&["chrome", "firefox"])).unwrap();
+        assert_eq!(state_of(&home, &data, "chrome"), (true, false));
+        let manifests = (manifest_of(&home, "chrome"), manifest_of(&home, "firefox"));
+
+        // nothing to repair while the program it names is there
+        let new = program_file(dir.path(), "new/Hexis_0.6.0_amd64.AppImage");
+        assert!(!install::repair_launcher(&data, &new).unwrap());
+        assert_eq!(state_of(&home, &data, "chrome"), (true, false));
+
+        // the next version replaced it
+        std::fs::remove_file(&old).unwrap();
+        assert_eq!(
+            state_of(&home, &data, "chrome"),
+            (false, true),
+            "Settings says so instead of 'Connected'"
+        );
+        assert_eq!(state_of(&home, &data, "firefox"), (false, true));
+
+        assert!(install::repair_launcher(&data, &new).unwrap());
+        assert_eq!(state_of(&home, &data, "chrome"), (true, false));
+        assert_eq!(state_of(&home, &data, "firefox"), (true, false));
+        let launcher = data.join(install::LAUNCHER_NAME);
+        assert_eq!(
+            install::program_of(&std::fs::read_to_string(&launcher).unwrap()).as_deref(),
+            Some(new.as_path())
+        );
+        assert_eq!(
+            std::fs::metadata(&launcher).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            manifests,
+            (manifest_of(&home, "chrome"), manifest_of(&home, "firefox")),
+            "the browsers' manifests name the launcher, so they were not touched"
+        );
+        assert!(
+            !install::repair_launcher(&data, &new).unwrap(),
+            "once is enough"
+        );
+    }
+
+    #[test]
+    fn the_repair_never_creates_a_launcher_never_rewrites_an_edited_one_and_never_names_a_missing_program(
+    ) {
+        let (dir, home, data) = home_with(&["chrome"]);
+        let new = program_file(dir.path(), "new/hexis");
+
+        // nothing was ever connected: nothing is created
+        assert!(!install::repair_launcher(&data, &new).unwrap());
+        assert!(!data.join(install::LAUNCHER_NAME).exists());
+
+        let old = program_file(dir.path(), "old/hexis");
+        install::install(&home, &data, &old, &ids(&["chrome"])).unwrap();
+        std::fs::remove_file(&old).unwrap();
+        let launcher = data.join(install::LAUNCHER_NAME);
+
+        // the new program must exist and be an absolute path
+        assert!(!install::repair_launcher(&data, &dir.path().join("nope")).unwrap());
+        assert!(!install::repair_launcher(&data, Path::new("hexis")).unwrap());
+        assert_eq!(
+            install::program_of(&std::fs::read_to_string(&launcher).unwrap()).as_deref(),
+            Some(old.as_path()),
+            "still the old text"
+        );
+
+        // somebody edited it: it is theirs now
+        let edited = "#!/bin/sh\nexec /usr/local/bin/my-wrapper hexis --native-host\n";
+        std::fs::write(&launcher, edited).unwrap();
+        assert!(!install::repair_launcher(&data, &new).unwrap());
+        assert_eq!(std::fs::read_to_string(&launcher).unwrap(), edited);
+        assert_eq!(state_of(&home, &data, "chrome"), (false, true));
+    }
+
     fn manifest_of(home: &Path, id: &str) -> Value {
         let b = BROWSERS.iter().find(|b| b.id == id).unwrap();
         parsed(
@@ -1314,8 +1459,10 @@ mod on_linux {
 
     #[test]
     fn registering_writes_the_manifests_and_the_launcher_and_removing_takes_them_away() {
-        let (_dir, home, data) = home_with(&["firefox", "chrome"]);
-        let program = Path::new("/opt/Hexis app/it's.AppImage");
+        let (dir, home, data) = home_with(&["firefox", "chrome"]);
+        // a file whose path has a space and a quote in it: the launcher must quote both
+        let program = program_file(dir.path(), "Hexis app/it's.AppImage");
+        let program = program.as_path();
         let done = install::install(
             &home,
             &data,
@@ -1337,8 +1484,13 @@ mod on_linux {
         let text = std::fs::read_to_string(&launcher).unwrap();
         assert_eq!(
             text,
-            "#!/bin/sh\nexec '/opt/Hexis app/it'\\''s.AppImage' --native-host \"$@\"\n"
+            format!(
+                "#!/bin/sh\nexec '{}' --native-host \"$@\"\n",
+                program.to_string_lossy().replace('\'', "'\\''")
+            )
         );
+        assert!(text.contains("it'\\''s.AppImage"), "the quote is escaped");
+        assert_eq!(install::program_of(&text).as_deref(), Some(program));
 
         let chrome = manifest_of(&home, "chrome");
         assert_eq!(chrome["name"], install::NATIVE_HOST_NAME);
@@ -1387,8 +1539,9 @@ mod on_linux {
 
     #[test]
     fn a_registration_that_does_not_match_is_stale_until_it_is_made_again() {
-        let (_dir, home, data) = home_with(&["chromium"]);
-        let program = Path::new("/opt/hexis");
+        let (dir, home, data) = home_with(&["chromium"]);
+        let program = program_file(dir.path(), "opt/hexis");
+        let program = program.as_path();
         install::install(&home, &data, program, &ids(&["chromium"])).unwrap();
         let b = BROWSERS.iter().find(|b| b.id == "chromium").unwrap();
         let file = home

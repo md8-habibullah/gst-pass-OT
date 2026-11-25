@@ -8,6 +8,16 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+### Fixed
+
+* **The Backup page no longer says "Up to date" while the first copy is still going up.** A new backup, or one with a lot to send, now says "Backing up" with the number of changes waiting, and "Up to date" only when nothing is waiting (the one-line summary in the side bar already worked that way, so the two disagreed). A backup that is failing, catching up or switched off keeps saying so.
+* **Settings > Browsers no longer says "Connected" when the connection points at a program that is gone.** If you run Hexis from an AppImage and replace it with the next version under a new file name, the connection kept naming the old file, every passkey request quietly went to the browser's own screen, and Settings still said "Connected". It now says "Connected to an older copy of Hexis", and when Hexis starts with Browsers switched on it points a connection **you made yourself** at the running copy. It never adds a browser, never touches a connection you edited, and needs no password because it only follows the program you are already running.
+
+### Checked
+
+* The packages that are shipped, not a debug build, were run as the browser's native host: the program inside the Debian package and the AppImage (through a launcher written the way the app writes it, with FUSE and in the extract-and-run mode CI uses). Each answers once, ends by itself, writes nothing else on standard output, relays to a stand-in Hexis on the private socket and refuses a socket folder others can enter. CI now repeats this for every build (`scripts/check_packaged_host.py`).
+* Scanning a computer's QR code with the phone (the hybrid transport) is run by Google Play services and needs no code of Hexis's own. The provider treats such a request like a browser's because `com.google.android.gms` is on the privileged-apps list it ships; a test now fails if a refresh of that list drops it. **Not tried on a phone.**
+
 ## [0.5.0] - 2026-11-25
 
 Passkeys on Linux and on Android, and one scanner for every kind of code.

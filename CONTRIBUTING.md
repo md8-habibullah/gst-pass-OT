@@ -165,6 +165,7 @@ CI builds and attaches the Debian package, the RPM, the AppImage and the tarball
 repository's release key, and `SHA256SUMS`; then it starts the Pages workflow, which rebuilds the signed apt, rpm and pacman repositories
 and the installer from the newest stable release. **Not built by this pipeline, so not released:** Linux on aarch64, Windows, macOS, iOS.
 The browser extension is not a release file: the app carries it and writes it to the data folder (see below for the stores).
+CI also runs the built packages as the browser's native host (`scripts/check_packaged_host.py`: the binary inside the deb, and the AppImage through a launcher, with the extract-and-run mode because runners have no FUSE) before it lets a release through; run it by hand against a download with `python3 scripts/check_packaged_host.py Hexis_<version>_amd64.AppImage --via-launcher`.
 **The order for a release:** merge the feature pull requests; write the `[Unreleased]` section of `CHANGELOG.md` (it becomes the release
 notes, so it needs a summary line and, when something needs care while updating, an "Upgrading from X" paragraph); on a branch of its own
 run `python3 scripts/version.py bump auto`; open the pull request; merge it with a merge commit once its checks pass; watch the CI run on

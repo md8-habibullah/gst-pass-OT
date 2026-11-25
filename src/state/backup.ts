@@ -1,4 +1,4 @@
-import type { BackupTargetView } from "../backend";
+import type { BackupTargetView, HealthState, TargetHealth } from "../backend";
 import { be } from "./app";
 import { createStore } from "./store";
 
@@ -17,6 +17,19 @@ export async function refreshBackups(): Promise<BackupTargetView[]> {
 
 export const setBackups = (targets: BackupTargetView[]) => backups.set({ targets });
 export const clearBackups = () => backups.set({ targets: null });
+
+/** What a backup row shows: the worker's state, or "backing up" while a target that looks fine still has uploads waiting. */
+export type RowState = HealthState | "backing";
+
+/**
+ * The worker records a success after a pull or a key check, before the push queue has drained, so a new target (or one that
+ * has just been given a lot to send) can report `healthy` or `untested` while its first copy is still going up. "Up to date"
+ * is only true with an empty queue; until then the row says "Backing up", like the sidebar summary does. The states that
+ * already explain a problem (failing, lagging, disabled) are left as they are.
+ */
+export function rowState(h: Pick<TargetHealth, "state" | "queued">): RowState {
+  return (h.state === "healthy" || h.state === "untested") && h.queued > 0 ? "backing" : h.state;
+}
 
 export interface BackupSummary {
   tone: "none" | "ok" | "busy" | "bad" | "untested";

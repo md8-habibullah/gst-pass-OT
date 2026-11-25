@@ -296,6 +296,16 @@ jobs:
           install -Dm644 LICENSE "pkg/hexis-$VERSION/LICENSE"
           tar -C pkg -czf "$out/hexis-$VERSION-linux-x86_64.tar.gz" "hexis-$VERSION"
           ls -l "$out"
+      - name: The built packages work as the browser's native host
+        # What is shipped, not a debug build: the binary inside the deb, and the AppImage started through a launcher written the
+        # way the app writes it (an AppImage has no fixed path, so that launcher is what a browser runs). Standard output must
+        # hold one framed message and nothing else; a stray line from a wrapper breaks every passkey request.
+        run: |
+          set -euo pipefail
+          deb_root="$RUNNER_TEMP/deb-root"; mkdir -p "$deb_root"
+          dpkg-deb -x release-files/*.deb "$deb_root"
+          python3 scripts/check_packaged_host.py "$deb_root/usr/bin/hexis" --via-launcher
+          python3 scripts/check_packaged_host.py release-files/*.AppImage --via-launcher --extract-and-run --timeout 180
       - uses: actions/upload-artifact@v7
         with:
           name: linux-bundles
