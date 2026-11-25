@@ -42,6 +42,8 @@ mod drive_tests;
 #[cfg(test)]
 mod folder_search_tests;
 #[cfg(test)]
+mod passkey_tests;
+#[cfg(test)]
 mod tests;
 
 pub use app::{AppCore, ExportedFile, SyncFlush, EXIT_FLUSH};

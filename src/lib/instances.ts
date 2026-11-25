@@ -14,6 +14,8 @@ export type Fields = Record<string, string>;
 /** Sign-ins are two fields that belong together; a code is one. */
 export const SIGN_IN = ["username", "password"] as const;
 export const CODE = ["totp"] as const;
+/** A passkey is one field too. The editor can only take one out; its record is put back by the core when the login is saved. */
+export const PASSKEY = ["passkey"] as const;
 
 /** The slot numbers in use for these fields, lowest first. A key counts even while its value is still blank. */
 export function slotsOf(fields: Fields, bases: readonly string[]): number[] {

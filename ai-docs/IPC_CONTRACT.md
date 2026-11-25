@@ -4,7 +4,8 @@ Single source of truth for the boundary in `ARCHITECTURE.md` §4. The React UI (
 
 Conventions: JSON over Tauri IPC; **camelCase** on the wire (`#[serde(rename_all = "camelCase")]`); JS passes camelCase arguments (Tauri maps them to snake_case Rust parameters); timestamps are UTC milliseconds; ids are lowercase UUIDv4. Every error is `{ "code": string, "message": string }` (the message is safe to show; it never contains secrets).
 
-Error codes: `locked` · `no_vault` · `vault_exists` · `wrong_password` · `not_found` · `in_trash` · `not_in_trash` · `version_conflict` · `invalid_input` · `confirmation_mismatch` · `token_invalid` · `storage` · `crypto` · `profile_name_taken` · `unsupported_file` · `network` · `remote`.
+Error codes: `locked` · `no_vault` · `vault_exists` · `wrong_password` · `not_found` · `in_trash` · `not_in_trash` · `version_conflict` · `invalid_input` · `confirmation_mismatch` · `token_invalid` · `storage` · `crypto` · `profile_name_taken` · `unsupported_file` · `passkey_unsupported` · `passkey_excluded` · `network` · `remote`.
+The passkey provider (§14) also answers `app_locked` and `app_check_off`, which only it uses.
 
 ## 1. Re-prompt rule (enforced in Rust)
 
@@ -547,3 +548,49 @@ interface PurgePlan { deletedAt: number; recent: boolean; olderAt: number; sum: 
 
 **Offline.** Nothing in the app needs a connection. Items are made, read, edited, searched and deleted locally; each change is written to the vault and, when a backup target exists, to a durable queue. A failed send stays queued and is tried again at the next trigger: unlock, a committed change, leaving the app, and now the device coming back online. There is still no timer.
 
+## 14. The scanner, passkeys and the Android passkey provider (2026-11-25, D47 to D51) [impl]
+
+Design: `PASSKEYS.md`. Everything here is core-side; the screen never sees a passkey's private key.
+
+### 14.1 Passkey fields in items
+
+* An item draft or view of a login may hold the fields `passkey`, `passkey#2` … `passkey#10` (`FieldKind` `passkey`, secret). In a **view** (`ItemView.fields[]`) such a field has `value: null`, `hasValue: true` and a `passkey: PasskeyInfo`
+  (`credentialId`, `rpId`, `rpName`, `userName`, `displayName`, `alg`, `createdAt`). There is no reveal and no copy for a passkey (it has nothing a person could type).
+* In an **editable draft** (`item_begin_edit`, `item_reveal`, `history_get`) the value is a marker `{"keep":true,"credentialId":…,…info}`. `item_update` replaces a marker by the stored record with the same `credentialId`;
+  a marker for a credential the item does not hold, or a field that is neither a marker nor absent, answers `invalid_input`. Removing the field from the draft removes the passkey.
+* `item_create` answers `invalid_input` for any passkey field (a passkey is made by a website's request or by an import, never by a form). A clone or a copy to another account carries none.
+* `ItemSummary.hasPasskey: bool`. `item_search` also matches the site and the user name of a passkey.
+* Error codes: `passkey_unsupported` (the request offered no algorithm this version can make, only ES256), `passkey_excluded` (the website listed a credential the vault already holds).
+
+### 14.2 The scanner
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `scan_classify` | `text`, `bareKey?` | `ScanReply` | sorts a scanned or pasted text. `bareKey` is true only for typed or pasted text: a camera never reads a bare key. Needs an unlocked vault (`locked`). Nothing in the reply is secret: the logins named are the ones the list shows |
+| `scan_apply` | `text`, `choice`, `password?` | `ItemSummary` | `choice` is `{"existing": "<id>"}` or `{"new": {"title": string \| null}}`. Adds the code of `text` as the next free `totp#n` of that login, or makes a login for it (user name from the account, title from `title` or the issuer, site from the issuer when it looks like a domain). A re-prompt login needs `password` (`password_required`); a login with no free slot or a text that is not a one-time code answers `invalid_input`; the same code twice answers `invalid_input` |
+
+`ScanReply` (`kind` decides): `totp` `{issuer, account, digits, period, suggestions: LoginSuggestion[]}` · `migration` · `fido` · `link` `{host}` · `text` · `invalid` `{message}`.
+`LoginSuggestion`: `{id, title, subtitle, reasons: ("account"|"site"|"name")[], score, codes, passkeys, hasThisCode, hasSitePasskey, full, reprompt}`; at most eight, strongest first (account 100, site 60, name 40).
+The screen lists these first and then every other login, and always offers "Create a new login".
+
+### 14.3 The passkey provider (Settings > Passkeys)
+
+| Command | Args | Returns | Notes |
+|---------|------|---------|-------|
+| `passkey_provider_status` | – | `{supported, enabled}` | `supported`: Android 14 or later with the Credential Manager; everywhere else `{false,false}` |
+| `passkey_provider_set` | `on` | `{supported, enabled}` | needs the vault fully open (`require_full`: the master password, not a PIN-limited vault); switches the service component on or off. Off Android: `storage` "Passkeys can be switched on only on an Android phone." |
+| `passkey_provider_open_settings` | – | `void` | opens Android's own passkey settings, where the person still has to choose Hexis |
+| `device_set_passkey_app_check` | `on` | `DeviceInfo` | `DeviceInfo.passkeyAppCheck` (default true): whether the provider may fetch a website's `assetlinks.json` for a native app. Off: apps get no passkey (`app_check_off`), no request is made, browsers are unaffected |
+
+### 14.4 The provider's own entry (Kotlin to Rust, not a Tauri command)
+
+`Provider::call(op, argsJson) -> {"ok":true,"data":…} | {"ok":false,"code","message"}` through the two JNI functions
+`Java_dev_habibullah_hexis_provider_ProviderNative_{init,call}`. Ops: `state`, `unlock` (master password), `lock`, `getOptions` (a request: the matching logins and the others), `sign`, `createOptions`, `create`.
+Callers are `{"kind":"browser","origin","clientDataHash"}` or `{"kind":"app","package","certSha256"}`; `userVerified` is reported by Kotlin after `BiometricPrompt`. Codes: every code of the list at the top, plus `app_locked`
+(Stage 1 is closed: every op), `app_check_off` and `password_required` (a re-prompt login, or a vault opened with the PIN: the sheet asks for the master password and sends the same call again). The e2e shim exposes it as `POST /e2e/provider {"op","args"}`
+(dev only), so the scripts can make and use a passkey for a made-up website without a phone.
+
+### 14.5 Bitwarden import and export
+
+`import_preview` / `import_commit` read `login.fido2Credentials` of a Bitwarden JSON file (ECDSA P-256 only; others are skipped with a warning naming the site); `ImportPreview` counts a passkey-only record as a login.
+`export_plain` writes `fido2Credentials` into Bitwarden JSON (master password, as before); CSV skips passkeys and says so in `warnings`. Details: `PASSKEYS.md` §7.

@@ -9,6 +9,7 @@ import { Avatar } from "../ui/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import { unlockFully } from "../reprompt/Reprompt";
+import { ScanButton } from "../scan/ScanButton";
 
 /** The short line under an account's name: what happens when it is chosen. */
 function accountNote(p: ProfileInfo, on: boolean, limited: boolean, labelledDemo: boolean): string {
@@ -119,6 +120,7 @@ export function AccountBar({ className = "" }: { className?: string }) {
   if (!compact || !profile) return null;
   return (
     <div className={`flex shrink-0 items-center gap-1 ${className}`}>
+      <ScanButton />
       {!profile.demo && (
         <IconButton label="Lock now" onClick={() => void lockVault()}>
           <Lock className="size-[18px]" />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import { BackendError, FIELD_SCHEMA, specOf, TYPE_LABEL, type FieldSpec, type ItemDraft, type ItemType } from "../../backend";
-import { CODE, compactSlots, type Fields, SIGN_IN, withoutBlanks } from "../../lib/instances";
+import { CODE, compactSlots, type Fields, PASSKEY, SIGN_IN, withoutBlanks } from "../../lib/instances";
 import { parseOtpInput, type OtpAccount } from "../../lib/otp";
 import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
 import { useStore } from "../../state/store";
@@ -11,6 +11,7 @@ import { Field, Switch, TextArea, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 import { FolderField } from "./FolderSheets";
 import { CodeRows, SignInRows } from "./CredentialRows";
+import { PasskeyRows } from "./PasskeyRows";
 import { SecretField } from "./SecretField";
 import { TotpInput } from "./TotpInput";
 import { UrlListInput } from "./UrlListInput";
@@ -81,8 +82,9 @@ export function ItemEditor() {
     setError(null); setDiscard(false); setBusy(false);
     if (!req) { setDraft(null); return; }
     const d = req.mode === "edit" ? structuredClone(req.session.draft) : req.type ? blank(req.type) : null;
-    setDraft(d);
     setInitial(canon(d));
+    // A scan can hand over a website or an export to start from; that counts as a change, so closing asks first.
+    setDraft(d && req.mode === "new" && req.prefill ? { ...d, fields: { ...d.fields, ...req.prefill } } : d);
   }, [req]);
 
   // An old message about a box stops being true once the person edits anything.
@@ -117,7 +119,7 @@ export function ItemEditor() {
     if (!draft || !req || busy) return;
     // A login's sign-ins and codes are renumbered 1, 2, 3 without the blank ones, so the first is always the plain key.
     let fields: Fields = { ...draft.fields };
-    if (draft.type === "login") fields = compactSlots(compactSlots(fields, SIGN_IN), CODE);
+    if (draft.type === "login") fields = compactSlots(compactSlots(compactSlots(fields, SIGN_IN), CODE), PASSKEY);
     let split: OtpAccount[] | null = null;
 
     // One-time codes: accept any form, store a clean value, explain anything that cannot work.
@@ -228,6 +230,7 @@ export function ItemEditor() {
       if (s.key === "username") return [<SignInRows key="signins" fields={draft.fields} edit={editFields} itemType="login" />];
       if (s.key === "password") return [];
       if (s.kind === "totp") return [<CodeRows key="codes" fields={draft.fields} edit={editFields} />];
+      if (s.kind === "passkey") return [<PasskeyRows key="passkeys" fields={draft.fields} edit={editFields} />];
     }
     // Expiry month and year sit side by side.
     if (s.key === "expMonth") {

@@ -647,6 +647,18 @@ export async function setOpenInSearch(on: boolean): Promise<void> {
   }
 }
 
+/** Settings > Passkeys: may Hexis ask an app's website whether that app may use its passkeys? The core keeps the choice. */
+export async function setPasskeyAppCheck(on: boolean): Promise<void> {
+  const before = app.get().device;
+  if (before) patch({ device: { ...before, passkeyAppCheck: on } });
+  try {
+    adoptDevice(await be().deviceSetPasskeyAppCheck(on));
+  } catch (e) {
+    if (before) patch({ device: before });
+    pushToast({ kind: "error", text: e instanceof Error ? e.message : "The setting could not be saved." });
+  }
+}
+
 /** The order the item list starts in. The core keeps the choice; the list follows it at once. */
 export async function setListSort(order: ListSort): Promise<void> {
   const before = app.get().device;

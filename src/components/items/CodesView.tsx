@@ -13,6 +13,7 @@ import { TextInput } from "../ui/Inputs";
 import { CountdownRing } from "../ui/Ring";
 import { useLayout } from "../../lib/layout";
 import { AccountBar } from "../shell/AccountMenu";
+import { ScanButton } from "../scan/ScanButton";
 import { useTotp } from "./FieldRows";
 import { viewItem } from "./actions";
 
@@ -78,6 +79,7 @@ export function CodesView() {
           <h2 className="font-display text-[1.45rem] leading-none font-semibold">Codes</h2>
           <p className="mt-2 text-[0.93em] text-mist">Every one-time code in your vault: code-only items and the codes saved inside logins. They are generated on this device.</p>
         </div>
+        {!compact && <ScanButton />}
         {!compact && <Button variant="key" icon={<Plus className="size-4" />} onClick={() => openNewItem("totp")}>Add code</Button>}
         <AccountBar className="-mt-1.5 -mr-1" />
       </div>

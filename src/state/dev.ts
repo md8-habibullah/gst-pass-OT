@@ -1,16 +1,16 @@
 // DEV-ONLY deep links for design review and screenshots. Active only with the in-memory preview backend
 // in a development browser; the whole module is dropped from production builds (see App.tsx).
-import { PREVIEW_PASSWORD, gate, seedPreview, simulateOtherDeviceEdit } from "../backend/mock";
+import { PREVIEW_PASSWORD, gate, seedPreview, simulateOtherDeviceEdit, simulatePasskeySaved } from "../backend/mock";
 import { app, be, enterApp, refreshDevice, refreshGate, refreshProfiles, select, selectProfile, setFilter, setTheme, showPicker, syncAfterCoreLock, unlock, visibleList, type Filter } from "./app";
 import { setBrand } from "./brand";
 import { reprompt } from "../components/reprompt/Reprompt";
-import { openEditor, openNewItem, setSettingsPage, type SettingsPageId } from "./ui";
+import { openEditor, openNewItem, openScanner, setSettingsPage, type SettingsPageId } from "./ui";
 import type { ItemType, Theme } from "../backend";
 
 /** ?theme=light|dark|system (works with every screen)  &removed=1 (the last screen of "Remove Hexis from this device")
  *  ?vault=unlocked|locked|picker|gate  &gate=pin|password|grid (credential 24680, 2468x / abcd / 12589)  &panic=1  &disguise=<preset id>  &lower=1
- *    &page=<settings page: security|applock|accounts|time|theme|appearance|data|help|about>
- *    &account=<name>  &filter=trash|codes|settings|…  &open=<n>  &sheet=new|edit|reprompt  &type=<item type>  &otherdevice=1 (the open item gets a copy from another device) */
+ *    &page=<settings page: security|list|applock|passkeys|accounts|time|theme|appearance|data|help|about>
+ *    &account=<name>  &filter=trash|codes|settings|…  &open=<n>  &sheet=new|edit|reprompt|scan  &type=<item type>  &otherdevice=1 (the open item gets a copy from another device)  &passkey=1 (the open item gets two passkeys) */
 export async function devBootstrap(): Promise<void> {
   if (be().kind !== "preview") return;
   const q = new URLSearchParams(location.search);
@@ -52,7 +52,9 @@ export async function devBootstrap(): Promise<void> {
   }
   const sheet = q.get("sheet");
   const id = app.get().selectedId;
+  if (q.get("passkey") === "1" && id) { simulatePasskeySaved(id); simulatePasskeySaved(id, "github.com", "hexis-dev"); await syncAfterCoreLock(); }
   if (q.get("otherdevice") === "1" && id) { simulateOtherDeviceEdit(id); await syncAfterCoreLock(); }
+  if (sheet === "scan") openScanner("choose");
   if (sheet === "new") openNewItem((q.get("type") as ItemType | null) ?? null);
   if (sheet === "edit" && id) openEditor(id, await be().beginEdit(id, PREVIEW_PASSWORD));
   if (sheet === "reprompt") void reprompt({ reason: "Show the secrets for “GitHub” for 20 seconds.", confirmLabel: "Reveal", run: async () => undefined });

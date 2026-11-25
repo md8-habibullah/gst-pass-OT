@@ -4,7 +4,7 @@ import { copyText } from "../../lib/clipboard";
 import { CHORD_MS, isMacPlatform, matchKey } from "../../lib/shortcuts";
 import { app, be, lockApp, lockVault, pushToast, select, setFilter, visibleList, type Filter } from "../../state/app";
 import { handleBack } from "../../state/back";
-import { openNewItem, setSettingsPage, setShortcutsOpen, ui } from "../../state/ui";
+import { openNewItem, openScanner, setSettingsPage, setShortcutsOpen, ui } from "../../state/ui";
 import { cloneItem, copyQuick, editItem, launch, QUICK_COPY, setArchived, trashItem, type Target } from "../items/actions";
 import { withItemPassword } from "../reprompt/Reprompt";
 import { FILTER_TYPE, ITEM_FILTERS } from "./nav";
@@ -77,6 +77,7 @@ function run(id: string) {
     case "help": return setShortcutsOpen(!ui.get().shortcutsOpen);
     case "search": return focusSearch();
     case "new": return openNewItem(FILTER_TYPE[filter] ?? null);
+    case "scan": return openScanner("choose");
     case "settings": return openSettings();
     case "go.help": return openSettings("help");
     case "lock":

@@ -10,6 +10,8 @@
 //! * `clipboardClear`: how many seconds a copied secret stays on the clipboard (15, 30 or 60).
 //! * `openInSearch`: after the vault opens, put the cursor in the search box (the keyboard comes up on a phone).
 //! * `listSort`: how the item list is ordered until the person picks another order (one of [`SORT_CHOICES`]).
+//! * `passkeyAppCheck`: may Hexis ask an app's website, once, whether that app is allowed to use the website's passkeys
+//!   (Android's passkey provider; `ai-docs/PASSKEYS.md`)? On by default. Off, no request leaves the phone and apps get no passkeys.
 //!
 //! The last two used to live in the web view's own storage. They are here so the web view can run without
 //! writing anything to disk (`storage/webview_data.rs`), and so the lock screen, which is shown before any
@@ -88,6 +90,8 @@ pub struct DeviceSettings {
     pub open_in_search: bool,
     #[serde(default = "default_sort")]
     pub list_sort: String,
+    #[serde(default = "yes")]
+    pub passkey_app_check: bool,
 }
 
 fn yes() -> bool {
@@ -105,6 +109,7 @@ impl Default for DeviceSettings {
             clipboard_clear: DEFAULT_CLIPBOARD_CLEAR,
             open_in_search: false,
             list_sort: default_sort(),
+            passkey_app_check: true,
         }
     }
 }
@@ -124,6 +129,8 @@ pub struct DeviceInfo {
     pub open_in_search: bool,
     /// The list's default order (one of [`SORT_CHOICES`]).
     pub list_sort: String,
+    /// Hexis may ask an app's website whether that app may use its passkeys (one request, no vault data).
+    pub passkey_app_check: bool,
 }
 
 impl From<&DeviceSettings> for DeviceInfo {
@@ -136,6 +143,7 @@ impl From<&DeviceSettings> for DeviceInfo {
             clipboard_clear: s.clipboard_clear,
             open_in_search: s.open_in_search,
             list_sort: s.list_sort.clone(),
+            passkey_app_check: s.passkey_app_check,
         }
     }
 }
@@ -260,6 +268,7 @@ mod tests {
             clipboard_clear: 60,
             open_in_search: true,
             list_sort: "title-desc".into(),
+            passkey_app_check: false,
         };
         store(dir.path(), &s).unwrap();
         assert_eq!(load(dir.path()), s);
@@ -276,6 +285,23 @@ mod tests {
         let d = load(dir.path());
         assert_eq!(d.time_zone, None);
         assert!(d.setup_done && !d.time_check);
+    }
+
+    #[test]
+    fn the_passkey_app_check_is_on_unless_it_was_switched_off() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            load(dir.path()).passkey_app_check,
+            "a fresh install checks an app with its website"
+        );
+        // a file from before the switch existed keeps the default
+        std::fs::write(dir.path().join(DEVICE_FILE), r#"{"setupDone":true}"#).unwrap();
+        assert!(load(dir.path()).passkey_app_check);
+        std::fs::write(dir.path().join(DEVICE_FILE), r#"{"passkeyAppCheck":false}"#).unwrap();
+        assert!(!load(dir.path()).passkey_app_check);
+        // a value that is not a switch is a damaged file: the defaults, which check an app
+        std::fs::write(dir.path().join(DEVICE_FILE), r#"{"passkeyAppCheck":"no"}"#).unwrap();
+        assert!(load(dir.path()).passkey_app_check);
     }
 
     #[test]

@@ -1348,3 +1348,5 @@ mod device_ipc;
 mod folder_ipc;
 mod gate_ipc;
 mod pin_ipc;
+mod provider_ipc;
+mod scan_ipc;

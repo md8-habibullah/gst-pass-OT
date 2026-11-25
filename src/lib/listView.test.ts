@@ -8,7 +8,7 @@ const DAY = 86_400_000;
 let n = 0;
 function item(over: Partial<ItemSummary> = {}): ItemSummary {
   n += 1;
-  return { id: `id-${String(n).padStart(3, "0")}`, type: "login", title: `Item ${n}`, subtitle: null, favorite: false, tags: [], folder: null, hasTotp: false, codeKeys: [], createdAt: NOW - 100 * DAY, updatedAt: NOW - DAY, version: 1, archived: false, reprompt: false, ...over };
+  return { id: `id-${String(n).padStart(3, "0")}`, type: "login", title: `Item ${n}`, subtitle: null, favorite: false, tags: [], folder: null, hasTotp: false, codeKeys: [], hasPasskey: false, createdAt: NOW - 100 * DAY, updatedAt: NOW - DAY, version: 1, archived: false, reprompt: false, ...over };
 }
 
 describe("sorting", () => {

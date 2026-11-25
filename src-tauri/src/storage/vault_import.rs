@@ -25,11 +25,12 @@ use crate::importer::entry::{
 use crate::importer::export::ExportRecord;
 use crate::importer::limits::{warn_title, MAX_WARNINGS};
 use crate::importer::ImportMode;
+use crate::passkey::PasskeyRecord;
 use crate::storage::backup::dbops::{self, JobKind};
 use crate::storage::error::{Result, StorageError};
 use crate::storage::model::{
-    changed_fields, clean_urls, CustomField, FieldKind, ItemDraft, ItemEvent, ItemPayload,
-    ItemSummary, ItemType,
+    changed_fields, clean_urls, instance_key, instances, CustomField, FieldKind, ItemDraft,
+    ItemEvent, ItemPayload, ItemSummary, ItemType, MAX_INSTANCES,
 };
 use crate::storage::uuid;
 use rusqlite::params;
@@ -133,6 +134,15 @@ pub fn merge_drafts(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
             .item_type
             .spec(k)
             .is_some_and(|s| matches!(s.kind, FieldKind::Note | FieldKind::Paragraph));
+        if out
+            .item_type
+            .spec(k)
+            .is_some_and(|s| s.kind == FieldKind::Passkey)
+        {
+            // a passkey never replaces another: it joins the others unless the item holds it already
+            add_passkey_if_new(&mut out, v);
+            continue;
+        }
         match out.fields.get(k) {
             Some(have) if is_note => {
                 let joined = join_notes(have, v);
@@ -287,6 +297,11 @@ pub fn merge_keep_all(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
         let spec = out.item_type.spec(key);
         let kind = spec.map(|s| s.kind);
         let label = spec.map_or(key.as_str(), |s| s.label);
+        if kind == Some(FieldKind::Passkey) {
+            // a passkey is never merged into a text: it joins the others unless the item already holds it
+            add_passkey_if_new(&mut out, value);
+            continue;
+        }
         let Some(have) = out.fields.get(key).cloned() else {
             out.fields.insert(key.clone(), value.to_string());
             continue;
@@ -355,8 +370,27 @@ pub fn merge_keep_all(old: &ItemDraft, new: &ItemDraft) -> ItemDraft {
     out
 }
 
+/// Put a passkey into the lowest free `passkey#n` slot of `out`, unless it holds that credential already.
+fn add_passkey_if_new(out: &mut ItemDraft, value: &str) {
+    let Ok(record) = PasskeyRecord::parse(value) else {
+        return;
+    };
+    let held = instances(&out.fields, "passkey").iter().any(|(_, _, v)| {
+        PasskeyRecord::parse(v).is_ok_and(|r| r.credential_id == record.credential_id)
+    });
+    if held {
+        return;
+    }
+    if let Some(n) =
+        (1..=MAX_INSTANCES).find(|n| !out.fields.contains_key(&instance_key("passkey", *n)))
+    {
+        out.fields
+            .insert(instance_key("passkey", n), value.to_string());
+    }
+}
+
 /// The secret of a stored one-time code value, to tell whether two values are the same code.
-fn account_key_secret(value: &str) -> String {
+pub(in crate::storage) fn account_key_secret(value: &str) -> String {
     let mut d = ItemDraft {
         item_type: ItemType::Totp,
         title: String::new(),

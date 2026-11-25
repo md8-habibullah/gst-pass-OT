@@ -8,6 +8,13 @@ Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_
 
 ## [Unreleased]
 
+### Added
+
+* **Passkeys.** A login can hold passkeys (`passkey`, `passkey#2` …) next to its sign-ins and one-time codes. The private key stays inside the core: the screen shows the website and the user name, never the key. Nothing changes in the vault file format. Update every device before adding passkeys: Hexis 0.4.0 and older cannot save an edit to a login that holds one and skip it when they merge a pull.
+* **Passkey provider for Android 14 and later** (Settings > Passkeys, off until you turn it on): browsers and apps can sign in with, and save passkeys to, your vault through Android's own passkey manager. Each use asks for the fingerprint or screen lock; a locked vault opens with the master password only; nothing works while the app lock is closed. ES256 only. An app is accepted only when its website lists it (one request to that website, switchable). **Not yet tried on a real phone.**
+* **A camera button and one scanner for everything.** It tells a one-time code, a browser's passkey code, an authenticator-app export and a link apart, suggests the logins with the same account, website or name, always lists the others and always offers "Create a new login".
+* **Bitwarden passkeys.** Import reads `fido2Credentials` (ECDSA P-256; other kinds are skipped with a warning) and the plain-text Bitwarden JSON export writes them, with a warning that the file holds private keys. CSV leaves them out.
+
 ## [0.4.0] - 2026-11-25
 
 Folders, a search that looks inside everything, order and filters, several websites per login, automatic merging between devices, and a safer way to delete for good.

@@ -15,7 +15,7 @@ if [ "$mode" != "--e2e-only" ]; then
 step "frontend types"            npx --no-install tsc --noEmit
 step "frontend unit tests"       npx --no-install vitest run
 step "frontend production build" npx --no-install vite build
-step "no dev-only strings in the production bundle" bash -c '! grep -rlE "seedPreview|PREVIEW_PASSWORD|e2e_server|simulateOtherDeviceEdit|Marlowe" dist/'
+step "no dev-only strings in the production bundle" bash -c '! grep -rlE "seedPreview|PREVIEW_PASSWORD|e2e_server|simulateOtherDeviceEdit|simulatePasskeySaved|Marlowe" dist/'
 step "no notification or tray code" python3 scripts/check_no_notifications.py
 step "one version everywhere (VERSION, package.json, Cargo, tauri.conf, PKGBUILD)" python3 scripts/version.py check
 step "shellcheck: installer and repository scripts" bash -c 'if command -v shellcheck >/dev/null 2>&1; then shellcheck -s sh scripts/install.sh scripts/tests/container_case.sh && shellcheck scripts/make-repos.sh scripts/make-arch-repo.sh scripts/test_installer_containers.sh; else echo "(shellcheck is not installed; skipped)"; fi'
@@ -34,7 +34,7 @@ if [ "$mode" = "--e2e" ] || [ "$mode" = "--e2e-only" ]; then
   # and E2E_BIN pointing at the shim built with `cargo build --example e2e_server` (target/debug/examples/e2e_server).
   export SP="${SP:-/tmp/hexis-e2e}"; mkdir -p "$SP/shots2"
   export E2E_BIN="${E2E_BIN:-$ROOT/src-tauri/target/debug/examples/e2e_server}"
-  for t in run theme-ui editor-ui account-pin real-gate real-uninstall real-drive real-import real-lists real-pin real-disguise real-backup real-sync; do
+  for t in run theme-ui editor-ui account-pin scan-ui provider-ui real-scan real-gate real-uninstall real-drive real-import real-lists real-pin real-disguise real-backup real-sync; do
     [ -f "e2e/$t.mjs" ] && step "e2e: $t" node "e2e/$t.mjs"
   done
   # Several buckets at once against real S3-compatible servers (two throw-away containers on loopback). Needs Docker.

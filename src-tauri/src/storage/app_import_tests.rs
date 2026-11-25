@@ -1652,3 +1652,216 @@ fn merging_the_same_file_twice_changes_nothing_the_second_time() {
     );
     assert_eq!(reveal(&fx, "GitHub").fields["notes"], "mine\n\ntheirs");
 }
+
+// ------------------------------------------------------------------ passkeys in a Bitwarden file
+
+/// A Bitwarden `fido2Credentials` entry for the P-256 key made of 32 copies of `seed` (a seed under 1 is not a key).
+fn bw_passkey(seed: u8, rp_id: &str, user: &str) -> serde_json::Value {
+    use p256::pkcs8::EncodePrivateKey;
+    let key = p256::ecdsa::SigningKey::from_slice(&[seed; 32]).unwrap();
+    serde_json::json!({
+        "credentialId": format!("{:02x}{:02x}{:02x}{:02x}-0000-4000-8000-{:012x}", seed, seed, seed, seed, u64::from(seed)),
+        "keyType": "public-key", "keyAlgorithm": "ECDSA", "keyCurve": "P-256",
+        "keyValue": crate::passkey::b64::encode(key.to_pkcs8_der().unwrap().as_bytes()),
+        "rpId": rp_id, "rpName": rp_id, "counter": "0",
+        "userHandle": crate::passkey::b64::encode(b"user-handle-1"),
+        "userName": user, "userDisplayName": user, "discoverable": "true",
+        "creationDate": "2024-03-05T10:20:30.000Z"
+    })
+}
+
+fn bitwarden_with(name: &str, username: &str, passkeys: Vec<serde_json::Value>) -> String {
+    serde_json::json!({
+        "encrypted": false, "folders": [],
+        "items": [{"id": "i1", "type": 1, "name": name, "favorite": false,
+            "login": {"uris": [{"uri": "https://example.com"}], "username": username, "password": "pw-1", "fido2Credentials": passkeys}}]
+    })
+    .to_string()
+}
+
+fn passkey_ids(fx: &Fx, title: &str) -> Vec<String> {
+    fx.app
+        .item_get(&fx.id_of(title))
+        .unwrap()
+        .fields
+        .into_iter()
+        .filter_map(|f| f.passkey.map(|p| p.credential_id))
+        .collect()
+}
+
+#[test]
+fn a_bitwarden_passkey_is_imported_stays_in_the_core_and_goes_back_out_as_the_same_key() {
+    let fx = Fx::new();
+    let file = bitwarden_with(
+        "Example",
+        "ana@example.com",
+        vec![bw_passkey(7, "example.com", "ana@example.com")],
+    );
+    let out = fx.import("bitwarden-json", "import_all", "bw.json", file.as_bytes());
+    assert_eq!((out.added, out.failed), (1, 0), "{out:?}");
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+
+    // the screen sees the public facts only
+    let view = fx.app.item_get(&fx.id_of("Example")).unwrap();
+    let info = view
+        .fields
+        .iter()
+        .find_map(|f| f.passkey.clone())
+        .expect("the passkey is on the login");
+    assert_eq!(
+        (info.rp_id.as_str(), info.user_name.as_str()),
+        ("example.com", "ana@example.com")
+    );
+    assert_eq!(info.created_at, 1_709_634_030_000);
+    let shown = serde_json::to_string(&view).unwrap();
+    let key = crate::passkey::b64::encode(&[7u8; 32]);
+    assert!(
+        !shown.contains(&key),
+        "the private key never reaches the screen"
+    );
+
+    // a readable export carries the passkey as a passkey, with the same key, and as no text field
+    let dest = fx.files.path().join("out.json");
+    fx.picker.set_export(Some(dest.clone()));
+    let json_out = fx
+        .app
+        .export_plain("bitwarden-json", PW.into())
+        .unwrap()
+        .unwrap();
+    assert!(json_out.warnings.is_empty(), "{:?}", json_out.warnings);
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&dest).unwrap()).unwrap();
+    let login = &v["items"][0]["login"];
+    let want = bw_passkey(7, "example.com", "ana@example.com");
+    let got = &login["fido2Credentials"][0];
+    assert_eq!(got["keyValue"], want["keyValue"]);
+    assert_eq!(got["rpId"], "example.com");
+    assert_eq!(got["keyAlgorithm"], "ECDSA");
+    assert_eq!(got["keyCurve"], "P-256");
+    assert_eq!(
+        v["items"][0]["fields"].as_array().unwrap().len(),
+        0,
+        "no text field holds a passkey"
+    );
+
+    // and the CSV, which has no place for one, never carries its key
+    let csv_dest = fx.files.path().join("out.csv");
+    fx.picker.set_export(Some(csv_dest.clone()));
+    let csv_out = fx.app.export_plain("csv", PW.into()).unwrap().unwrap();
+    let csv = std::fs::read_to_string(&csv_dest).unwrap();
+    assert!(
+        !csv.contains(want["keyValue"].as_str().unwrap()) && !csv.contains(&key),
+        "{csv}"
+    );
+    assert_eq!(
+        csv_out.warnings,
+        vec![
+            "1 passkey is not in the file. Bitwarden JSON can carry passkeys; CSV cannot."
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn a_passkey_of_another_kind_or_a_damaged_one_is_reported_and_the_rest_of_the_login_is_kept() {
+    let fx = Fx::new();
+    let mut rsa = bw_passkey(7, "example.com", "ana");
+    rsa["keyAlgorithm"] = "RSA".into();
+    let mut broken = bw_passkey(8, "example.com", "ana");
+    broken["keyValue"] = "not a key".into();
+    let good = bw_passkey(9, "example.com", "ana");
+    let file = bitwarden_with("Example", "ana", vec![rsa, broken, good]);
+    let pick = fx.pick("bw.json", file.as_bytes());
+    let preview = fx
+        .app
+        .import_preview(opts(&pick.handle, "bitwarden-json", "import_all"))
+        .unwrap();
+    assert_eq!(preview.warnings.len(), 2, "{:?}", preview.warnings);
+    assert!(
+        preview
+            .warnings
+            .iter()
+            .all(|w| w.contains("Example") && w.contains("passkey")),
+        "{:?}",
+        preview.warnings
+    );
+    let out = fx
+        .app
+        .import_commit(opts(&pick.handle, "bitwarden-json", "import_all"))
+        .unwrap();
+    assert_eq!((out.added, out.failed), (1, 0), "{out:?}");
+    assert_eq!(
+        passkey_ids(&fx, "Example").len(),
+        1,
+        "only the usable passkey was kept"
+    );
+    assert_eq!(reveal(&fx, "Example").fields["username"], "ana");
+}
+
+#[test]
+fn importing_into_a_login_never_replaces_a_passkey_it_already_has() {
+    for mode in ["append_version", "merge"] {
+        let fx = Fx::new();
+        let first = bitwarden_with(
+            "Example",
+            "ana@example.com",
+            vec![bw_passkey(7, "example.com", "ana@example.com")],
+        );
+        assert_eq!(
+            fx.import("bitwarden-json", "import_all", "a.json", first.as_bytes())
+                .added,
+            1
+        );
+        let before = passkey_ids(&fx, "Example");
+        assert_eq!(before.len(), 1);
+
+        // a second file for the same account brings another passkey: both are kept, in different slots
+        let second = bitwarden_with(
+            "Example",
+            "ana@example.com",
+            vec![bw_passkey(9, "example.com", "ana@example.com")],
+        );
+        let out = fx.import("bitwarden-json", mode, "b.json", second.as_bytes());
+        assert_eq!(
+            (out.added, out.appended, out.failed),
+            (0, 1, 0),
+            "{mode}: {out:?}"
+        );
+        let both = passkey_ids(&fx, "Example");
+        assert_eq!(both.len(), 2, "{mode}");
+        assert!(
+            both.contains(&before[0]),
+            "{mode}: the first passkey is still there"
+        );
+
+        // the same file again changes nothing
+        let again = fx.import("bitwarden-json", mode, "c.json", second.as_bytes());
+        assert_eq!(
+            (again.added, again.appended, again.failed),
+            (0, 0, 0),
+            "{mode}: {again:?}"
+        );
+        assert_eq!(passkey_ids(&fx, "Example").len(), 2, "{mode}");
+    }
+}
+
+#[test]
+fn more_passkeys_than_a_login_holds_are_reported() {
+    let fx = Fx::new();
+    let many: Vec<_> = (1..=12u8)
+        .map(|n| bw_passkey(n, "example.com", "ana"))
+        .collect();
+    let pick = fx.pick("bw.json", bitwarden_with("Example", "ana", many).as_bytes());
+    let out = fx
+        .app
+        .import_commit(opts(&pick.handle, "bitwarden-json", "import_all"))
+        .unwrap();
+    assert_eq!((out.added, out.failed), (1, 0), "{out:?}");
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("more than 10 passkeys")),
+        "{:?}",
+        out.warnings
+    );
+    assert_eq!(passkey_ids(&fx, "Example").len(), 10);
+}

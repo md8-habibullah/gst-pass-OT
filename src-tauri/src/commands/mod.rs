@@ -10,12 +10,16 @@
 //! trashed items expose only id, title and deletion time.
 
 use crate::crypto;
+use crate::storage::session::passkeys::{ScanChoice, ScanReply};
 use crate::storage::{
     AppCore, BackupTargetInput, BackupTargetView, BackupTestResult, BeginEdit, ExportedFile,
     FilePicker, FolderChange, GeneratorPrefs, ItemDraft, ItemSummary, ItemView, PrefsView,
-    ProfileInfo, ProfileList, PurgePlan, SearchHit, SessionConfig, StorageError, SyncFlush,
-    TotpNow, TrashEntry, UrlOpener, VaultStatus, VersionEntry, EXIT_FLUSH,
+    ProfileInfo, ProfileList, PurgePlan, SearchHit, StorageError, SyncFlush, TotpNow, TrashEntry,
+    UrlOpener, VaultStatus, VersionEntry, EXIT_FLUSH,
 };
+// Only the tests build a session configuration by hand; the app opens its core through `prepare_state`.
+#[cfg(test)]
+use crate::storage::SessionConfig;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -24,6 +28,7 @@ use tauri::State;
 pub mod device;
 pub mod disguise;
 pub mod gate;
+pub mod passkey_provider;
 // The importer / exporter commands (slice Q4).
 mod importer;
 
@@ -45,8 +50,13 @@ struct Hooks {
 
 impl AppState {
     pub fn new(core: AppCore) -> Self {
+        Self::from_core(Arc::new(core))
+    }
+
+    /// Wrap a core that already exists (the Android passkey provider may have opened it first, see `provider::shared`).
+    pub fn from_core(core: Arc<AppCore>) -> Self {
         Self {
-            core: Arc::new(core),
+            core,
             gate: Arc::new(ExitGate::default()),
             hooks: std::sync::Mutex::new(Hooks::default()),
         }
@@ -171,8 +181,19 @@ pub fn prepare_state(
     picker: Arc<dyn FilePicker>,
     opener: Arc<dyn UrlOpener>,
 ) -> Result<AppState, StorageError> {
+    // Android: the passkey provider may have opened the core already (the system starts the process for a passkey request
+    // before any window exists). The window then uses that same core and puts its dialogs and link opener on it.
+    #[cfg(target_os = "android")]
+    {
+        let core = crate::provider::shared::get_or_open(data_dir)?;
+        core.set_picker(picker);
+        core.set_opener(opener);
+        Ok(AppState::from_core(core))
+    }
+    #[cfg(not(target_os = "android"))]
     Ok(AppState::new(
-        AppCore::open(data_dir, SessionConfig::default(), picker)?.with_opener(opener),
+        AppCore::open(data_dir, crate::storage::SessionConfig::default(), picker)?
+            .with_opener(opener),
     ))
 }
 
@@ -695,6 +716,33 @@ pub async fn totp_now(
     .await
 }
 
+// ------------------------------------------------------------------ the scanner (one-time codes, passkey codes, links)
+
+/// What a scanned or pasted text is, and which logins it may belong to. `bare_key` is for typed or pasted text: a camera
+/// never reads a bare key.
+#[tauri::command]
+pub async fn scan_classify(
+    state: State<'_, AppState>,
+    text: String,
+    bare_key: Option<bool>,
+) -> CmdResult<ScanReply> {
+    run(&state, move |c| {
+        c.scan_classify(&text, bare_key.unwrap_or(false))
+    })
+    .await
+}
+
+/// Put a scanned one-time code on the chosen login, or make a login for it.
+#[tauri::command]
+pub async fn scan_apply(
+    state: State<'_, AppState>,
+    text: String,
+    choice: ScanChoice,
+    password: Option<String>,
+) -> CmdResult<ItemSummary> {
+    run(&state, move |c| c.scan_apply(&text, choice, password)).await
+}
+
 // ------------------------------------------------------------------ backup targets (Phase 4a)
 
 #[tauri::command]
@@ -843,6 +891,8 @@ pub fn invoke_handler<R: tauri::Runtime>(
         history_get,
         history_restore,
         totp_now,
+        scan_classify,
+        scan_apply,
         backup_list,
         backup_test,
         backup_add,
@@ -862,6 +912,7 @@ pub fn invoke_handler<R: tauri::Runtime>(
         device::device_set_theme,
         device::device_set_clipboard_clear,
         device::device_set_open_in_search,
+        device::device_set_passkey_app_check,
         device::device_set_list_sort,
         device::clock_status,
         device::clock_sync,
@@ -890,6 +941,9 @@ pub fn invoke_handler<R: tauri::Runtime>(
         drive::file_read,
         drive::file_save_copy,
         drive::screen_secure,
+        passkey_provider::passkey_provider_status,
+        passkey_provider::passkey_provider_set,
+        passkey_provider::passkey_provider_open_settings,
         importer::import_pick,
         importer::import_pick_keyfile,
         importer::inspect_csv_headers,

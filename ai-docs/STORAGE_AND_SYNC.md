@@ -18,7 +18,7 @@ Every item (login, TOTP, secure note, media entry) is identified by a random UUI
   "id": "<uuid>",
   "type": "login | card | identity | sshKey | secureNote | totp | media",
   "title": "…", "favorite": false, "tags": [], "folder": null,
-  "fields": { "...": "type-specific keys, see IPC_CONTRACT.md field schemas (username, password, number, publicKey, …); a login may also hold username#2 … password#n, totp#n (D46), merged per key like any other field" },
+  "fields": { "...": "type-specific keys, see IPC_CONTRACT.md field schemas (username, password, number, publicKey, …); a login may also hold username#2 … password#n, totp#n (D46) and passkey, passkey#2 … (D47, PASSKEYS.md), merged per key like any other field" },
   "customFields": [{ "name": "…", "value": "…", "hidden": true }],
   "attachments": [{ "id": "<uuid>", "name": "…", "mime": "…", "size": 0, "sha256": "…" }],
   "createdAt": 1732360000000, "updatedAt": 1732360000000,
@@ -439,7 +439,7 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 **`device.json`** (data folder, owner-only 0600, atomic replace; read at start, never an error: a missing, unreadable, oversized (over 4 KiB) or damaged file is the defaults). Plaintext JSON:
 
 ```json
-{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "theme": "system", "clipboardClear": 30, "demoProfile": "<uuid>"}
+{"timeZone": "Asia/Dhaka", "setupDone": true, "timeCheck": true, "theme": "system", "clipboardClear": 30, "passkeyAppCheck": true, "demoProfile": "<uuid>"}
 ```
 
 * `timeZone`: the IANA name from the first page, only used to *show* UTC times and to read times the person types. Absent until chosen.
@@ -447,6 +447,7 @@ The `.meta` object is an addition so a restore can learn names and owners withou
 * `timeCheck`: the online time check (on by default).
 * `theme`: `system` (follow the device, the default), `light` or `dark`. Any other value reads as `system`.
 * `clipboardClear`: seconds a copied secret stays on the clipboard, 15, 30 (default) or 60. Added 2026-11-25; before that it was web view storage and is not carried over.
+* `passkeyAppCheck`: whether the passkey provider may fetch a website's list of allowed apps (`https://<site>/.well-known/assetlinks.json`) to answer a native app (D47). On by default; off means apps get no passkey and the provider makes no request. A browser is not affected. Added 2026-11-25; an older build ignores the key, and a file without it reads as on.
 * `demoProfile`: the id of the demo vault while one exists. It stays inside the core; `DeviceInfo` (what the screen reads) has no such field.
 
 It leaks a place name, a colour preference, a few switches and a random id; no name, item or key. **It survives the erase on purpose** (D30): the wipe only knows its fixed list of files, and `forget_demo_if_any` clears just the demo id. A reset therefore opens straight into a fresh demo vault with no zone page.
@@ -465,3 +466,20 @@ It leaks a place name, a colour preference, a few switches and a random id; no n
 ## The account PIN in `profiles.json` (2026-11-25, D45)
 
 An account entry may carry `"pin": "$argon2id$v=19$m=…,t=…,p=…$salt$hash"`, the PHC string of the account's PIN (same encoder and cost rules as the app lock's credential, `storage/quick.rs`). Absent: no PIN. It is **only** a check; no key is derived from it, no vault file depends on it, and nothing in a vault database, a backup bucket or an export holds it. It lives in the registry rather than in the vault so that it can be checked while the vault is out of reach, and so that the existing wipe (which removes the registry) removes it. A reader of `profiles.json` can learn that an account has a PIN and can try to crack the hash offline; cracking it opens nothing, because the vault key is protected by the master password alone. The parked vault itself exists only in RAM, see `ARCHITECTURE.md` §5.1.
+
+## Passkeys in a vault (2026-11-25, D47; the full design is `PASSKEYS.md`)
+
+A passkey is a login field, not an item type: keys `passkey`, `passkey#2` … `passkey#10` in the same `fields` map, whose value is one sealed JSON record
+`{v:1, rpId, rpName, credentialId, userHandle, userName, displayName, alg:-7, privateKey, createdAt}`. The payload schema is unchanged (stored version 1) and the file format is unchanged, so:
+
+* **Sync and merge (D39).** Passkeys are merged as a **set by credential id** (`merge_passkeys`), not per key: what either side added is kept, a passkey one side removed and the other left alone is removed, and the
+  same credential on both sides is one passkey. Losing a passkey locks the person out of a website, so unlike a password this is never "the newer value wins". Two different passkeys that both landed in the same slot
+  (two devices each made `passkey#2` offline) both survive: one keeps the slot, the other moves to the lowest free `passkey#n`. More than ten (only possible when devices race) is reported as a conflict and the extra one stays in the history.
+  The signature counter is always 0, so two devices can never disagree about it.
+* **An older build (0.4.0 and before) and passkeys: update every device first.** Read from the 0.4.0 code, not tried with a built 0.4.0: its `normalize` refuses a field it has no name for
+  (`Unknown field "passkey"`), so it cannot save an edit to a login that holds a passkey, and its pull-merge runs `normalize` on the merged result and **skips the item** when that fails
+  (`pull_apply.rs`), so such a login simply does not take the other device's changes until that device is updated. Nothing is deleted or overwritten in the bucket by this, but it is a sync gap. Hexis has no
+  minimum-version check between devices, so the rule for now is: update all devices, then add passkeys. The schema stays 1 on purpose (a bump would make an old build refuse the whole vault).
+* **An import** (Bitwarden `fido2Credentials`) that finds the slot `passkey` taken by another credential uses the next free slot and never replaces one.
+* **A copy** (clone, copy to another account) carries no passkeys: the private key stays with the original.
+* **Backups and exports.** A vault backup holds passkeys sealed like every field. The plain-text export writes them only into Bitwarden JSON (`fido2Credentials`), and only after the master password; CSV skips them with a warning.

@@ -33,7 +33,6 @@ use crate::storage::session::Session;
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
-use std::sync::Arc;
 use zeroize::Zeroizing;
 
 #[cfg(test)]
@@ -88,7 +87,7 @@ impl AppCore {
     pub fn import_pick(&self) -> Result<Option<ImportPick>> {
         let session = self.session()?;
         session.require_unlocked()?;
-        let Some(path) = self.picker.open_import_file()? else {
+        let Some(path) = self.picker().open_import_file()? else {
             return Ok(None);
         };
         let (name, size) = describe(&path, MAX_FILE_BYTES, MSG_TOO_LARGE)?;
@@ -118,7 +117,7 @@ impl AppCore {
     pub fn import_pick_keyfile(&self) -> Result<Option<KeyfilePick>> {
         let session = self.session()?;
         session.require_unlocked()?;
-        let Some(path) = self.picker.open_keyfile()? else {
+        let Some(path) = self.picker().open_keyfile()? else {
             return Ok(None);
         };
         let (name, size) = describe(&path, MAX_KEYFILE_BYTES, MSG_KEYFILE_TOO_LARGE)?;
@@ -271,7 +270,7 @@ impl AppCore {
         let base = files::suggested_export_name(&name, now_millis());
         let base = base.strip_suffix(".hexis").unwrap_or(&base);
         let suggested = format!("{base}-plaintext.{}", format.extension());
-        let picker = Arc::clone(&self.picker);
+        let picker = self.picker();
         let data_dir = self.dir.clone();
         let written = session.export_plain_with(password, format, move || {
             let chosen = picker.save_export_file(&suggested)?;
@@ -286,17 +285,29 @@ impl AppCore {
         })?;
         Ok(written.map(|w| ExportedPath {
             path: w.path.to_string_lossy().into_owned(),
-            warnings: if w.unreadable > 0 {
-                vec![format!(
-                    "{} could not be read and is not in the file.",
-                    if w.unreadable == 1 {
-                        "1 item".to_string()
-                    } else {
-                        format!("{} items", w.unreadable)
-                    }
-                )]
-            } else {
-                Vec::new()
+            warnings: {
+                let mut out = Vec::new();
+                if w.unreadable > 0 {
+                    out.push(format!(
+                        "{} could not be read and is not in the file.",
+                        if w.unreadable == 1 {
+                            "1 item".to_string()
+                        } else {
+                            format!("{} items", w.unreadable)
+                        }
+                    ));
+                }
+                if w.passkeys_left_out > 0 {
+                    out.push(format!(
+                        "{} not in the file. Bitwarden JSON can carry passkeys; CSV cannot.",
+                        if w.passkeys_left_out == 1 {
+                            "1 passkey is".to_string()
+                        } else {
+                            format!("{} passkeys are", w.passkeys_left_out)
+                        }
+                    ));
+                }
+                out
             },
         }))
     }

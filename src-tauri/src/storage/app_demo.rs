@@ -63,6 +63,16 @@ impl AppCore {
         self.device_update(|d| d.open_in_search = on)
     }
 
+    /// May Hexis ask an app's website whether that app may use its passkeys? Off: no request is made and apps get no passkeys.
+    pub fn device_set_passkey_app_check(&self, on: bool) -> Result<DeviceInfo> {
+        self.device_update(|d| d.passkey_app_check = on)
+    }
+
+    /// The same switch, read by the passkey provider before it looks a website up.
+    pub fn passkey_app_check(&self) -> bool {
+        relock(&self.device).passkey_app_check
+    }
+
     /// The order the item list starts in.
     pub fn device_set_list_sort(&self, order: &str) -> Result<DeviceInfo> {
         let order = device::validate_sort(order)?;

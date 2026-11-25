@@ -59,6 +59,15 @@ pub async fn device_set_open_in_search(
     run(&state, move |c| c.device_set_open_in_search(on)).await
 }
 
+/// May Hexis ask an app's website whether that app may use its passkeys (Settings > Passkeys)? On by default.
+#[tauri::command]
+pub async fn device_set_passkey_app_check(
+    state: State<'_, AppState>,
+    on: bool,
+) -> CmdResult<DeviceInfo> {
+    run(&state, move |c| c.device_set_passkey_app_check(on)).await
+}
+
 /// The order the item list starts in (one of the names the core knows).
 #[tauri::command]
 pub async fn device_set_list_sort(

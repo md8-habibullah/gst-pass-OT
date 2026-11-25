@@ -58,12 +58,18 @@ quick-xml = "0.42.0"
 zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2"] }
 flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 keepass = "0.17.0"
+# Passkeys (ES256): P-256 keys and ECDSA, pure Rust like the rest of the core. The WebAuthn byte layouts around it (CBOR, authenticator data) are written in src/passkey/.
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
 
 # Phase 4a: QR scanning for TOTP setup exists on phones only; it must never be part of a desktop build.
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.5.3"
 # Q1: fingerprint for Stage 1 only (it never touches a vault key); phones only, like the scanner. Latest stable 2.5.0 (3.0.0-alpha.3 is a pre-release and is not used).
 tauri-plugin-biometric = "2.5.0"
+
+# Android only: the passkey provider (src/provider/jni.rs) is called from Kotlin through two JNI functions. The crate has no native part.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"

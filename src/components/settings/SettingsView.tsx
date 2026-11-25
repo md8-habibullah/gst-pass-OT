@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Info, Keyboard, ListFilter, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, CloudUpload, Download, Files, Fingerprint, Info, Keyboard, ListFilter, LockKeyhole, Palette, ShieldCheck, SunMoon, Upload, UsersRound, type LucideIcon } from "lucide-react";
 import { plural } from "../../lib/format";
 import { useLayout } from "../../lib/layout";
 import { zoneLabel } from "../../lib/zones";
@@ -7,6 +7,7 @@ import { app } from "../../state/app";
 import { backups, summarize } from "../../state/backup";
 import { useBackHandler } from "../../state/back";
 import { useBrandName } from "../../state/brand";
+import { passkeyProvider, refreshPasskeyProvider } from "../../state/passkeyProvider";
 import { useStore } from "../../state/store";
 import { setSettingsPage, ui, type SettingsPageId } from "../../state/ui";
 import { AccountBar } from "../shell/AccountMenu";
@@ -20,6 +21,7 @@ import { DisguiseGroup } from "./Disguise";
 import { HelpPage } from "./HelpPage";
 import { ListPage } from "./ListPage";
 import { Group, LinkRow } from "./parts";
+import { PasskeysPage } from "./PasskeysPage";
 import { SecurityPage } from "./SecurityPage";
 import { ThemePage } from "./ThemePage";
 
@@ -35,6 +37,7 @@ const CATEGORIES: Category[] = [
   { id: "security", title: "Security", icon: ShieldCheck, about: "Your master password, the clipboard and locking the vault." },
   { id: "list", title: "Vault list", icon: ListFilter, about: "Open straight into search, and how items are ordered." },
   { id: "applock", title: "App lock", icon: LockKeyhole, about: "A passcode before the account list, and when open vaults lock by themselves." },
+  { id: "passkeys", title: "Passkeys", icon: Fingerprint, about: "Sign in to websites and apps with the passkeys in this vault." },
   { id: "accounts", title: "Accounts", icon: UsersRound, about: "The vaults on this device." },
   { id: "time", title: "Date and time", icon: Clock, about: "Hexis saves every time in UTC and writes it in your zone. Changing the zone changes only how times look." },
   { id: "theme", title: "Theme", icon: SunMoon, about: "Light, dark, or the same as your device." },
@@ -52,10 +55,12 @@ function useSummaries(): Record<SettingsPageId, string> {
   const clipboardClear = useStore(app, (s) => s.clipboardClear);
   const backup = summarize(useStore(backups, (s) => s.targets));
   const name = useBrandName();
+  const passkeys = useStore(passkeyProvider, (s) => s);
   return {
     security: `Clipboard clears after ${clipboardClear} seconds`,
     list: device?.openInSearch ? "Opens in search" : "Opens at the list",
     applock: gate?.enabled ? "Passcode on" : "Passcode off",
+    passkeys: passkeys?.enabled ? "On" : "Off",
     accounts: plural(profiles.length, "account"),
     time: device?.timeZone ? zoneLabel(device.timeZone) : "Not chosen",
     theme: device?.theme === "light" ? "Light" : device?.theme === "dark" ? "Dark" : "Same as your device",
@@ -84,6 +89,7 @@ function PageContent({ id }: { id: SettingsPageId }): ReactNode {
     case "security": return <SecurityPage />;
     case "list": return <ListPage />;
     case "applock": return <AppLockGroup heading={false} />;
+    case "passkeys": return <PasskeysPage />;
     case "accounts": return <AccountsGroup heading={false} />;
     case "time": return <DateTimePage />;
     case "theme": return <ThemePage />;
@@ -124,7 +130,11 @@ export function SettingsView() {
   const compact = layout === "compact";
   const page = useStore(ui, (s) => s.settingsPage);
   const summaries = useSummaries();
-  const active = CATEGORIES.find((c) => c.id === (page ?? (compact ? null : "security"))) ?? null;
+  // The Passkeys page exists only on a phone that can use Hexis as a passkey provider (Android 14 and later).
+  const passkeysSupported = useStore(passkeyProvider, (s) => s?.supported === true);
+  useEffect(() => { void refreshPasskeyProvider(); }, []);
+  const categories = CATEGORIES.filter((c) => c.id !== "passkeys" || passkeysSupported);
+  const active = categories.find((c) => c.id === (page ?? (compact ? null : "security"))) ?? null;
 
   // The Back button closes an open page before it leaves Settings.
   useBackHandler(compact && page !== null, () => setSettingsPage(null));
@@ -141,7 +151,7 @@ export function SettingsView() {
             <AccountBar className="-my-1 -mr-1" />
           </div>
           <ul className="surface overflow-hidden rounded-lg">
-            {CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <li key={c.id} className="border-b border-hairline last:border-b-0">
                 <button type="button" onClick={() => setSettingsPage(c.id)} className="pressable flex min-h-16 w-full items-center gap-4 px-4 text-left hover:bg-raised/60">
                   <span className="grid size-10 shrink-0 place-items-center rounded-sm bg-raised text-brass-ink"><c.icon className="size-[18px]" aria-hidden /></span>
@@ -159,13 +169,13 @@ export function SettingsView() {
     );
   }
 
-  const current = active ?? CATEGORIES[0]!;
+  const current = active ?? categories[0]!;
   return (
     <div className="flex min-h-0 flex-1" role="region" aria-label="Settings">
       <nav aria-label="Settings categories" className="w-[13.5rem] shrink-0 overflow-y-auto overscroll-contain border-r border-hairline px-3 pt-6 pb-6 min-[1100px]:w-[17rem]">
         <h2 className="mb-3 px-3 font-display text-[1.45rem] leading-none font-medium">Settings</h2>
         <ul className="flex flex-col gap-0.5">
-          {CATEGORIES.map((c) => {
+          {categories.map((c) => {
             const on = c.id === current.id;
             return (
               <li key={c.id}>

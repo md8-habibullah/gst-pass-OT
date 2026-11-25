@@ -17,6 +17,9 @@ pub mod crypto;
 pub mod disguise;
 pub mod gate;
 pub mod importer;
+pub mod passkey;
+pub mod provider;
+pub mod scan;
 pub mod storage;
 
 use tauri::Manager;
@@ -41,6 +44,10 @@ pub fn run() {
     // local plugin, `scripts/android/SecureScreenPlugin.kt`.
     #[cfg(target_os = "android")]
     let builder = builder.plugin(commands::drive::secure_screen::init());
+    // Android only: the switch for the passkey provider (`scripts/android/ProviderPlugin.kt`). The provider service itself is
+    // started by the system and talks to the core through `provider::jni`, not through this plugin.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(commands::passkey_provider::android_plugin());
     builder
         // Native open/save dialogs, used from Rust only: the capability file grants the webview
         // no `dialog:*` permission, so it can never open a dialog or name a path itself.

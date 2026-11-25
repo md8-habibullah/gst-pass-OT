@@ -2,7 +2,7 @@
 
 export type ItemType = "login" | "card" | "identity" | "sshKey" | "secureNote" | "totp" | "media";
 /** paragraph = non-secret multi-line text (for example an SSH public key). */
-export type FieldKind = "text" | "url" | "password" | "note" | "totp" | "paragraph";
+export type FieldKind = "text" | "url" | "password" | "note" | "totp" | "paragraph" | "passkey";
 
 export interface SuiteInfo {
   version: number;
@@ -59,6 +59,8 @@ export interface DeviceInfo {
   openInSearch: boolean;
   /** How the item list is ordered until another order is picked. */
   listSort: ListSort;
+  /** Hexis may ask an app's website, once, whether that app may use its passkeys (Android). On unless switched off. */
+  passkeyAppCheck: boolean;
 }
 
 /** The core's clock: UTC checked online, not the device date. */
@@ -112,12 +114,25 @@ export interface ItemSummary {
   hasTotp: boolean;
   /** Keys of the item's one-time codes in order (`totp`, `totp#2` …): what `totpNow` takes. */
   codeKeys: string[];
+  /** The login holds at least one passkey. */
+  hasPasskey: boolean;
   createdAt: number;
   updatedAt: number;
   version: number;
   archived: boolean;
   /** Revealing, copying, editing or cloning this item asks for the master password every time. */
   reprompt: boolean;
+}
+
+/** What the screen may know about a passkey: everything but the private key, which never leaves the core. */
+export interface PasskeyInfo {
+  credentialId: string;
+  rpId: string;
+  rpName: string;
+  userName: string;
+  displayName: string;
+  alg: number;
+  createdAt: number;
 }
 
 export interface FieldView {
@@ -127,7 +142,40 @@ export interface FieldView {
   secret: boolean;
   value: string | null;
   hasValue: boolean;
+  /** Only on a passkey field. */
+  passkey?: PasskeyInfo;
 }
+
+/** A login the scanner thinks a scanned code (or a passkey) belongs to. */
+export interface LoginSuggestion {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  /** Why, strongest first: `account` (same email or user name), `site` (same website), `name` (same name). */
+  reasons: Array<"account" | "site" | "name">;
+  score: number;
+  /** How many one-time codes and passkeys it holds now. */
+  codes: number;
+  passkeys: number;
+  /** This exact code is on it already. */
+  hasThisCode: boolean;
+  hasSitePasskey: boolean;
+  /** No slot is left for another code or passkey. */
+  full: boolean;
+  reprompt: boolean;
+}
+
+/** What a scanned or pasted text is. Nothing in it is secret: the login names are the ones the list already shows. */
+export type ScanReply =
+  | { kind: "totp"; issuer: string | null; account: string; digits: number; period: number; suggestions: LoginSuggestion[] }
+  | { kind: "migration" }
+  | { kind: "fido" }
+  | { kind: "link"; host: string }
+  | { kind: "text" }
+  | { kind: "invalid"; message: string };
+
+/** Where a scanned code goes: an existing login, or a new one. */
+export type ScanChoice = { existing: string } | { new: { title: string | null } };
 
 export interface CustomFieldView {
   name: string;
@@ -389,6 +437,12 @@ export interface FolderChange {
   moved: number;
   prefs: PrefsView;
 }
+/** `supported`: Android 14 or later with the system's Credential Manager. `enabled`: the provider is on (Android's list still asks the person to choose Hexis). */
+export interface PasskeyProviderStatus {
+  supported: boolean;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   lockAfterMinutes: (typeof LOCK_AFTER_MINUTES)[number];
   /** Phones and tablets: how long the app may stay open after the person leaves it. */
@@ -504,6 +558,11 @@ export interface Backend {
   /** The current code. `key` picks one of several codes on the item (`totp`, `totp#2` …); omitted, the first. */
   totpNow(id: string, password?: string, key?: string): Promise<TotpNow>;
 
+  /** Say what a scanned or pasted text is and which logins it may belong to. `bareKey`: typed or pasted text, so a bare setup key counts. */
+  scanClassify(text: string, bareKey?: boolean): Promise<ScanReply>;
+  /** Put a scanned one-time code on the chosen login (asks for the master password where that login does) or make a login for it. */
+  scanApply(text: string, choice: ScanChoice, password?: string): Promise<ItemSummary>;
+
   // backups
   listBackups(): Promise<BackupTargetView[]>;
   testBackup(input: BackupTargetInput): Promise<BackupTestResult>;
@@ -550,6 +609,13 @@ export interface Backend {
   appReturn(): Promise<void>;
   /** Android: blocks screenshots and screen recording while a decrypted file is on screen (FLAG_SECURE). No-op elsewhere. */
   screenSecure(on: boolean): Promise<void>;
+  // passkey provider (Android 14 and later; everywhere else `supported` is false and nothing else works)
+  /** Whether this phone can use Hexis as a passkey provider, and whether the provider is switched on. */
+  passkeyProviderStatus(): Promise<PasskeyProviderStatus>;
+  /** Switch the provider on or off. Needs the master password to have opened this vault (not only the PIN). */
+  passkeyProviderSet(on: boolean): Promise<PasskeyProviderStatus>;
+  /** Open Android's own passkey settings, where Hexis is chosen as a provider. */
+  passkeyProviderOpenSettings(): Promise<void>;
   // import / export
   /** Native picker in the core; it sniffs the format from the content. `null` when cancelled. */
   importPick(): Promise<ImportPick | null>;
@@ -588,6 +654,8 @@ export interface Backend {
   deviceSetTheme(theme: Theme): Promise<DeviceInfo>;
   deviceSetClipboardClear(seconds: ClipboardClear): Promise<DeviceInfo>;
   deviceSetOpenInSearch(on: boolean): Promise<DeviceInfo>;
+  /** Settings > Passkeys: allow or stop the one website request that checks an app. Off, apps get no passkeys. */
+  deviceSetPasskeyAppCheck(on: boolean): Promise<DeviceInfo>;
   deviceSetListSort(order: ListSort): Promise<DeviceInfo>;
   clockStatus(): Promise<ClockStatus>;
   /** Checks the time online now (up to about ten seconds). A failure is in `problem`, not an error. */
@@ -649,6 +717,8 @@ const TOTP_SPEC: FieldSpec = {
   placeholder: "Paste a link or setup key, or scan a QR code",
 };
 const REPEATING_TOTP: FieldSpec = { ...TOTP_SPEC, repeats: true };
+/** Passkeys are made by websites through the passkey provider and by the scanner, never typed; the editor can only remove one. */
+const PASSKEY_SPEC: FieldSpec = { key: "passkey", label: "Passkey", kind: "passkey", repeats: true };
 
 export const FIELD_SCHEMA: Record<ItemType, FieldSpec[]> = {
   login: [
@@ -656,6 +726,7 @@ export const FIELD_SCHEMA: Record<ItemType, FieldSpec[]> = {
     { key: "password", label: "Password", kind: "password", repeats: true },
     { key: "url", label: "Website", kind: "url", placeholder: "https://example.com" },
     REPEATING_TOTP,
+    PASSKEY_SPEC,
     { key: "notes", label: "Notes", kind: "note" },
   ],
   card: [
@@ -714,4 +785,4 @@ export const TYPE_LABEL: Record<ItemType, string> = {
 };
 
 /** Is this field's value secret (sealed until the master password is re-entered)? Mirrors the Rust field kinds. */
-export const isSecretKind = (k: FieldKind): boolean => k === "password" || k === "note" || k === "totp";
+export const isSecretKind = (k: FieldKind): boolean => k === "password" || k === "note" || k === "totp" || k === "passkey";

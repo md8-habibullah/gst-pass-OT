@@ -31,6 +31,8 @@ pub mod import;
 // index and the sealing helpers.
 #[path = "vault_folders.rs"]
 pub mod folders;
+#[path = "vault_passkey.rs"]
+pub mod passkeys;
 #[path = "vault_search.rs"]
 pub mod search;
 
@@ -347,7 +349,10 @@ impl Vault {
     pub fn reveal(&self, id: &str) -> Result<(ItemDraft, u64)> {
         self.require_active(id)?;
         let (payload, version) = self.load_latest(id)?;
-        Ok((payload.to_draft(), version))
+        let mut draft = payload.to_draft();
+        // the screen may keep or drop a passkey, never see its key
+        draft.redact_passkeys();
+        Ok((draft, version))
     }
 
     pub fn current_version(&self, id: &str) -> Result<u64> {
@@ -408,6 +413,8 @@ impl Vault {
         mut draft: ItemDraft,
     ) -> Result<ItemSummary> {
         check_id(&id)?;
+        // only the core makes a passkey (`passkeys::save_passkey`); one typed into a new item is refused
+        draft.forbid_passkeys()?;
         draft.normalize()?;
         let payload = ItemPayload::new(id, &draft, now_millis());
         self.commit(payload, None, 1)
@@ -426,6 +433,20 @@ impl Vault {
         if version != expected_version {
             return Err(StorageError::VersionConflict);
         }
+        // the screen's copy has a marker where a passkey is: put the stored passkey back (or drop it if the marker is gone)
+        draft.restore_passkeys(&old)?;
+        self.write_update(old, version, draft)
+    }
+
+    /// The write of an edit: `draft` holds real values (no markers).
+    pub(in crate::storage) fn write_update(
+        &mut self,
+        old: ItemPayload,
+        version: u64,
+        mut draft: ItemDraft,
+    ) -> Result<ItemSummary> {
+        let id = old.id.clone();
+        let id = id.as_str();
         draft.normalize()?;
         if draft.item_type != old.item_type {
             return Err(StorageError::invalid("An item's type cannot be changed."));
@@ -531,6 +552,8 @@ impl Vault {
     /// are copied inside Rust and never leave it. Attachments are not copied.
     pub fn clone_item(&mut self, id: &str) -> Result<ItemSummary> {
         let (mut draft, _) = self.reveal(id)?;
+        // a copy must not share a passkey with the original (one credential, one place)
+        draft.strip_passkeys();
         let base: String = draft
             .title
             .chars()
@@ -568,7 +591,9 @@ impl Vault {
             .version_row(id, version)?
             .ok_or(StorageError::NotFound)?;
         let (payload, _) = self.open_snapshot(id, row.version, &row.blob)?;
-        Ok(payload.to_draft())
+        let mut draft = payload.to_draft();
+        draft.redact_passkeys();
+        Ok(draft)
     }
 
     /// Make an old snapshot the newest version (history stays linear; nothing is rewritten).

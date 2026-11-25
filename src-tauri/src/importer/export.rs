@@ -11,7 +11,11 @@
 //! ordinary extra fields.
 
 use super::jsonutil::format_iso;
-use crate::storage::model::{first_instance, instances, urls_of, CustomField, ItemDraft, ItemType};
+use crate::passkey::bitwarden::to_bitwarden;
+use crate::passkey::PasskeyRecord;
+use crate::storage::model::{
+    first_instance, instances, urls_of, CustomField, FieldKind, ItemDraft, ItemType,
+};
 use crate::storage::{uuid, Result, StorageError};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -49,6 +53,21 @@ impl PlainFormat {
             Self::BitwardenJson => "json",
             Self::Csv => "csv",
         }
+    }
+
+    /// How many passkeys of `records` the file of this format does not carry: all of them in a CSV (it has no place for
+    /// one), and in Bitwarden JSON the ones that could not be read any more.
+    pub fn passkeys_left_out(self, records: &[ExportRecord]) -> usize {
+        records
+            .iter()
+            .map(|r| {
+                let held = instances(&r.draft.fields, "passkey").len();
+                match self {
+                    Self::Csv => held,
+                    Self::BitwardenJson => held.saturating_sub(passkeys_of(&r.draft).len()),
+                }
+            })
+            .sum()
     }
 
     pub fn render(self, records: &[ExportRecord]) -> Result<SecretBuf> {
@@ -132,7 +151,13 @@ fn more_of_login(d: &ItemDraft) -> Vec<(String, &str, bool)> {
     if d.item_type != ItemType::Login {
         return out;
     }
-    for s in d.item_type.schema().iter().filter(|s| s.repeats) {
+    // a passkey is not a text: it travels as a passkey (`fido2Credentials`), never as a field
+    for s in d
+        .item_type
+        .schema()
+        .iter()
+        .filter(|s| s.repeats && s.kind != FieldKind::Passkey)
+    {
         for (pos, (_, _, value)) in instances(&d.fields, s.key).into_iter().enumerate().skip(1) {
             out.push((
                 format!("{} {}", s.label, pos + 1),
@@ -173,12 +198,77 @@ struct BwUri<'a> {
     uri: &'a str,
 }
 
+/// One passkey as Bitwarden writes it. The key is a PKCS#8 document in base64url; the counter and the "discoverable" flag
+/// are text, as in Bitwarden's own files. A readable file holds every secret, so the key is wiped when the entry is dropped.
+#[derive(Serialize)]
+struct BwFido2 {
+    #[serde(rename = "credentialId")]
+    credential_id: String,
+    #[serde(rename = "keyType")]
+    key_type: &'static str,
+    #[serde(rename = "keyAlgorithm")]
+    key_algorithm: &'static str,
+    #[serde(rename = "keyCurve")]
+    key_curve: &'static str,
+    #[serde(rename = "keyValue")]
+    key_value: String,
+    #[serde(rename = "rpId")]
+    rp_id: String,
+    #[serde(rename = "rpName")]
+    rp_name: String,
+    counter: &'static str,
+    #[serde(rename = "userHandle")]
+    user_handle: String,
+    #[serde(rename = "userName")]
+    user_name: String,
+    #[serde(rename = "userDisplayName")]
+    user_display_name: String,
+    discoverable: &'static str,
+    #[serde(rename = "creationDate")]
+    creation_date: String,
+}
+
+impl Drop for BwFido2 {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.key_value);
+    }
+}
+
 #[derive(Serialize)]
 struct BwLogin<'a> {
     uris: Vec<BwUri<'a>>,
     username: Option<&'a str>,
     password: Option<&'a str>,
     totp: Option<&'a str>,
+    #[serde(rename = "fido2Credentials")]
+    fido2_credentials: &'a [BwFido2],
+}
+
+/// The passkeys of a login, in Bitwarden's form. A stored passkey that cannot be read any more is left out.
+fn passkeys_of(d: &ItemDraft) -> Vec<BwFido2> {
+    if d.item_type != ItemType::Login {
+        return Vec::new();
+    }
+    instances(&d.fields, "passkey")
+        .into_iter()
+        .filter_map(|(_, _, value)| PasskeyRecord::parse(value).ok())
+        .filter_map(|record| to_bitwarden(&record).ok())
+        .map(|out| BwFido2 {
+            credential_id: out.credential_id,
+            key_type: "public-key",
+            key_algorithm: "ECDSA",
+            key_curve: "P-256",
+            key_value: out.key_value.to_string(),
+            rp_id: out.rp_id,
+            rp_name: out.rp_name,
+            counter: "0",
+            user_handle: out.user_handle,
+            user_name: out.user_name,
+            user_display_name: out.user_display_name,
+            discoverable: "true",
+            creation_date: format_iso(out.creation_ms),
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -283,6 +373,7 @@ struct BwDoc<'a> {
 struct Extras<'a> {
     tags: String,
     more: Vec<(String, &'a str, bool)>,
+    passkeys: Vec<BwFido2>,
 }
 
 fn map_error(_: serde_json::Error) -> StorageError {
@@ -304,6 +395,7 @@ pub fn bitwarden_json(records: &[ExportRecord]) -> Result<SecretBuf> {
         .iter()
         .map(|r| Extras {
             more: more_of_login(&r.draft),
+            passkeys: passkeys_of(&r.draft),
             tags: if r.draft.tags.is_empty() {
                 String::new()
             } else {
@@ -383,6 +475,7 @@ fn bw_item<'a>(
                 username: opt(first(d, "username")),
                 password: opt(first(d, "password")),
                 totp: opt(first(d, "totp")),
+                fido2_credentials: &extra.passkeys,
             });
             fields.extend(extra.more.iter().map(|(name, value, hidden)| BwField {
                 name,
@@ -397,6 +490,7 @@ fn bw_item<'a>(
                 username: opt(f(d, "account")),
                 password: None,
                 totp: opt(f(d, "totp")),
+                fido2_credentials: &[],
             });
             fields.push(BwField {
                 name: TYPE_FIELD,
