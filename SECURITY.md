@@ -4,7 +4,7 @@ Hexis stores secrets, so security reports are the most useful kind of contributi
 
 ## Status you should know about
 
-Hexis is **pre-1.0 and has not been independently audited.** The cryptography uses well-reviewed primitives
+Hexis **has not been independently audited**, and its version number does not change that. The cryptography uses well-reviewed primitives
 (see [`ai-docs/CRYPTO_SPEC.md`](ai-docs/CRYPTO_SPEC.md)), but the way they are put together, the storage layer, the
 Stage 1 gate and the importer have had no third-party review. Do not rely on it as your only copy of anything you
 cannot lose, and keep an independent backup.

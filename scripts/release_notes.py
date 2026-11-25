@@ -64,7 +64,7 @@ def build(version: str, repo: str, site: str, sums: str, changelog: str, apk_cer
         "(ML-KEM-1024 with X25519, Argon2id, XChaCha20-Poly1305). It lives on your device and syncs, sealed, to the "
         "S3-compatible storage you choose: one bucket, or several at once (a master and mirrors). Without a bucket it works "
         "fully offline, and nothing is sent anywhere else.",
-        "> Early software, not independently audited. Keep a separate backup of anything you cannot lose.",
+        "> Not independently audited. Keep a separate backup of anything you cannot lose.",
         "## Install",
         "**Linux**, one command. It detects your system and installs the signed package for it, or a checked download:",
         f"```sh\ncurl -fsS {site}/install.sh | sh\n```",

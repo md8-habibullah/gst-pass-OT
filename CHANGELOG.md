@@ -2,11 +2,25 @@
 
 All notable changes are listed here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/)
-once 1.0 is reached (before that, a minor bump may change a stored format; the release notes say so).
+(before 1.0.0 a minor bump could change a stored format and the release notes said so; from 1.0.0 a breaking change, such as one that
+stops an existing vault or backup from being read, is a major bump).
 
 Where the project stands, what is verified and what is not: [`ai-docs/CHANGELOG_AND_STATE.md`](ai-docs/CHANGELOG_AND_STATE.md).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-11-25
+
+Hexis 1.0.0: the 0.5.0 feature set, two fixes, and a version number that now means something.
+
+**What changed in the program:** only the fixes below. No stored format changes and nothing is removed.
+**What 1.0.0 means:** the versioning rule in `CONTRIBUTING.md` applies from here on (a breaking change is a major version, new features a minor one, fixes a patch). **What it does not mean:** Hexis has still had **no independent security review**, and these are still untried or unverified: the passkey provider on a real phone, the hybrid (QR) sign-in, Mozilla's signing and the Chrome Web Store, the Hexis window coming to the front on a real Wayland compositor, and a real WebKitGTK window (the full list is in `ai-docs/CHANGELOG_AND_STATE.md`). Keep a separate backup of anything you cannot lose.
+
+**Upgrading from 0.5.0:** nothing to migrate; vault files and S3 backups keep their format and a 0.5.0 build opens everything this version writes. From 0.4.0 or older, the 0.5.0 note still applies: update every device before you add a passkey.
+
+### Changed
+
+* The words "pre-1.0" and "early software" are gone from the README, the website, the release notes and the installer's last line. "Not independently audited" and the advice to keep a separate backup stay, because they are still true.
 
 ### Fixed
 

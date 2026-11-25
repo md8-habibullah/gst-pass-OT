@@ -12,7 +12,7 @@ off. Both are in [PRIVACY.md](PRIVACY.md).)
 
 [Website](https://md8-habibullah.github.io/post-quantum-passman-gst/) · [CI runs](../../actions/workflows/ci.yml) · [MIT licensed](LICENSE) · [Privacy](PRIVACY.md) · [Security policy](SECURITY.md)
 
-> **Status: pre-1.0 and not independently audited.** The design, the tests and the honest list of what is *not*
+> **Status: 1.0, and not independently audited.** The design, the tests and the honest list of what is *not*
 > verified are in [`ai-docs/CHANGELOG_AND_STATE.md`](ai-docs/CHANGELOG_AND_STATE.md). Keep a separate backup of anything you cannot lose.
 
 Built with Tauri v2: a Rust core (all cryptography, storage and sync) behind a React 19 + TypeScript + Tailwind UI.

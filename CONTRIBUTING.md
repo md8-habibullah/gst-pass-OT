@@ -137,7 +137,7 @@ A release is made by raising the version on `main`. Nobody tags or publishes by 
    python3 scripts/version.py check        # every file agrees (scripts/verify_all.sh runs it; CI runs it before it publishes)
    ```
    **Nobody, and no AI agent, edits a version number by hand.** `auto` reads the CHANGELOG: a `BREAKING` mark or a `### Removed` section is
-   a major bump (a minor one before 1.0.0, when a minor bump may change a stored format), a `### Added`, `### Changed` or `### Deprecated`
+   a major bump (a minor one only while the major version is 0, when a minor bump may change a stored format; from 1.0.0 a breaking change, such as one that stops an existing vault or backup from being read, is a major bump), a `### Added`, `### Changed` or `### Deprecated`
    section is minor, only `### Fixed` or `### Security` is patch, and an empty `[Unreleased]` is refused. So the CHANGELOG entry is written
    first, and the bump follows from it. Android's version is made by Tauri from `tauri.conf.json` at build time.
 2. Merge or push that to `main`. The `ci.yml` workflow sees that `vX.Y.Z` has no tag yet, builds every variant from a clean
