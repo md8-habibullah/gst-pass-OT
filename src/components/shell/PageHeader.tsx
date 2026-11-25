@@ -4,6 +4,7 @@ import { useLayout } from "../../lib/layout";
 import { setFilter } from "../../state/app";
 import { useBackHandler } from "../../state/back";
 import { IconButton } from "../ui/Button";
+import { AccountBar } from "./AccountMenu";
 
 /** Title block for the full-width views. On the compact layout, sub-pages of Settings get a back button. */
 export function PageHeader({ title, subtitle, back, actions }: { title: string; subtitle?: string; back?: boolean; actions?: ReactNode }) {
@@ -16,10 +17,11 @@ export function PageHeader({ title, subtitle, back, actions }: { title: string; 
           <ArrowLeft className="size-5" />
         </IconButton>
       )}
-      <div className="min-w-0 flex-1 basis-60">
+      <div className={`min-w-0 flex-1 ${compact ? "basis-40" : "basis-60"}`}>
         <h2 className="font-display text-[1.45rem] leading-[1.2] font-semibold tracking-[-0.005em]">{title}</h2>
         {subtitle && <p className="mt-1.5 max-w-[34rem] text-[0.93em] text-mist">{subtitle}</p>}
       </div>
+      <AccountBar className="-mr-1" />
       {actions}
     </div>
   );

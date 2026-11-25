@@ -504,3 +504,18 @@ The project owner tried the Android build on a phone and asked for six things. A
 5. The waits cannot stop someone who changes the device clock or edits the files (cost: one more counted attempt, and the 16-attempt wipe still applies); the fingerprint still opens Stage 1 during a wait.
 6. Logging in without the master password (a quick-unlock) was **not** built: it needs a decision about the security model.
 7. The leave timer relies on the page reporting `visibilitychange`; if Android freezes the webview before `app_leave` runs, the inactivity timer (default 15 minutes) is the fallback.
+
+
+## 2026-11-25 (later): editor fixes, several sign-ins and codes, the account bar and the account PIN
+
+Built (not committed). Decisions D45, D46 in `ARCHITECTURE.md`; contract in `IPC_CONTRACT.md` §5.4 and the field-schema paragraph; design in `UI_DESIGN_SYSTEM.md` §12.
+
+* **Editor.** Cancel with changes asks inside the sticky footer, where Cancel is (it used to ask at the top of the scrolling form, out of sight). A scanned or pasted value that is not a one-time code never stays in the box (a guard on scan and paste, a clear button on the box). *Add another sign-in* and *Add another code* appear once the last one has something in it; each extra sits in its own small panel with *Remove*.
+* **Several sign-ins and codes.** `key#n` fields in `fields` (D46), view labels, search subtitle, the three-way merge per key, other apps' exports (hidden fields "Username 2" …) and import that restores them, `codeKeys` on the summary, `totp_now(key)`, the Codes page and the history view show every code.
+* **Account bar and PIN (D45).** Rust: `storage/quick.rs`, `Session` parked / limited / wrong-PIN counter / `elevate`, `AppCore.parked`, `vault_lock` now parks when the account has a PIN, new commands `vault_lock_all`, `vault_unlock_pin`, `vault_elevate`, `account_pin_set`, `account_pin_remove`, errors `wrong_pin`, `pin_locked`, `master_required`, `VaultStatus.resumable/limited`, `ProfileInfo.hasPin/resumable`, `require_full` on backup and lock-timer changes. UI: `AccountBar`, account sheet with *Log out*, `PinForm`, `AccountPin` settings row, `withMaster` / `unlockFully`.
+
+Verified: `cargo test --lib` (the 14 PIN tests in `storage/app_tests.rs`, the 4 in `commands/tests/pin_ipc.rs` including the inactivity timer wiping a parked vault, the `VaultStatus` shape test), vitest 213, `tsc --noEmit`, `e2e/editor-ui.mjs` and `e2e/account-pin.mjs` in the browser PREVIEW backend (the preview mirrors the core's rules; it is not the core).
+
+NOT verified yet: the real core through a real window (`e2e/run.mjs` family is not extended to the PIN yet); the account bar and the PIN screen on the phone (the install needs the owner's approval on the device); the Android Kotlin side is untouched by this round.
+
+**Security review of the PIN layer (2026-11-25), all fixed the same day.** One real bug: `Unlocked::park` zeroed the wrong-PIN counter every time it was called, so Lock (or "Choose another account" and picking the same account again) on a vault that was already parked gave four more tries and the fifth, which wipes the vault, never came; now the count restarts only when a shown vault is parked (two regression tests, both fail without the fix). Two gaps in the limited state: `file_read` (attachment preview) and `item_search` (note text as an oracle) did not follow the rule "secrets need the master password on the PIN alone"; `file_read` now answers `master_required` (the preview asks for the master password), search compares no note text when limited. And `app_settings_set` is refused while the vault is parked. Tests: `storage/app_tests.rs`.

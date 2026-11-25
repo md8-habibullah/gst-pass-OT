@@ -18,7 +18,7 @@ Every item (login, TOTP, secure note, media entry) is identified by a random UUI
   "id": "<uuid>",
   "type": "login | card | identity | sshKey | secureNote | totp | media",
   "title": "…", "favorite": false, "tags": [], "folder": null,
-  "fields": { "...": "type-specific keys, see IPC_CONTRACT.md field schemas (username, password, number, publicKey, …)" },
+  "fields": { "...": "type-specific keys, see IPC_CONTRACT.md field schemas (username, password, number, publicKey, …); a login may also hold username#2 … password#n, totp#n (D46), merged per key like any other field" },
   "customFields": [{ "name": "…", "value": "…", "hidden": true }],
   "attachments": [{ "id": "<uuid>", "name": "…", "mime": "…", "size": 0, "sha256": "…" }],
   "createdAt": 1732360000000, "updatedAt": 1732360000000,
@@ -460,3 +460,8 @@ It leaks a place name, a colour preference, a few switches and a random id; no n
 **The web view keeps nothing** (D32). The window is incognito, and the screen stores nothing itself. Builds up to 0.2.0 let WebKitGTK write into the data folder; `storage/webview_data.rs` lists the names it used (`localstorage`, `indexeddb`, `databases`, `storage`, `CacheStorage`, `WebKitCache`, `mediakeys`, `deviceidhashsalts`, `itp`, `ResourceLoadStatistics`, `serviceworkers`, `applicationcache`, `offlineapplicationcache`, `cookies`, `hsts-storage.sqlite` and its `-journal`, `-wal`, `-shm`). `remove(dir)` deletes exactly those, directly inside the data folder, never following a link, and runs at every start (non-mobile) and inside the wipe (`WipeReport.web_view_removed`). They are not secret, so they are unlinked, not overwritten. The wipe's scan no longer counts these names as "unknown files", so a folder that holds only them is removed.
 
 **`app_prepare_uninstall`** (D34) runs the wipe and then `forget_device_files`: `device.json` goes, and the data folder itself when it is empty. A folder that still holds a file Hexis does not know is left as it is, with that file. Nothing is created again: the demo vault is made on the next start of an *installed* app, which is what a fresh install does anyway.
+
+
+## The account PIN in `profiles.json` (2026-11-25, D45)
+
+An account entry may carry `"pin": "$argon2id$v=19$m=…,t=…,p=…$salt$hash"`, the PHC string of the account's PIN (same encoder and cost rules as the app lock's credential, `storage/quick.rs`). Absent: no PIN. It is **only** a check; no key is derived from it, no vault file depends on it, and nothing in a vault database, a backup bucket or an export holds it. It lives in the registry rather than in the vault so that it can be checked while the vault is out of reach, and so that the existing wipe (which removes the registry) removes it. A reader of `profiles.json` can learn that an account has a PIN and can try to crack the hash offline; cracking it opens nothing, because the vault key is protected by the master password alone. The parked vault itself exists only in RAM, see `ARCHITECTURE.md` §5.1.

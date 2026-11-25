@@ -40,6 +40,12 @@ pub struct ProfileInfo {
     /// The built-in demo vault (`storage/demo.rs`). Absent from the JSON for every other account.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub demo: bool,
+    /// This account has a quick-unlock PIN (`storage/quick.rs`). Absent from the JSON when it has none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_pin: bool,
+    /// Its vault is still open in memory, locked behind the PIN: the PIN opens it right now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resumable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -107,6 +113,10 @@ pub struct Entry {
     pub last_used_at: Option<u64>,
     /// `"."` for the adopted legacy file, otherwise exactly `vaults/<id>`.
     pub dir: String,
+    /// The quick-unlock PIN as an Argon2id PHC string (`storage/quick.rs`), or none. It holds no key and
+    /// protects nothing on disk; it only lets a vault that is still open in memory be shown again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<String>,
 }
 
 impl Entry {
@@ -117,6 +127,8 @@ impl Entry {
             created_at: self.created_at,
             last_used_at: self.last_used_at,
             demo: false,
+            has_pin: self.pin.is_some(),
+            resumable: false,
         }
     }
 
@@ -200,6 +212,7 @@ fn rebuild(root: &Path) -> Result<Vec<Entry>> {
             created_at: mtime_ms(&legacy),
             last_used_at: None,
             dir: LEGACY_DIR.into(),
+            pin: None,
         });
     }
     let mut found: Vec<String> = Vec::new();
@@ -221,6 +234,7 @@ fn rebuild(root: &Path) -> Result<Vec<Entry>> {
             display_name: format!("Recovered vault {}", i + 1),
             created_at: created,
             last_used_at: None,
+            pin: None,
         });
     }
     Ok(out)
@@ -393,6 +407,21 @@ impl Registry {
         removed.ok_or(StorageError::NotFound)
     }
 
+    /// Store (or, with `None`, remove) an account's quick-unlock PIN hash.
+    pub fn set_pin(&mut self, id: &str, pin: Option<String>) -> Result<ProfileInfo> {
+        let mut info = None;
+        self.commit(|entries| {
+            let e = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or(StorageError::NotFound)?;
+            e.pin = pin;
+            info = Some(e.info());
+            Ok(())
+        })?;
+        info.ok_or(StorageError::NotFound)
+    }
+
     /// Record that a profile was just used (best effort for the caller; see `AppCore`).
     pub fn touch(&mut self, id: &str) -> Result<()> {
         let now = now_millis();
@@ -472,6 +501,7 @@ mod tests {
             created_at: 1,
             last_used_at: None,
             dir: format!("vaults/{id}"),
+            pin: None,
         };
         assert!(entries_are_valid(std::slice::from_ref(&good)));
         for dir in [

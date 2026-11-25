@@ -12,6 +12,7 @@ import { openFolderDialog, openNewItem } from "../../state/ui";
 import { Button, IconButton } from "../ui/Button";
 import { Keycap } from "../ui/Keycap";
 import { TextInput } from "../ui/Inputs";
+import { AccountBar } from "../shell/AccountMenu";
 import { FilterChips } from "../shell/FilterChips";
 import { FILTER_TYPE, TITLE } from "../shell/nav";
 import { ItemRow } from "./ItemRow";
@@ -197,6 +198,7 @@ export function ListPane() {
               New
             </Button>
           )}
+          <AccountBar />
         </div>
       </div>
       <div className="px-4 pb-3">

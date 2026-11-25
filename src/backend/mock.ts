@@ -9,11 +9,15 @@ import { joinUrls, MAX_URLS, urlsOf } from "../lib/urls";
 import { DEMO_NAME, DEMO_PASSWORD, demoSeeds } from "./mockDemo";
 import { cleanFolder, folderProblem, FOLDER_SEP, isInside } from "../lib/folders";
 import { MockGate, makeLongEquation } from "./mockGate";
+import { SIGN_IN, slotsOf } from "../lib/instances";
 import {
   BackendError,
   LIST_SORTS,
   FIELD_SCHEMA,
+  instancesOf,
   isSecretKind,
+  parseFieldKey,
+  specOf,
   type AppSettings,
   type Backend,
   type BackupTargetInput,
@@ -94,6 +98,23 @@ const MIN = 60_000;
 const profiles: MockProfile[] = [];
 let selectedId: string | null = null;
 let unlocked = false;
+/**
+ * The account PIN, as the core has it (storage/quick.rs). `parked`: accounts whose vault is open in memory but out of reach,
+ * waiting for their PIN. `limited`: the shown vault was opened with the PIN only. A preview keeps the PIN in memory; the
+ * real core keeps only an Argon2id hash.
+ */
+const pins = new Map<string, string>();
+const parked = new Set<string>();
+let limited = false;
+let wrongPins = 0;
+const MAX_WRONG_PINS = 5;
+/** Leave the selected account the way the core does: kept behind its PIN when it has one, wiped otherwise. */
+function leave() {
+  if (selectedId && unlocked && pins.has(selectedId)) { parked.add(selectedId); wrongPins = 0; }
+  unlocked = false; limited = false; tokens.clear();
+}
+/** Wipe every open vault, the parked ones too (inactivity, leaving the app for long, the app lock, log out). */
+function wipeAll() { parked.clear(); unlocked = false; limited = false; tokens.clear(); }
 const tokens = new Map<string, { id: string; version: number; expires: number }>();
 
 function err(code: ConstructorParameters<typeof BackendError>[0], message: string): never {
@@ -109,6 +130,12 @@ function requireUnlocked(): MockProfile {
   if (!unlocked) err("locked", "The vault is locked.");
   return p;
 }
+/** Settings that decide where the vault goes or how it protects itself need the master password, not just the PIN. */
+function requireFull(): MockProfile {
+  const p = requireUnlocked();
+  if (limited) err("master_required", "Type your master password to do this. This vault was opened with the PIN.");
+  return p;
+}
 const items = () => requireUnlocked().store;
 async function verify(password: string, p: MockProfile = selected()) {
   await delay(650); // stands in for Argon2id, which is slow on purpose
@@ -120,7 +147,8 @@ async function verify(password: string, p: MockProfile = selected()) {
  */
 async function gateItem(s: Stored, password: string | undefined): Promise<void> {
   if (password !== undefined) return verify(password);
-  if (s.draft.reprompt) err("password_required", "Enter your master password to do this with “" + s.draft.title + "”.");
+  // a vault opened with the PIN asks for the master password for every item, flagged or not
+  if (limited || s.draft.reprompt) err("password_required", "Enter your master password to do this with “" + s.draft.title + "”.");
 }
 function need(id: string): Stored {
   const s = items().get(id);
@@ -172,9 +200,9 @@ function matchPieces(d: ItemDraft, words: string[], reprompt = d.reprompt): stri
   const pieces: { label: string; hay: string }[] = [{ label: "Title", hay: d.title.toLowerCase() }, { label: "Type", hay: d.type.toLowerCase() }];
   if (d.folder) pieces.push({ label: "Folder", hay: d.folder.toLowerCase() });
   for (const t of d.tags) pieces.push({ label: "Tag", hay: t.toLowerCase() });
-  for (const spec of FIELD_SCHEMA[d.type]) {
-    const value = d.fields[spec.key];
-    if (value === undefined || value === "") continue;
+  for (const [key, value] of Object.entries(d.fields)) {
+    const spec = specOf(d.type, key);
+    if (!spec || value === "") continue;
     const kind: FieldKind = spec.kind;
     const searchable = kind === "text" || kind === "url" || kind === "paragraph" || (kind === "note" && NOTE_KEYS.includes(spec.key) && !reprompt);
     pieces.push({ label: spec.label, hay: `${spec.label}\n${searchable ? value : ""}`.toLowerCase() });
@@ -222,7 +250,7 @@ function sameEntry(a: ItemDraft, b: ItemDraft): boolean {
 function subtitleOf(d: ItemDraft): string | null {
   const f = d.fields;
   switch (d.type) {
-    case "login": return f.username || (f.url ? hostOf(f.url) : null) || null;
+    case "login": return instancesOf(f, "username").find((u) => u.value.trim())?.value || (f.url ? hostOf(f.url) : null) || null;
     case "totp": return f.account || f.issuer || null;
     case "card": {
       const last4 = (f.number ?? "").replace(/\D/g, "").slice(-4);
@@ -244,7 +272,8 @@ function summarize(s: Stored): ItemSummary {
     reprompt: d.reprompt,
     tags: d.tags,
     folder: d.folder,
-    hasTotp: Boolean(d.fields.totp),
+    hasTotp: instancesOf(d.fields, "totp").length > 0,
+    codeKeys: instancesOf(d.fields, "totp").map((x) => x.key),
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     version: s.version,
@@ -270,10 +299,9 @@ function diff(a: ItemDraft | null, b: ItemDraft): string[] {
 function cleanDraft(d: ItemDraft): ItemDraft {
   const title = d.title.trim();
   if (!title) err("invalid_input", "Give the item a title.");
-  const allowed = new Set(FIELD_SCHEMA[d.type].map((f) => f.key));
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(d.fields)) {
-    if (!allowed.has(k)) err("invalid_input", `Unknown field “${k}”.`);
+    if (!specOf(d.type, k)) err("invalid_input", `Unknown field “${k}”.`);
     if (v.trim() !== "") fields[k] = v;
   }
   if (fields.url !== undefined) {
@@ -281,7 +309,7 @@ function cleanDraft(d: ItemDraft): ItemDraft {
     const joined = joinUrls([fields.url]);
     if (joined) fields.url = joined; else delete fields.url;
   }
-  if (fields.totp) parseTotp(fields.totp); // throws invalid_input when unusable
+  for (const [k, v] of Object.entries(fields)) if (specOf(d.type, k)?.kind === "totp") parseTotp(v); // throws invalid_input when unusable
   if (fields.number && !/^[\d\s-]{8,23}$/.test(fields.number)) err("invalid_input", "A card number has 8 to 23 digits (spaces and dashes are fine).");
   if (fields.expMonth && !(Number(fields.expMonth) >= 1 && Number(fields.expMonth) <= 12)) err("invalid_input", "The expiry month is 1 to 12.");
   if (fields.expYear && !/^\d{4}$/.test(fields.expYear)) err("invalid_input", "The expiry year has four digits.");
@@ -443,12 +471,15 @@ function view(s: Stored): ItemView {
   const d = s.draft;
   return {
     id: s.id, type: d.type, title: d.title, favorite: d.favorite, reprompt: d.reprompt, tags: d.tags, folder: d.folder,
-    fields: FIELD_SCHEMA[d.type]
-      .filter((spec) => d.fields[spec.key])
-      .map((spec) => {
-        const secret = isSecretKind(spec.kind);
-        return { key: spec.key, label: spec.label, kind: spec.kind, secret, value: secret ? null : (d.fields[spec.key] ?? null), hasValue: Boolean(d.fields[spec.key]) };
-      }),
+    fields: FIELD_SCHEMA[d.type].flatMap((spec) => {
+      // a sign-in's username and password are numbered together, a code on its own
+      const slots = slotsOf(d.fields, spec.key === "username" || spec.key === "password" ? SIGN_IN : [spec.key]);
+      const secret = isSecretKind(spec.kind);
+      return instancesOf(d.fields, spec.key).filter((x) => x.value).map((x) => {
+        const place = slots.indexOf(parseFieldKey(x.key)?.n ?? 1);
+        return { key: x.key, label: slots.length > 1 && place >= 0 ? `${spec.label} ${place + 1}` : spec.label, kind: spec.kind, secret, value: secret ? null : x.value, hasValue: true };
+      });
+    }),
     customFields: d.customFields.map((c) => ({ name: c.name, hidden: c.hidden, value: c.hidden ? null : c.value })),
     attachments: [], createdAt: s.createdAt, updatedAt: s.updatedAt, version: s.version,
     changedElsewhere: s.changedElsewhere === true,
@@ -466,7 +497,12 @@ function consumeToken(token: string, id: string, expectedVersion: number) {
 const FRESH_DEVICE: DeviceInfo = { timeZone: null, setupDone: false, timeCheck: true, theme: "system", clipboardClear: 30, openInSearch: false, listSort: "updated-desc" };
 let device: DeviceInfo = { ...FRESH_DEVICE };
 let demoId: string | null = null;
-const profileInfo = (p: MockProfile): ProfileInfo => ({ ...p.info, ...(p.info.id === demoId ? { demo: true } : {}) });
+const profileInfo = (p: MockProfile): ProfileInfo => ({
+  ...p.info,
+  ...(p.info.id === demoId ? { demo: true } : {}),
+  ...(pins.has(p.info.id) ? { hasPin: true } : {}),
+  ...(parked.has(p.info.id) ? { resumable: true } : {}),
+});
 function seedDemo(p: MockProfile) {
   p.store.clear();
   for (const d of demoSeeds()) {
@@ -519,12 +555,12 @@ function clockView(): ClockStatus {
 }
 
 export const gate = new MockGate();
-gate.onWipe = () => { profiles.length = 0; selectedId = null; unlocked = false; tokens.clear(); demoId = null; };
+gate.onWipe = () => { profiles.length = 0; selectedId = null; wipeAll(); pins.clear(); demoId = null; };
 let appSettings: AppSettings = { lockAfterMinutes: 5, lockAfterLeaveSeconds: 300 };
 // "After leaving the app": the preview follows the same rule as the core (the vault and, when on, the gate lock when the time away runs out).
 let leaveTimer: ReturnType<typeof setTimeout> | undefined;
 let leaveDeadline = 0;
-function lockForAway() { leaveDeadline = 0; unlocked = false; tokens.clear(); gate.close(); }
+function lockForAway() { leaveDeadline = 0; wipeAll(); gate.close(); }
 let disguise: DisguiseInput = { presetId: null, customName: null, lowercase: false };
 function disguiseView(): DisguiseView {
   const preset = DISGUISES.find((d) => d.id === disguise.presetId);
@@ -540,7 +576,8 @@ export const previewBackend: Backend = {
   async status() {
     await delay(120);
     const p = profiles.find((x) => x.info.id === selectedId) ?? null;
-    return { exists: p !== null, unlocked: p !== null && unlocked, profile: p ? profileInfo(p) : null, syncRevision, reconciling: false };
+    const resumable = p !== null && !unlocked && parked.has(p.info.id);
+    return { exists: p !== null, unlocked: p !== null && unlocked, profile: p ? profileInfo(p) : null, syncRevision, reconciling: false, ...(resumable ? { resumable } : {}), ...(unlocked && limited ? { limited } : {}) };
   },
 
   async listProfiles() {
@@ -555,13 +592,15 @@ export const previewBackend: Backend = {
     await delay(900);
     const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: Date.now() }, password, store: new Map(), targets: [], files: new Map() };
     profiles.push(p);
+    leave();
     selectedId = p.info.id; unlocked = true; tokens.clear();
     return profileInfo(p);
   },
   async selectProfile(id) {
     const p = profiles.find((x) => x.info.id === id);
     if (!p) err("not_found", "That account no longer exists on this device.");
-    if (selectedId !== id) { unlocked = false; tokens.clear(); }
+    // as in the core: the account being left is parked behind its PIN or wiped, and choosing it again locks it
+    if (selectedId !== id || unlocked) leave();
     selectedId = id;
   },
   async renameProfile(id, displayName) {
@@ -580,7 +619,8 @@ export const previewBackend: Backend = {
     if (c !== "CONFIRM" && c !== p.info.displayName) err("confirmation_mismatch", "Type the account name or CONFIRM exactly.");
     profiles.splice(profiles.indexOf(p), 1);
     if (demoId === id) demoId = null;
-    if (selectedId === id) { selectedId = null; unlocked = false; tokens.clear(); }
+    parked.delete(id); pins.delete(id);
+    if (selectedId === id) { selectedId = null; unlocked = false; limited = false; tokens.clear(); }
   },
   async importProfileFile(displayName) {
     const check = checkDisplayName(displayName, profiles.map((p) => p.info));
@@ -589,7 +629,8 @@ export const previewBackend: Backend = {
     const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
     seedInto(p);
     profiles.push(p);
-    selectedId = p.info.id; unlocked = false;
+    leave();
+    selectedId = p.info.id;
     return profileInfo(p);
   },
   async restoreProfileFromBackup(displayName, input) {
@@ -601,17 +642,50 @@ export const previewBackend: Backend = {
     const p: MockProfile = { info: { id: crypto.randomUUID(), displayName: check.name, createdAt: Date.now(), lastUsedAt: null }, password: PREVIEW_PASSWORD, store: new Map(), targets: [], files: new Map() };
     seedInto(p);
     profiles.push(p);
-    selectedId = p.info.id; unlocked = false;
+    leave();
+    selectedId = p.info.id;
     return profileInfo(p);
   },
 
   async unlock(password) {
     const p = selected();
     await verify(password, p);
-    unlocked = true;
+    parked.delete(p.info.id);
+    unlocked = true; limited = false;
     p.info.lastUsedAt = Date.now();
   },
-  async lock() { unlocked = false; tokens.clear(); },
+  async lock() { leave(); },
+  async lockAll() { wipeAll(); },
+  async unlockPin(pin) {
+    const p = selected();
+    const stored = pins.get(p.info.id);
+    if (unlocked || !parked.has(p.info.id) || stored === undefined) err("locked", "The vault is locked.");
+    await delay(650); // the core runs Argon2id here
+    if (pin !== stored) {
+      wrongPins += 1;
+      if (wrongPins >= MAX_WRONG_PINS) { parked.delete(p.info.id); err("pin_locked", "Too many wrong PINs. Use your master password."); }
+      err("wrong_pin", `That PIN is not right. Tries left: ${MAX_WRONG_PINS - wrongPins}.`);
+    }
+    parked.delete(p.info.id); wrongPins = 0;
+    unlocked = true; limited = true;
+    p.info.lastUsedAt = Date.now();
+  },
+  async elevate(password) {
+    const p = requireUnlocked(); await verify(password, p);
+    limited = false;
+  },
+  async setAccountPin(password, pin) {
+    const p = requireUnlocked();
+    if (pin.length < 4 || pin.length > 64) err("invalid_input", pin.length < 4 ? "Use at least 4 characters for the PIN." : "Use at most 64 characters for the PIN.");
+    await verify(password, p);
+    pins.set(p.info.id, pin);
+    return profileInfo(p);
+  },
+  async removeAccountPin(password) {
+    const p = requireUnlocked(); await verify(password, p);
+    pins.delete(p.info.id); parked.delete(p.info.id);
+    return profileInfo(p);
+  },
   async changePassword(oldPassword, newPassword) {
     const p = requireUnlocked(); await verify(oldPassword, p);
     if (newPassword.length < 8) err("invalid_input", "Use at least 8 characters.");
@@ -703,12 +777,13 @@ export const previewBackend: Backend = {
     const hits: SearchHit[] = [];
     for (const s of store.values()) {
       if (s.deleted) continue;
-      const now = matchPieces(s.draft, words);
+      // on the PIN alone every item counts as one that asks for the master password again: no note text is compared
+      const now = matchPieces(s.draft, words, s.draft.reprompt || limited);
       if (now) { hits.push({ id: s.id, matched: now, oldVersion: null }); continue; }
       if (!oldVersions) continue;
       for (const h of [...s.history].sort((a, b) => b.version - a.version)) {
         if (h.version === s.version) continue;
-        const old = matchPieces(h.draft, words, s.draft.reprompt);
+        const old = matchPieces(h.draft, words, s.draft.reprompt || limited);
         if (old) { hits.push({ id: s.id, matched: old, oldVersion: h.version }); break; }
       }
     }
@@ -810,9 +885,9 @@ export const previewBackend: Backend = {
     return summarize(s);
   },
 
-  async totpNow(id, password) {
+  async totpNow(id, password, key) {
     items(); const s = active(id); await gateItem(s, password);
-    const raw = s.draft.fields.totp;
+    const raw = key === undefined ? instancesOf(s.draft.fields, "totp")[0]?.value : specOf(s.draft.type, key)?.kind === "totp" ? s.draft.fields[key] : undefined;
     if (!raw) err("invalid_input", "This item has no one-time code.");
     return totpAt(raw, Date.now());
   },
@@ -828,7 +903,7 @@ export const previewBackend: Backend = {
     return { ok: true, message: "Connected. Wrote, read and removed a test object.", conditionalWrites: "strong" };
   },
   async addBackup(input) {
-    const p = requireUnlocked(); checkTargetInput(input);
+    const p = requireFull(); checkTargetInput(input);
     if (p.targets.some((t) => t.name.trim().toLowerCase() === input.name.trim().toLowerCase())) err("invalid_input", "You already have a backup with that name.");
     await delay(300);
     const master = input.master || p.targets.length === 0;
@@ -838,7 +913,7 @@ export const previewBackend: Backend = {
     return toView(t);
   },
   async updateBackup(id, input) {
-    const p = requireUnlocked(); checkTargetInput(input, true);
+    const p = requireFull(); checkTargetInput(input, true);
     const t = p.targets.find((x) => x.id === id);
     if (!t) err("not_found", "That backup no longer exists.");
     await delay(250);
@@ -848,7 +923,7 @@ export const previewBackend: Backend = {
     return toView(t);
   },
   async removeBackup(id) {
-    const p = requireUnlocked(); await delay(150);
+    const p = requireFull(); await delay(150);
     const i = p.targets.findIndex((x) => x.id === id);
     if (i < 0) err("not_found", "That backup no longer exists.");
     const wasMaster = p.targets[i]!.master;
@@ -856,7 +931,7 @@ export const previewBackend: Backend = {
     if (wasMaster && p.targets[0]) p.targets[0].master = true;
   },
   async setMasterBackup(id) {
-    const p = requireUnlocked();
+    const p = requireFull();
     if (!p.targets.some((t) => t.id === id)) err("not_found", "That backup no longer exists.");
     p.targets.forEach((t) => (t.master = t.id === id));
   },
@@ -980,7 +1055,7 @@ export const previewBackend: Backend = {
     if (!p.files.delete(id)) err("not_found", "That file no longer exists.");
   },
   async fileRead(id) {
-    const f = requireUnlocked().files.get(id);
+    const f = requireFull().files.get(id); // an attachment is a secret: not on the PIN alone
     if (!f) err("not_found", "That file no longer exists.");
     return f.bytes.slice().buffer;
   },
@@ -999,7 +1074,7 @@ export const previewBackend: Backend = {
   async gateSubmit(input) { await delay(160); return gate.submit(input); },
   async gateBiometric() { await delay(500); return gate.biometric(); },
   async gatePanic() { try { return gate.panic(); } catch (e) { return err("invalid_input", e instanceof Error ? e.message : "Not available."); } },
-  async gateClose() { gate.close(); unlocked = false; tokens.clear(); },
+  async gateClose() { gate.close(); wipeAll(); },
   async gateConfigure(input) {
     const p = requireUnlocked(); await verify(input.masterPassword, p);
     try { return gate.configure(input); } catch (e) { return err("invalid_input", e instanceof Error ? e.message : "Could not save the app lock."); }
@@ -1012,7 +1087,7 @@ export const previewBackend: Backend = {
     device = { ...FRESH_DEVICE };
   },
   async appSettingsGet() { return { ...appSettings }; },
-  async appSettingsSet(input) { appSettings = { ...input }; return { ...appSettings }; },
+  async appSettingsSet(input) { if (selectedId && parked.has(selectedId)) err("locked", "The vault is locked."); if (unlocked && limited) err("master_required", "Type your master password to do this. This vault was opened with the PIN."); appSettings = { ...input }; return { ...appSettings }; },
   async activityPing() { /* the preview never times out */ },
   async appLeave() {
     clearTimeout(leaveTimer);
@@ -1076,13 +1151,14 @@ export const previewBackend: Backend = {
     seedDemo(p);
     profiles.push(p);
     demoId = p.info.id;
+    leave();
     selectedId = p.info.id; unlocked = true; tokens.clear();
     return profileInfo(p);
   },
   async demoOpen() {
     const p = profiles.find((x) => x.info.id === demoId);
     if (!p) err("not_found", "That account no longer exists on this device.");
-    if (selectedId !== p.info.id) tokens.clear();
+    if (selectedId !== p.info.id) leave();
     selectedId = p.info.id; unlocked = true;
     p.info.lastUsedAt = Date.now();
   },

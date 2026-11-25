@@ -114,7 +114,12 @@ for (const specs of Object.values(FIELD_SCHEMA)) for (const s of specs) NAMES[s.
 
 /** Human names for changed-field keys in version history. */
 export function fieldName(key: string): string {
-  return NAMES[key] ?? key;
+  const hit = NAMES[key];
+  if (hit) return hit;
+  // "totp#2" is the second one-time code
+  const i = key.indexOf("#");
+  const base = i < 0 ? undefined : NAMES[key.slice(0, i)];
+  return base ? `${base} ${key.slice(i + 1)}` : key;
 }
 
 export const EVENT_LABEL = {

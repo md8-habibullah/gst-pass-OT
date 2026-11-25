@@ -5,7 +5,7 @@ import { visibleList, type AppState } from "./app";
 
 let n = 0;
 const item = (over: Partial<ItemSummary> = {}): ItemSummary => ({
-  id: `id-${++n}`, type: "login", title: "Item", subtitle: null, favorite: false, tags: [], folder: null, hasTotp: false,
+  id: `id-${++n}`, type: "login", title: "Item", subtitle: null, favorite: false, tags: [], folder: null, hasTotp: false, codeKeys: [],
   createdAt: 1000, updatedAt: 1000, version: 1, archived: false, reprompt: false, ...over,
 });
 

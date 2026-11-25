@@ -26,6 +26,7 @@ pub mod links;
 pub mod merge;
 pub mod model;
 pub mod profiles;
+pub mod quick;
 pub mod session;
 pub mod uuid;
 pub mod vault;

@@ -11,7 +11,7 @@
 //! ordinary extra fields.
 
 use super::jsonutil::format_iso;
-use crate::storage::model::{urls_of, CustomField, ItemDraft, ItemType};
+use crate::storage::model::{first_instance, instances, urls_of, CustomField, ItemDraft, ItemType};
 use crate::storage::{uuid, Result, StorageError};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -117,6 +117,31 @@ fn opt(s: &str) -> Option<&str> {
 
 fn f<'a>(d: &'a ItemDraft, key: &str) -> &'a str {
     d.fields.get(key).map_or("", String::as_str)
+}
+
+/// The value of a login's first username, password or code (the lowest number stored).
+fn first<'a>(d: &'a ItemDraft, key: &str) -> &'a str {
+    first_instance(&d.fields, key).unwrap_or("")
+}
+
+/// A login's second and later sign-ins and codes. Other apps have one username, one password and
+/// one code per login, so these travel as extra fields named `Password 2`, `One-time code 2` …;
+/// secrets are written as hidden fields. The first of each is the login's own value.
+fn more_of_login(d: &ItemDraft) -> Vec<(String, &str, bool)> {
+    let mut out = Vec::new();
+    if d.item_type != ItemType::Login {
+        return out;
+    }
+    for s in d.item_type.schema().iter().filter(|s| s.repeats) {
+        for (pos, (_, _, value)) in instances(&d.fields, s.key).into_iter().enumerate().skip(1) {
+            out.push((
+                format!("{} {}", s.label, pos + 1),
+                value,
+                s.kind.is_secret(),
+            ));
+        }
+    }
+    out
 }
 
 fn tags_value(tags: &[String]) -> String {
@@ -255,8 +280,9 @@ struct BwDoc<'a> {
 }
 
 /// Extra custom fields Hexis adds (kept alive until the document is written).
-struct Extras {
+struct Extras<'a> {
     tags: String,
+    more: Vec<(String, &'a str, bool)>,
 }
 
 fn map_error(_: serde_json::Error) -> StorageError {
@@ -277,6 +303,7 @@ pub fn bitwarden_json(records: &[ExportRecord]) -> Result<SecretBuf> {
     let extras: Vec<Extras> = records
         .iter()
         .map(|r| Extras {
+            more: more_of_login(&r.draft),
             tags: if r.draft.tags.is_empty() {
                 String::new()
             } else {
@@ -314,7 +341,7 @@ fn custom<'a>(c: &'a CustomField) -> BwField<'a> {
 
 fn bw_item<'a>(
     r: &'a ExportRecord,
-    extra: &'a Extras,
+    extra: &'a Extras<'a>,
     folders: &'a BTreeMap<&str, String>,
 ) -> BwItem<'a> {
     let d = &r.draft;
@@ -353,10 +380,16 @@ fn bw_item<'a>(
                         uri: u,
                     })
                     .collect(),
-                username: opt(f(d, "username")),
-                password: opt(f(d, "password")),
-                totp: opt(f(d, "totp")),
+                username: opt(first(d, "username")),
+                password: opt(first(d, "password")),
+                totp: opt(first(d, "totp")),
             });
+            fields.extend(extra.more.iter().map(|(name, value, hidden)| BwField {
+                name,
+                value,
+                kind: u8::from(*hidden),
+                linked_id: None,
+            }));
         }
         ItemType::Totp => {
             item.login = Some(BwLogin {
@@ -511,9 +544,9 @@ pub fn bitwarden_csv(records: &[ExportRecord]) -> Result<SecretBuf> {
                     "login",
                     f(d, "notes").to_string(),
                     f(d, "url").to_string(),
-                    f(d, "username").to_string(),
-                    f(d, "password").to_string(),
-                    f(d, "totp").to_string(),
+                    first(d, "username").to_string(),
+                    first(d, "password").to_string(),
+                    first(d, "totp").to_string(),
                 ),
                 ItemType::Totp => {
                     extra.push((TYPE_FIELD.into(), "totp".into()));
@@ -564,6 +597,9 @@ pub fn bitwarden_csv(records: &[ExportRecord]) -> Result<SecretBuf> {
                     )
                 }
             };
+            for (name, value, _) in more_of_login(d) {
+                extra.push((name, value.to_string()));
+            }
             for c in &d.custom_fields {
                 extra.push((c.name.clone(), c.value.clone()));
             }
@@ -740,6 +776,115 @@ mod tests {
                 rec.draft.title
             );
         }
+    }
+
+    #[test]
+    fn a_logins_extra_sign_ins_and_codes_are_exported_and_come_back() {
+        let two = draft(
+            ItemType::Login,
+            "Amazon",
+            &[
+                ("username", "ana@example.com"),
+                ("password", "first-pw-123456"),
+                ("totp", "JBSWY3DPEHPK3PXP"),
+                ("username#2", "work@example.com"),
+                ("password#2", "second-pw-123456"),
+                ("totp#2", "ONSWG4TFOQYTEMZU"),
+                ("totp#4", "MFRGGZDFMZTWQ2LK"),
+            ],
+        );
+        let recs = vec![ExportRecord {
+            draft: two.clone(),
+            ..records().remove(0)
+        }];
+        // the login keeps its first sign-in and code; the rest are fields other apps keep as they are
+        let out = bitwarden_json(&recs).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(out.as_slice()).unwrap();
+        let login = &v["items"][0]["login"];
+        assert_eq!(login["password"], "first-pw-123456");
+        assert_eq!(login["totp"], "JBSWY3DPEHPK3PXP");
+        let fields: Vec<(String, String, u64)> = v["items"][0]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["name"].as_str().unwrap().into(),
+                    f["value"].as_str().unwrap().into(),
+                    f["type"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("Username 2".into(), "work@example.com".into(), 0),
+                ("Password 2".into(), "second-pw-123456".into(), 1),
+                ("One-time code 2".into(), "ONSWG4TFOQYTEMZU".into(), 1),
+                ("One-time code 3".into(), "MFRGGZDFMZTWQ2LK".into(), 1),
+            ]
+        );
+        // read back, they are sign-in 2 and code 2 and 3 again (numbered by position, so #4 became #3)
+        let back = bitwarden::parse_json(out.as_slice()).unwrap();
+        let c = back.entries[0].to_draft();
+        let mut want = two;
+        want.fields.remove("totp#4");
+        want.fields
+            .insert("totp#3".into(), "MFRGGZDFMZTWQ2LK".into());
+        assert_eq!(c.draft, want);
+        assert!(
+            c.draft.custom_fields.is_empty(),
+            "{:?}",
+            c.draft.custom_fields
+        );
+
+        // CSV carries them in its `fields` column
+        let csv = bitwarden_csv(&recs).unwrap();
+        let text = std::str::from_utf8(csv.as_slice()).unwrap();
+        assert!(text.contains("Password 2: second-pw-123456"));
+    }
+
+    #[test]
+    fn a_field_that_only_looks_like_a_second_sign_in_stays_a_field() {
+        let mut d = draft(ItemType::Login, "X", &[("password", "pw-111111-1")]);
+        d.custom_fields = vec![
+            // visible, so not what the export writes for a password
+            CustomField {
+                name: "Password 2".into(),
+                value: "visible".into(),
+                hidden: false,
+            },
+            // not a usable code
+            CustomField {
+                name: "One-time code 2".into(),
+                value: "not a code!".into(),
+                hidden: true,
+            },
+            // past the limit
+            CustomField {
+                name: "Password 11".into(),
+                value: "late".into(),
+                hidden: true,
+            },
+            CustomField {
+                name: "Password 3".into(),
+                value: "ok-pw-123456".into(),
+                hidden: true,
+            },
+        ];
+        let recs = vec![ExportRecord {
+            draft: d,
+            ..records().remove(0)
+        }];
+        let out = bitwarden_json(&recs).unwrap();
+        let back = bitwarden::parse_json(out.as_slice()).unwrap();
+        let c = back.entries[0].to_draft().draft;
+        assert_eq!(
+            c.fields.get("password#3").map(String::as_str),
+            Some("ok-pw-123456")
+        );
+        assert_eq!(c.custom_fields.len(), 3);
+        assert!(c.custom_fields.iter().all(|f| f.name != "Password 3"));
     }
 
     #[test]

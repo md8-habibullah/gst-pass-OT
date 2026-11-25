@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { KeyRound, ShieldAlert } from "lucide-react";
 import { BackendError } from "../../backend";
+import { app, elevate } from "../../state/app";
 import { createStore, useStore } from "../../state/store";
 import { Button } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
@@ -42,7 +43,41 @@ export async function withItemPassword<T>(opts: Omit<RepromptOptions<T>, "run"> 
   } catch (e) {
     if (!(e instanceof BackendError && e.code === "password_required")) throw e;
   }
-  return reprompt({ because: "This item is set to ask for the master password every time.", ...opts, run: (pw) => opts.run(pw) });
+  const because = app.get().limited
+    ? "This vault was opened with its PIN, so secrets ask for the master password."
+    : "This item is set to ask for the master password every time.";
+  return reprompt({ because, ...opts, run: (pw) => opts.run(pw) });
+}
+
+/**
+ * Asks for the master password and lifts the limit of a vault that was opened with the PIN: secrets, exports and the
+ * settings that decide where the vault goes work again until it locks. Resolves `true` when it worked.
+ */
+export async function unlockFully(reason = "Use your master password for this vault."): Promise<boolean> {
+  const done = await reprompt<boolean>({
+    reason,
+    because: "This vault was opened with its PIN. Secrets and settings need the master password.",
+    confirmLabel: "Unlock fully",
+    run: async (pw) => {
+      await elevate(pw);
+      return true;
+    },
+  });
+  return done === true;
+}
+
+/**
+ * Runs something the core only allows with the master password (backup targets, the app lock's timers). The core answers
+ * `master_required` while the vault is open on the PIN alone; only then does the sheet open, and the action runs again once
+ * the password was accepted. Resolves with the result, or `undefined` when the person cancels the sheet.
+ */
+export async function withMaster<T>(reason: string, run: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (e) {
+    if (!(e instanceof BackendError && e.code === "master_required")) throw e;
+  }
+  return (await unlockFully(reason)) ? run() : undefined;
 }
 
 /** Opens the guard. Resolves with the result of `run`, or `undefined` when the person cancels. */

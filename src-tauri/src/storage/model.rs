@@ -21,6 +21,9 @@ pub const MAX_CUSTOM_FIELDS: usize = 50;
 pub const MAX_CUSTOM_NAME_CHARS: usize = 64;
 /// How many web addresses one login may hold (they are kept one per line in its `url` field).
 pub const MAX_URLS: usize = 20;
+/// How many sign-ins (username and password) and how many one-time codes one login may hold.
+/// The first of each has the plain key (`username`); the others are `username#2` … `username#10`.
+pub const MAX_INSTANCES: u32 = 10;
 /// Sum of all text in one item (a guard far below the 64 MiB envelope limit).
 pub const MAX_ITEM_BYTES: usize = 4 * 1024 * 1024;
 
@@ -63,17 +66,100 @@ pub struct FieldSpec {
     pub key: &'static str,
     pub label: &'static str,
     pub kind: FieldKind,
+    /// May be stored more than once (`key`, `key#2` …, at most [`MAX_INSTANCES`]).
+    pub repeats: bool,
 }
 
 const fn spec(key: &'static str, label: &'static str, kind: FieldKind) -> FieldSpec {
-    FieldSpec { key, label, kind }
+    FieldSpec {
+        key,
+        label,
+        kind,
+        repeats: false,
+    }
+}
+
+const fn repeating(key: &'static str, label: &'static str, kind: FieldKind) -> FieldSpec {
+    FieldSpec {
+        key,
+        label,
+        kind,
+        repeats: true,
+    }
+}
+
+/// Split a stored field key into its schema key and instance number: `totp` is `("totp", 1)`,
+/// `totp#3` is `("totp", 3)`. Spellings that are not canonical (`totp#1`, `totp#03`, `totp#`)
+/// are `None`, so one instance can never be stored under two keys.
+pub fn parse_key(key: &str) -> Option<(&str, u32)> {
+    let Some((base, n)) = key.split_once('#') else {
+        return Some((key, 1));
+    };
+    if n.is_empty() || n.starts_with('0') || n.len() > 3 || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: u32 = n.parse().ok()?;
+    (n >= 2).then_some((base, n))
+}
+
+/// The stored key of instance `n` of `base`.
+pub fn instance_key(base: &str, n: u32) -> String {
+    if n <= 1 {
+        base.to_string()
+    } else {
+        format!("{base}#{n}")
+    }
+}
+
+/// Every stored instance of one field, lowest number first: `(n, key, value)`.
+pub fn instances<'a>(
+    fields: &'a BTreeMap<String, String>,
+    base: &str,
+) -> Vec<(u32, &'a str, &'a str)> {
+    let mut out: Vec<(u32, &str, &str)> = fields
+        .iter()
+        .filter_map(|(k, v)| match parse_key(k) {
+            Some((b, n)) if b == base => Some((n, k.as_str(), v.as_str())),
+            _ => None,
+        })
+        .collect();
+    out.sort_by_key(|(n, _, _)| *n);
+    out
+}
+
+/// The fields that share instance numbers: a sign-in's username and password are one numbered
+/// group, a one-time code is on its own.
+fn slot_group(base: &str) -> &'static [&'static str] {
+    match base {
+        "username" | "password" => &["username", "password"],
+        "totp" => &["totp"],
+        _ => &[],
+    }
+}
+
+/// The instance numbers stored for any of `bases`, lowest first.
+fn slots_in(fields: &BTreeMap<String, String>, bases: &[&str]) -> Vec<u32> {
+    let mut out: Vec<u32> = fields
+        .keys()
+        .filter_map(|k| parse_key(k))
+        .filter(|(b, _)| bases.contains(b))
+        .map(|(_, n)| n)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// The value of the first instance (the lowest number that is stored).
+pub fn first_instance<'a>(fields: &'a BTreeMap<String, String>, base: &str) -> Option<&'a str> {
+    instances(fields, base).first().map(|(_, _, v)| *v)
 }
 
 const LOGIN: &[FieldSpec] = &[
-    spec("username", "Username", FieldKind::Text),
-    spec("password", "Password", FieldKind::Password),
+    repeating("username", "Username", FieldKind::Text),
+    repeating("password", "Password", FieldKind::Password),
     spec("url", "Website", FieldKind::Url),
-    spec("totp", "One-time code", FieldKind::Totp),
+    repeating("totp", "One-time code", FieldKind::Totp),
     spec("notes", "Notes", FieldKind::Note),
 ];
 const CARD: &[FieldSpec] = &[
@@ -134,8 +220,12 @@ impl ItemType {
         }
     }
 
+    /// The schema entry a stored key belongs to. `totp#2` belongs to `totp` where the type repeats
+    /// that field; any other key must be exactly a schema key.
     pub fn spec(self, key: &str) -> Option<&'static FieldSpec> {
-        self.schema().iter().find(|s| s.key == key)
+        let (base, n) = parse_key(key)?;
+        let found = self.schema().iter().find(|s| s.key == base)?;
+        (n == 1 || (found.repeats && n <= MAX_INSTANCES)).then_some(found)
     }
 }
 
@@ -277,8 +367,14 @@ impl ItemDraft {
             }
         }
 
-        if let Some(v) = self.fields.get("totp") {
-            validate_totp(v)?;
+        for (key, value) in &self.fields {
+            if self
+                .item_type
+                .spec(key)
+                .is_some_and(|s| s.kind == FieldKind::Totp)
+            {
+                validate_totp(value)?;
+            }
         }
         if self.item_type == ItemType::Totp && !self.fields.contains_key("totp") {
             return Err(StorageError::invalid(
@@ -381,8 +477,18 @@ pub fn changed_fields(old: &ItemDraft, new: &ItemDraft) -> Vec<String> {
         out.push("folder".into());
     }
     for s in new.item_type.schema() {
-        if old.fields.get(s.key) != new.fields.get(s.key) {
-            out.push(s.key.into());
+        // `username`, then `username#2` …: the stored keys of both sides, lowest number first
+        let mut keys: Vec<(u32, &str)> = instances(&old.fields, s.key)
+            .into_iter()
+            .chain(instances(&new.fields, s.key))
+            .map(|(n, k, _)| (n, k))
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for (_, key) in keys {
+            if old.fields.get(key) != new.fields.get(key) {
+                out.push(key.into());
+            }
         }
     }
     if old.custom_fields != new.custom_fields {
@@ -579,7 +685,11 @@ impl ItemPayload {
             reprompt: self.reprompt,
             tags: self.tags.clone(),
             folder: self.folder.clone(),
-            has_totp: self.fields.contains_key("totp"),
+            has_totp: !instances(&self.fields, "totp").is_empty(),
+            code_keys: instances(&self.fields, "totp")
+                .into_iter()
+                .map(|(_, key, _)| key.to_string())
+                .collect(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             version,
@@ -589,23 +699,27 @@ impl ItemPayload {
 
     /// Masked view: secret values are replaced by `hasValue` flags.
     pub fn view(&self, version: u64) -> ItemView {
-        let fields = self
-            .item_type
-            .schema()
-            .iter()
-            .filter_map(|s| {
-                let value = self.fields.get(s.key)?;
+        let mut fields: Vec<FieldView> = Vec::new();
+        for s in self.item_type.schema() {
+            // a sign-in's username and password are numbered together, a code on its own
+            let slots = slots_in(&self.fields, slot_group(s.key));
+            for (_, key, value) in instances(&self.fields, s.key) {
                 let secret = s.kind.is_secret();
-                Some(FieldView {
-                    key: s.key.into(),
-                    label: s.label.into(),
+                let n = parse_key(key).map_or(1, |(_, n)| n);
+                fields.push(FieldView {
+                    key: key.into(),
+                    // "Password", or "Password 1", "Password 2" … once there are several; counted by place so a gap never shows
+                    label: match slots.iter().position(|&x| x == n) {
+                        Some(i) if slots.len() > 1 => format!("{} {}", s.label, i + 1),
+                        _ => s.label.into(),
+                    },
                     kind: s.kind,
                     secret,
-                    value: (!secret).then(|| value.clone()),
+                    value: (!secret).then(|| value.to_string()),
                     has_value: true,
-                })
-            })
-            .collect();
+                });
+            }
+        }
         ItemView {
             id: self.id.clone(),
             item_type: self.item_type,
@@ -646,7 +760,10 @@ impl ItemPayload {
 pub fn subtitle_of(item_type: ItemType, fields: &BTreeMap<String, String>) -> Option<String> {
     let get = |k: &str| fields.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
     match item_type {
-        ItemType::Login => get("username")
+        ItemType::Login => instances(fields, "username")
+            .iter()
+            .map(|(_, _, v)| v.trim())
+            .find(|v| !v.is_empty())
             .map(str::to_string)
             .or_else(|| get("url").and_then(host_of)),
         ItemType::Totp => get("account").or_else(|| get("issuer")).map(str::to_string),
@@ -735,6 +852,8 @@ pub struct ItemSummary {
     pub tags: Vec<String>,
     pub folder: Option<String>,
     pub has_totp: bool,
+    /// Stored keys of the item's one-time codes in order (`totp`, `totp#2` …): what to ask `totp_now` for.
+    pub code_keys: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
     pub version: u64,
@@ -845,6 +964,12 @@ pub struct VaultStatus {
     pub reconciling: bool,
     /// Objects in the backup that failed authentication during the last pull (never applied).
     pub remote_damaged: usize,
+    /// Locked, but still open in memory: the account PIN shows it again. Absent when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resumable: bool,
+    /// Opened with the PIN: everything sensitive still asks for the master password. Absent when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub limited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1137,6 +1262,7 @@ mod tests {
             "tags",
             "folder",
             "hasTotp",
+            "codeKeys",
             "updatedAt",
             "version",
             "archived",
@@ -1170,10 +1296,28 @@ mod tests {
             sync_revision: 7,
             reconciling: true,
             remote_damaged: 2,
+            resumable: false,
+            limited: false,
         })
         .unwrap();
         // The old quick-unlock design is gone: no `capabilities` field is sent any more.
         assert!(st.get("capabilities").is_none());
+        // the account-PIN flags are sent only when they are on, so a status looks the same as before without a PIN
+        assert!(st.get("resumable").is_none() && st.get("limited").is_none());
+        let on = serde_json::to_value(VaultStatus {
+            exists: true,
+            unlocked: true,
+            profile: None,
+            damaged_items: 0,
+            sync_revision: 0,
+            reconciling: false,
+            remote_damaged: 0,
+            resumable: true,
+            limited: true,
+        })
+        .unwrap();
+        assert_eq!(on["resumable"], true);
+        assert_eq!(on["limited"], true);
         assert_eq!(st["exists"], true);
         assert_eq!(st["syncRevision"], 7);
         assert_eq!(st["reconciling"], true);
@@ -1221,5 +1365,178 @@ mod tests {
         let c = changed_fields(&a, &b);
         assert_eq!(c, ["title", "tags", "password", "url", "customFields"]);
         assert!(!c.iter().any(|s| s.contains("secret")));
+    }
+
+    // ------------------------------------------------------------ several sign-ins and codes
+
+    const SEED_A: &str = "JBSWY3DPEHPK3PXP";
+    const SEED_B: &str = "ONSWG4TFOQYTEMZU";
+
+    #[test]
+    fn instance_keys_have_one_canonical_spelling() {
+        assert_eq!(parse_key("totp"), Some(("totp", 1)));
+        assert_eq!(parse_key("totp#2"), Some(("totp", 2)));
+        assert_eq!(parse_key("totp#10"), Some(("totp", 10)));
+        for bad in [
+            "totp#",
+            "totp#1",
+            "totp#0",
+            "totp#02",
+            "totp#-2",
+            "totp#2a",
+            "totp#1000",
+            "totp##2",
+        ] {
+            assert_eq!(parse_key(bad), None, "{bad}");
+        }
+        assert_eq!(instance_key("totp", 1), "totp");
+        assert_eq!(instance_key("totp", 4), "totp#4");
+    }
+
+    #[test]
+    fn only_sign_ins_and_codes_of_a_login_repeat() {
+        let l = ItemType::Login;
+        for ok in ["username#2", "password#10", "totp#3"] {
+            assert!(l.spec(ok).is_some(), "{ok}");
+        }
+        // not repeatable, past the limit, or not even a field
+        for bad in ["url#2", "notes#2", "totp#11", "username#1", "nope#2", "#2"] {
+            assert!(l.spec(bad).is_none(), "{bad}");
+        }
+        // a code-only item keeps exactly one code; cards and notes never repeat
+        assert!(ItemType::Totp.spec("totp#2").is_none());
+        assert!(ItemType::Card.spec("number#2").is_none());
+        assert_eq!(l.spec("password#4").unwrap().key, "password");
+    }
+
+    fn two_sign_ins() -> ItemDraft {
+        let mut d = login("Amazon");
+        d.fields
+            .insert("username#2".into(), "work@example.com".into());
+        d.fields
+            .insert("password#2".into(), "work-pw-123456".into());
+        d.fields.insert("totp".into(), SEED_A.into());
+        d.fields.insert("totp#2".into(), SEED_B.into());
+        d
+    }
+
+    #[test]
+    fn a_login_keeps_several_sign_ins_and_codes() {
+        let mut d = two_sign_ins();
+        d.normalize().unwrap();
+        assert_eq!(d.fields.len(), 7);
+        // every code is checked, not just the first
+        d.fields.insert("totp#3".into(), "not a code!".into());
+        assert_eq!(d.normalize().unwrap_err().code(), "invalid_input");
+        d.fields.remove("totp#3");
+        // an unknown or non-canonical key is refused whatever its value
+        for bad in ["url#2", "password#1", "password#11", "color"] {
+            let mut e = two_sign_ins();
+            e.fields.insert(bad.into(), "x".into());
+            assert_eq!(e.normalize().unwrap_err().code(), "invalid_input", "{bad}");
+        }
+        // a blank second value is dropped like any blank field
+        d.fields.insert("password#2".into(), String::new());
+        d.normalize().unwrap();
+        assert!(!d.fields.contains_key("password#2"));
+    }
+
+    #[test]
+    fn the_view_lists_each_instance_in_order_and_hides_secrets() {
+        let mut d = two_sign_ins();
+        d.normalize().unwrap();
+        let p = ItemPayload::new("id".into(), &d, 1);
+        let v = p.view(1);
+        let seen: Vec<(&str, &str)> = v
+            .fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.label.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("username", "Username 1"),
+                ("username#2", "Username 2"),
+                ("password", "Password 1"),
+                ("password#2", "Password 2"),
+                ("url", "Website"),
+                ("totp", "One-time code 1"),
+                ("totp#2", "One-time code 2"),
+            ]
+        );
+        for f in &v.fields {
+            assert_eq!(f.value.is_some(), !f.secret, "{}", f.key);
+        }
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(!json.contains("work-pw-123456") && !json.contains(SEED_B));
+        // a password alone in sign-in 2 is still called "Password 2": the number says which sign-in it belongs to
+        let mut half = login("Half");
+        half.fields.remove("password");
+        half.fields
+            .insert("username#2".into(), "work@example.com".into());
+        half.fields
+            .insert("password#2".into(), "work-pw-123456".into());
+        let p = ItemPayload::new("id".into(), &half, 1);
+        let seen: Vec<(String, String)> = p
+            .view(1)
+            .fields
+            .into_iter()
+            .map(|f| (f.key, f.label))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("username".to_string(), "Username 1".to_string()),
+                ("username#2".to_string(), "Username 2".to_string()),
+                ("password#2".to_string(), "Password 2".to_string()),
+                ("url".to_string(), "Website".to_string()),
+            ]
+        );
+        // a lone `totp#2` is still the only code: its label has no number
+        let mut lone = login("Lone");
+        lone.fields.insert("totp#2".into(), SEED_B.into());
+        let p = ItemPayload::new("id".into(), &lone, 1);
+        let f = p
+            .view(1)
+            .fields
+            .into_iter()
+            .find(|f| f.key == "totp#2")
+            .unwrap();
+        assert_eq!(f.label, "One-time code");
+        assert!(p.summary(1).has_totp);
+    }
+
+    #[test]
+    fn the_first_stored_username_is_the_list_subtitle() {
+        let mut d = login("A");
+        d.fields.remove("username");
+        d.fields
+            .insert("username#2".into(), "second@example.com".into());
+        assert_eq!(
+            subtitle_of(ItemType::Login, &d.fields).as_deref(),
+            Some("second@example.com")
+        );
+        d.fields
+            .insert("username".into(), "first@example.com".into());
+        assert_eq!(
+            subtitle_of(ItemType::Login, &d.fields).as_deref(),
+            Some("first@example.com")
+        );
+    }
+
+    #[test]
+    fn changed_fields_name_the_instance_that_changed() {
+        let a = two_sign_ins();
+        let mut b = a.clone();
+        b.fields
+            .insert("password#2".into(), "changed-pw-123456".into());
+        b.fields.remove("totp#2");
+        b.fields.insert("totp#3".into(), SEED_A.into());
+        assert_eq!(changed_fields(&a, &b), ["password#2", "totp#2", "totp#3"]);
+        // order is schema order, then instance number, so #10 comes after #9
+        let mut c = login("C");
+        c.fields.insert("totp#10".into(), SEED_A.into());
+        c.fields.insert("totp#9".into(), SEED_B.into());
+        assert_eq!(changed_fields(&login("C"), &c), ["totp#9", "totp#10"]);
     }
 }

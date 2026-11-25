@@ -6,7 +6,7 @@ import { relativeTime } from "../../lib/format";
 import { app, be, pushToast, syncAfterCoreLock } from "../../state/app";
 import { backups, refreshBackups, setBackups, summarize } from "../../state/backup";
 import { useStore } from "../../state/store";
-import { reprompt } from "../reprompt/Reprompt";
+import { reprompt, withMaster } from "../reprompt/Reprompt";
 import { PageBody, PageHeader } from "../shell/PageHeader";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
@@ -39,7 +39,11 @@ function Row({ t, onEdit, onRemove, busy, onRun }: { t: BackupTargetView; onEdit
     }
   }
   async function makeMaster() {
-    try { await be().setMasterBackup(t.id); await refreshBackups(); pushToast({ kind: "success", text: `“${t.name}” is now the master backup.` }); }
+    try {
+      const done = await withMaster("Change which backup is the master.", () => be().setMasterBackup(t.id).then(() => true));
+      if (!done) return;
+      await refreshBackups(); pushToast({ kind: "success", text: `“${t.name}” is now the master backup.` });
+    }
     catch (e) { pushToast({ kind: "error", text: e instanceof Error ? e.message : "Could not change the master backup." }); }
   }
   return (
@@ -105,7 +109,8 @@ export function BackupView() {
   }
 
   async function save(input: BackupTargetInput, existing?: BackupTargetView) {
-    const t = existing ? await be().updateBackup(existing.id, input) : await be().addBackup(input);
+    const t = await withMaster(existing ? "Save the changes to this backup." : "Add a backup.", () => (existing ? be().updateBackup(existing.id, input) : be().addBackup(input)));
+    if (!t) return; // the password sheet was cancelled: the form stays as it is
     await refreshBackups();
     setSheet(null);
     pushToast({ kind: "success", text: existing ? `“${t.name}” saved.` : `“${t.name}” added. Backing up now.` });
@@ -114,7 +119,8 @@ export function BackupView() {
 
   async function remove(t: BackupTargetView) {
     try {
-      await be().removeBackup(t.id);
+      const done = await withMaster("Remove this backup.", () => be().removeBackup(t.id).then(() => true));
+      if (!done) return;
       await refreshBackups();
       setSheet(null);
       pushToast({ kind: "info", text: `“${t.name}” was removed. Files already in the bucket are left untouched.` });

@@ -64,7 +64,8 @@ interface ItemSummary {               // list rows; no secrets
   id: string; type: ItemType; title: string;
   subtitle: string | null;            // username or url host, for the row's second line
   favorite: boolean; tags: string[]; folder: string | null;   // a folder is a path of names joined by "/", see §13
-  hasTotp: boolean; createdAt: number; updatedAt: number; version: number;   // createdAt: 0.4.0, for "Newest first"
+  hasTotp: boolean; codeKeys: string[];   // codeKeys: the keys of the item's one-time codes in order ("totp", "totp#2" …), 0.5.0
+  createdAt: number; updatedAt: number; version: number;   // createdAt: 0.4.0, for "Newest first"
   archived: boolean;                  // §5.2; item_list returns active AND archived items, never trashed ones
 }
 
@@ -121,6 +122,8 @@ interface TotpNow { code: string; previous: string; next: string; period: number
 
 Light validation only (never blocks legitimate data): `card.number` digits, spaces and dashes, 8-23 characters; `expMonth` 1-12 and `expYear` 4 digits when present; `sshKey.privateKey` at most 64 KiB. List-row subtitles built in Rust: `card` → `<brand> •••• <last4>` (else cardholder), `identity` → full name (else email), `sshKey` → fingerprint (else first word of the public key comment), others as before.
 
+**Several sign-ins and codes (D46).** A `login` may repeat `username`, `password` and `totp` as `key#n` (`username#2` … `#10`, canonical spelling only: `#1` and `#02` are `invalid_input`); no other type may. A sign-in is the username and password with the same number; codes stand alone. `ItemSummary.codeKeys` lists the code keys in order and `totp_now` takes an optional `key` (default: the first). Views label repeats "Username 1/2", "Password 1/2", "One-time code 1/2": a sign-in's username and password carry the same number, and numbers appear only once a login has more than one of that kind. The first of each kind keeps its plain key, so lists, search subtitles and older builds still work.
+
 `totp` accepts an `otpauth://totp/...` URI **or** a bare base32 secret; Rust validates with `TotpAccount::from_uri` / `new` and rejects with `invalid_input`. Unknown keys are rejected. Empty values are dropped.
 
 ## 3. Commands
@@ -131,7 +134,12 @@ Light validation only (never blocks legitimate data): `card.number` digits, spac
 | `vault_status` | – | `VaultStatus` | works while locked |
 | `vault_create` | – | – | **removed** in this revision: vaults are created through `profile_create` (§5.1) |
 | `vault_unlock` | `password` | `void` | `wrong_password` / `no_vault`; builds the in-memory index |
-| `vault_lock` | – | `void` | drops the VaultRootKey, index and edit tokens (zeroized) |
+| `vault_lock` | – | `void` | the Lock button. An account **without** a PIN: drops the VaultRootKey, index and edit tokens (zeroized). An account **with** a PIN (§5.4): the vault stays open in memory, out of reach (every command answers `locked`), and its PIN shows it again; read `vault_status().resumable` to see which |
+| `vault_lock_all` | – | `void` | "Log out": every open vault is wiped, those waiting behind a PIN too; the saved accounts stay (§5.4) |
+| `vault_unlock_pin` | `pin` | `void` | the selected account's PIN, while its vault waits behind it. `wrong_pin` (message: "That PIN is not right. Tries left: n."), `pin_locked` (the 5th wrong one wiped the vault), `locked` (nothing waits any more: use the master password). The vault is then **limited** (§5.4) |
+| `vault_elevate` | `password` | `void` | the master password, typed in a limited vault: it stops being limited until the next lock. `wrong_password`; `locked` |
+| `account_pin_set` | `password`, `pin` | `ProfileInfo` | gives the selected, unlocked account a PIN or changes it (4 to 64 characters, `invalid_input` otherwise); the master password is verified (`wrong_password`) |
+| `account_pin_remove` | `password` | `ProfileInfo` | removes the PIN (master password verified); a vault waiting behind it is wiped |
 | `vault_change_password` | `oldPassword`, `newPassword` | `void` | re-seals the keyring only (`change_password`) |
 | `item_list` | – | `ItemSummary[]` | active items only, from the in-memory index. The order is not promised: the screen sorts (§13) |
 | `item_get` | `id` | `ItemView` | `in_trash` for trashed items (trash policy lives here, not in the UI) |
@@ -158,7 +166,7 @@ Nothing returns keys, seeds, hashes or the master password.
 * Trashed items: `item_get`, `item_reveal`, `item_begin_edit`, `history_*`, `totp_now` all fail with `in_trash`; `trash_list` exposes only id/title/deletedAt.
 * Nothing is auto-purged. `item_purge` is the only deletion path and requires the password, the in-trash state and, within six months of trashing, the answer to the core's sum.
 * A tombstoned id can never be re-created or re-imported.
-* After `vault_lock`, every command except `vault_status`, `vault_unlock`, `vault_create` and `crypto_suite_info` returns `locked`.
+* After `vault_lock` (and while a vault waits behind a PIN), every command except `vault_status`, `vault_unlock`, `vault_unlock_pin`, `vault_create` and `crypto_suite_info` returns `locked`.
 
 ## 5. Accounts (profiles), archive, clone, vault files (Phase 2b)
 
@@ -167,7 +175,10 @@ Nothing returns keys, seeds, hashes or the master password.
 Each **profile** is a separate vault with its own master password, key bundle and SQLite file. Profiles share nothing: no key, no table, no folder. The login screen lists them and the user picks one before typing its master password.
 
 ```ts
-interface ProfileInfo { id: string; displayName: string; createdAt: number; lastUsedAt: number | null }
+interface ProfileInfo { id: string; displayName: string; createdAt: number; lastUsedAt: number | null;
+  demo?: boolean;                      // the built-in vault
+  hasPin?: boolean;                    // the account has a PIN (§5.4); absent when false
+  resumable?: boolean }                // its vault is open in memory behind the PIN right now; absent when false
 interface ProfileList { profiles: ProfileInfo[]; selectedId: string | null; lastUsedId: string | null }
 interface VaultStatus {                // extended: describes the *selected* profile
   exists: boolean;                     // the selected profile's vault file exists (false when nothing is selected)
@@ -175,25 +186,36 @@ interface VaultStatus {                // extended: describes the *selected* pro
   profile: ProfileInfo | null;         // null when no profile is selected
   damagedItems: number;
   syncRevision: number; reconciling: boolean; remoteDamaged: number;   // R3a, see §2 and §6.2
+  resumable?: boolean;                 // locked, but the PIN opens it (§5.4); absent when false
+  limited?: boolean;                   // opened with the PIN: secrets and settings need the master password; absent when false
 }
 ```
 
 * **Registry** `<app data dir>/profiles.json` (plain JSON, not secret: it must be readable before any unlock, so the display names are visible to anyone who can read the folder; documented trade-off). Written atomically (temp file, fsync, rename, fsync of the folder). Each vault lives in its own folder `<data dir>/vaults/<id>/vault.db`; the folder name is the random id, never the display name (no path tricks, no unicode surprises). A pre-existing `<data dir>/vault.db` from the single-vault era is **adopted in place** as a profile named "My vault" (registry `dir` is `"."`); it is never moved or rewritten.
 * **Display name rules** (enforced in Rust; the UI mirrors them for instant feedback): Unicode NFKC, trimmed, internal whitespace runs collapsed to one space, 1-40 characters, no control characters, **unique per app** compared case-insensitively on the normalized form (`profile_name_taken`). It is a label, not a secret and not a login id.
 * **Lost or corrupt registry:** a registry that fails to parse is renamed to `profiles.json.corrupt-<ms>` (never deleted) and rebuilt by scanning `vaults/*/vault.db` and the legacy file; recovered profiles are named "Recovered vault 1..n" and can be renamed.
-* Only one profile is unlocked at a time. Selecting another profile locks (wipes) the current one first.
+* Only one profile is **shown** at a time. Selecting another profile takes the current one out of reach first: an account with a PIN stays open in memory behind it (§5.4), an account without one is wiped.
 
 | Command | Args | Returns | Notes |
 |---------|------|---------|-------|
 | `profile_list` | – | `ProfileList` | works while locked; newest-used first |
 | `profile_create` | `displayName`, `password` | `ProfileInfo` | validates the name, creates the folder and the vault (min password length 8, Argon2id default params), selects it and leaves it **unlocked**; atomic (nothing is left behind on failure) |
-| `profile_select` | `id` | `void` | locks the current profile, selects this one (still locked); `not_found` |
+| `profile_select` | `id` | `void` | takes the current profile out of reach (parked behind its PIN, or wiped when it has none), selects this one (locked, or `resumable` when it was parked); `not_found` |
 | `profile_rename` | `id`, `displayName` | `ProfileInfo` | the selected, unlocked profile only; `profile_name_taken` |
 | `profile_remove` | `id`, `password`, `confirmation` | `void` | verifies that profile's master password (Argon2id) even if it is not selected; `confirmation` must equal its display name or `CONFIRM` (`confirmation_mismatch`); deletes only that profile's folder and registry entry (legacy-adopted vault: its files) |
 | `profile_import_file` | `displayName` | `ProfileInfo \| null` | Rust opens the **native open dialog** (the webview never supplies a path), validates the chosen file structurally without any password (SQLite header, `application_id`, `user_version`, key bundle parses), copies it into a new profile folder, selects the profile (locked). `null` if the dialog is cancelled; `unsupported_file` otherwise on a bad file |
 | `vault_export_file` | `password` | `{ path: string } \| null` | password-gated; Rust opens the **native save dialog**, writes a consistent copy of the unlocked vault (SQLite backup, already fully encrypted), file name suggestion `<displayName>-<yyyy-mm-dd>.hexis`. Backup-target connection details marked "this device only" are stripped from the copy |
 
 `vault_unlock(password)` and the rest of §3 act on the **selected** profile. `vault_create` no longer exists.
+
+### 5.4 The account PIN (2026-11-25, D45; rules in `ARCHITECTURE.md` §5.1)
+
+* **States.** *Parked*: the vault is open in memory and out of reach; status `unlocked:false, resumable:true`; every command but `vault_status`, `vault_unlock`, `vault_unlock_pin` answers `locked`. *Limited*: shown again with the PIN; status `unlocked:true, limited:true`. A full unlock (`vault_unlock`, or `vault_elevate` on a limited vault) clears it.
+* **What a limited vault refuses, in the core.** `password_required` (nothing ran): `item_reveal`, `item_begin_edit`, `item_clone`, `totp_now`, `history_get`, `history_restore`, every item, flagged or not, unless the call carries the master password (then it is verified as always). `master_required` (nothing ran): `backup_add`, `backup_update`, `backup_remove`, `backup_set_master`, `app_settings_set`, and `file_read` (an attachment is a secret, so the preview asks too). `app_settings_set` answers `locked` while the vault is still parked. `item_search` is not refused but searches as if every item asked for the master password again: **no note text is compared** (labels, titles, usernames, web addresses and tags still are), so the search cannot be used to probe a note. Unchanged and always password-carrying: `item_purge`, `vault_export_file`, `backup_reveal_secret`, `vault_change_password`, `profile_remove`, `gate_configure`, the app reset.
+* **Wipe.** A parked vault is wiped with every other open one by the inactivity timer, leaving the app too long, `gate_close`, `vault_lock_all`, exit, `profile_remove`, `account_pin_remove` and the app reset; and by the fifth wrong PIN in a row (`pin_locked`). The count of wrong PINs restarts only after a right PIN or when a shown vault is parked; Lock, or choosing the same account again, while it is already parked does **not** restart it (a regression test pins this: it was the one way to get unlimited tries).
+* **Storage.** The PIN is an Argon2id hash in the account's entry in `profiles.json` (`pin`), so the wipe that removes the registry removes it. No command returns it. No other file holds it (a test scans the data folder for the PIN text).
+* **Error codes added:** `wrong_pin`, `pin_locked`, `master_required`. Messages are fixed sentences; the typed PIN is never echoed.
+* The gate's allow-list does not include any of the new commands: with the app lock closed they answer `locked`, like every vault command.
 
 ### 5.2 Archive and clone
 

@@ -10,8 +10,8 @@ use super::db::{ItemRow, Store};
 use super::drive::DriveState;
 use super::error::{Result, StorageError};
 use super::model::{
-    changed_fields, totp_account, ItemDraft, ItemEvent, ItemPayload, ItemSummary, ItemView,
-    ParentRef, TotpNow, TrashEntry, VersionEntry, MAX_TITLE_CHARS,
+    changed_fields, instances, totp_account, FieldKind, ItemDraft, ItemEvent, ItemPayload,
+    ItemSummary, ItemView, ParentRef, TotpNow, TrashEntry, VersionEntry, MAX_TITLE_CHARS,
 };
 use super::uuid;
 use crate::crypto::{now_millis, KeyPurpose, VaultKeyBundle, VaultRootKey};
@@ -358,14 +358,27 @@ impl Vault {
         }
     }
 
-    /// Current one-time code. The secret never leaves this function.
+    /// Current one-time code of the first code on the item. The secret never leaves this function.
     pub fn totp_now(&self, id: &str) -> Result<TotpNow> {
+        self.totp_now_of(id, None)
+    }
+
+    /// Current one-time code of one of the item's codes (`totp`, `totp#2` …); `None` is the first.
+    pub fn totp_now_of(&self, id: &str, key: Option<&str>) -> Result<TotpNow> {
         self.require_active(id)?;
         let (payload, _) = self.load_latest(id)?;
-        let secret = payload
-            .fields
-            .get("totp")
-            .ok_or_else(|| StorageError::invalid("This item has no one-time code."))?;
+        let secret = match key {
+            None => instances(&payload.fields, "totp")
+                .first()
+                .map(|(_, _, v)| *v),
+            Some(k) => payload
+                .item_type
+                .spec(k)
+                .filter(|s| s.kind == FieldKind::Totp)
+                .and_then(|_| payload.fields.get(k))
+                .map(String::as_str),
+        }
+        .ok_or_else(|| StorageError::invalid("This item has no one-time code."))?;
         let account = totp_account(secret)?;
         let secs = now_millis() / 1000;
         let window = account.window_at(secs);

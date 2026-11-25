@@ -38,6 +38,7 @@ const KNOWN: ReadonlySet<string> = new Set<ErrorCode>([
   "locked", "no_vault", "vault_exists", "wrong_password", "not_found", "in_trash", "not_in_trash",
   "version_conflict", "invalid_input", "confirmation_mismatch", "token_invalid", "storage", "crypto",
   "profile_name_taken", "unsupported_file", "network", "remote", "password_required", "wrong_answer",
+  "wrong_pin", "pin_locked", "master_required",
 ]);
 
 /** The core rejects with the serialized Rust error ({code,message}) or, for framework errors, a string. */
@@ -70,6 +71,11 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
 
     unlock: (password) => call("vault_unlock", { password }),
     lock: () => call("vault_lock"),
+    lockAll: () => call("vault_lock_all"),
+    unlockPin: (pin) => call("vault_unlock_pin", { pin }),
+    elevate: (password) => call("vault_elevate", { password }),
+    setAccountPin: (password, pin) => call<ProfileInfo>("account_pin_set", { password, pin }),
+    removeAccountPin: (password) => call<ProfileInfo>("account_pin_remove", { password }),
     changePassword: (oldPassword, newPassword) => call("vault_change_password", { oldPassword, newPassword }),
     exportVaultFile: (password) => call<{ path: string } | null>("vault_export_file", { password }),
 
@@ -98,7 +104,7 @@ export function makeBackend(call: Call, kind: Backend["kind"]): Backend {
     getVersion: (id, version, password) => call<ItemDraft>("history_get", { id, version, password: password ?? null }),
     restoreVersion: (id, version, password) => call<ItemSummary>("history_restore", { id, version, password: password ?? null }),
 
-    totpNow: (id, password) => call<TotpNow>("totp_now", { id, password: password ?? null }),
+    totpNow: (id, password, key) => call<TotpNow>("totp_now", { id, password: password ?? null, key: key ?? null }),
 
     listBackups: () => call<BackupTargetView[]>("backup_list"),
     testBackup: (input) => call<BackupTestResult>("backup_test", { input }),

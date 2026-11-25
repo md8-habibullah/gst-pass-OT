@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
-import { ChevronUp, Eye, EyeOff, Plus, Trash2, Wand2, X } from "lucide-react";
-import { BackendError, FIELD_SCHEMA, TYPE_LABEL, type FieldSpec, type ItemDraft, type ItemType } from "../../backend";
+import { Plus, Trash2, X } from "lucide-react";
+import { BackendError, FIELD_SCHEMA, specOf, TYPE_LABEL, type FieldSpec, type ItemDraft, type ItemType } from "../../backend";
+import { CODE, compactSlots, type Fields, SIGN_IN, withoutBlanks } from "../../lib/instances";
 import { parseOtpInput, type OtpAccount } from "../../lib/otp";
 import { app, be, pushToast, refresh, select, setFilter } from "../../state/app";
 import { useStore } from "../../state/store";
 import { closeEditor, ui } from "../../state/ui";
-import { StrengthMeter } from "../lock/StrengthMeter";
 import { Button, IconButton } from "../ui/Button";
 import { Field, Switch, TextArea, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 import { FolderField } from "./FolderSheets";
-import { PasswordGenerator } from "./PasswordGenerator";
+import { CodeRows, SignInRows } from "./CredentialRows";
+import { SecretField } from "./SecretField";
 import { TotpInput } from "./TotpInput";
 import { UrlListInput } from "./UrlListInput";
 import { brandName } from "../../state/brand";
 import { TYPE_META, TYPE_ORDER } from "./typeMeta";
+
+/** What the editor compares to see whether anything changed: blank boxes (an empty extra sign-in) are not a change. */
+const canon = (d: ItemDraft | null): string => (d ? JSON.stringify({ ...d, fields: withoutBlanks(d.fields) }) : "");
 
 const blank = (type: ItemType): ItemDraft => ({ type, title: "", favorite: false, reprompt: false, tags: [], folder: null, fields: {}, customFields: [] });
 
@@ -27,9 +31,6 @@ const TITLE_HINT: Record<ItemType, string> = {
   totp: "GitHub",
   media: "Give it a name",
 };
-
-/** Fields that get the password generator and a strength meter. */
-const GENERATE_FOR = new Set(["login:password", "sshKey:passphrase"]);
 
 function TagInput({ tags, onChange }: { tags: string[]; onChange: (t: string[]) => void }) {
   const [text, setText] = useState("");
@@ -65,38 +66,6 @@ function TagInput({ tags, onChange }: { tags: string[]; onChange: (t: string[]) 
   );
 }
 
-/** A secret text field (card numbers, passphrases, ID numbers) with its own show/hide toggle. */
-function SecretField({ spec, value, onChange, itemType }: { spec: FieldSpec; value: string; onChange: (v: string) => void; itemType: ItemType }) {
-  const [show, setShow] = useState(false);
-  const [gen, setGen] = useState(false);
-  const generate = GENERATE_FOR.has(`${itemType}:${spec.key}`);
-  return (
-    <div className="flex flex-col gap-2.5">
-      <Field
-        label={spec.label}
-        trailing={
-          generate ? (
-            <button type="button" onClick={() => setGen((g) => !g)} aria-expanded={gen} className="pressable inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-[0.86em] font-semibold text-brass-ink hover:text-brass-ink-hi pointer-coarse:min-h-10">
-              {gen ? <ChevronUp className="size-3.5" aria-hidden /> : <Wand2 className="size-3.5" aria-hidden />} {gen ? "Hide" : "Generate"}
-            </button>
-          ) : undefined
-        }
-      >
-        {({ id }) => (
-          <div className="relative">
-            <TextInput id={id} mono type={show ? "text" : "password"} autoComplete={generate ? "new-password" : "off"} value={value} placeholder={spec.placeholder} inputMode={spec.key === "number" || spec.key === "code" || spec.key === "pin" ? "numeric" : undefined} onChange={(e) => onChange(e.target.value)} className="pr-11" />
-            <IconButton label={show ? `Hide ${spec.label.toLowerCase()}` : `Show ${spec.label.toLowerCase()}`} size="sm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setShow((v) => !v)}>
-              {show ? <EyeOff className="size-[17px]" /> : <Eye className="size-[17px]" />}
-            </IconButton>
-          </div>
-        )}
-      </Field>
-      {generate && value && <StrengthMeter password={value} />}
-      {gen && <PasswordGenerator onUse={(p) => { onChange(p); setShow(true); setGen(false); }} onClose={() => setGen(false)} />}
-    </div>
-  );
-}
-
 /** Add and edit sheet (right drawer on desktop, bottom sheet on Android). */
 export function ItemEditor() {
   const req = useStore(ui, (s) => s.editor);
@@ -113,10 +82,13 @@ export function ItemEditor() {
     if (!req) { setDraft(null); return; }
     const d = req.mode === "edit" ? structuredClone(req.session.draft) : req.type ? blank(req.type) : null;
     setDraft(d);
-    setInitial(JSON.stringify(d));
+    setInitial(canon(d));
   }, [req]);
 
-  const dirty = draft !== null && JSON.stringify(draft) !== initial;
+  // An old message about a box stops being true once the person edits anything.
+  useEffect(() => { setError(null); }, [draft]);
+
+  const dirty = draft !== null && canon(draft) !== initial;
   const specs = draft ? FIELD_SCHEMA[draft.type] : [];
   const editing = req?.mode === "edit";
   const title = !req ? "" : editing ? `Edit ${req.session.draft.title}` : draft ? `New ${TYPE_LABEL[draft.type].toLowerCase()}` : "New item";
@@ -126,6 +98,7 @@ export function ItemEditor() {
 
   const set = <K extends keyof ItemDraft>(k: K, v: ItemDraft[K]) => setDraft((d) => (d ? { ...d, [k]: v } : d));
   const setField = (key: string, v: string) => setDraft((d) => (d ? { ...d, fields: { ...d.fields, [key]: v } } : d));
+  const editFields = (change: (f: Fields) => Fields) => setDraft((d) => (d ? { ...d, fields: change(d.fields) } : d));
 
   /** A link or QR code that names the service fills the empty service, account and title boxes of a code-only item. */
   const onIdentified = useCallback((a: OtpAccount) => {
@@ -142,20 +115,25 @@ export function ItemEditor() {
 
   async function save() {
     if (!draft || !req || busy) return;
-    const fields = { ...draft.fields };
+    // A login's sign-ins and codes are renumbered 1, 2, 3 without the blank ones, so the first is always the plain key.
+    let fields: Fields = { ...draft.fields };
+    if (draft.type === "login") fields = compactSlots(compactSlots(fields, SIGN_IN), CODE);
     let split: OtpAccount[] | null = null;
 
     // One-time codes: accept any form, store a clean value, explain anything that cannot work.
-    const raw = (fields.totp ?? "").trim();
-    if (draft.type === "totp" && !raw) return setError("Add the setup key, an otpauth link, or scan the QR code.");
-    if (raw) {
+    if (draft.type === "totp" && !(fields.totp ?? "").trim()) return setError("Add the setup key, an otpauth link, or scan the QR code.");
+    const codeKeys = Object.keys(fields).filter((k) => specOf(draft.type, k)?.kind === "totp");
+    for (const key of codeKeys) {
+      const raw = (fields[key] ?? "").trim();
+      if (!raw) { delete fields[key]; continue; }
       const parsed = parseOtpInput(raw);
-      if (parsed.kind === "error") return setError(parsed.message);
+      const which = codeKeys.length > 1 ? `One-time code ${codeKeys.indexOf(key) + 1}: ` : "";
+      if (parsed.kind === "error") return setError(`${which}${parsed.message}`);
       if (parsed.kind === "export") {
-        if (draft.type !== "totp" || editing) return setError(`That is a multi-account export. Add it from New, Code only, and ${brandName()} will split it into one item per account.`);
+        if (draft.type !== "totp" || editing) return setError(`${which}That is a multi-account export. Add it from New, Code only, and ${brandName()} will split it into one item per account.`);
         split = parsed.accounts;
       } else if (parsed.kind === "ok") {
-        fields.totp = parsed.account.value;
+        fields[key] = parsed.account.value;
       }
     }
     if (!split && !draft.title.trim()) return setError("Give the item a title.");
@@ -198,15 +176,25 @@ export function ItemEditor() {
     }
   }
 
+  // The footer never scrolls away, so a message about saving or cancelling is always in view, even on a phone.
   const footer = (
     <div className="flex flex-col gap-3">
       {inDemo && <p role="note" className="text-[0.86em] text-mist">This is the demo vault. Anyone who opens Hexis can read what you save here. Create your own vault to keep real data.</p>}
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="ghost" onClick={requestClose} disabled={busy}>Cancel</Button>
-        <Button variant="key" busy={busy} disabled={!draft || (editing && !dirty)} onClick={() => void save()}>
-          {editing ? "Save changes" : splitCount > 1 ? `Add ${splitCount} codes` : "Add item"}
-        </Button>
-      </div>
+      {error && <p role="alert" className="rounded-lg border border-ember/40 bg-danger/10 px-4 py-3 text-[0.95em]">{error}</p>}
+      {discard ? (
+        <div role="alertdialog" aria-label="Discard changes" className="flex flex-wrap items-center justify-end gap-2">
+          <p className="min-w-0 flex-1 font-medium">Discard your changes?</p>
+          <Button autoFocus onClick={() => setDiscard(false)}>Keep editing</Button>
+          <Button variant="danger" onClick={closeEditor}>Discard</Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={requestClose} disabled={busy}>Cancel</Button>
+          <Button variant="key" busy={busy} disabled={!draft || (editing && !dirty)} onClick={() => void save()}>
+            {editing ? "Save changes" : splitCount > 1 ? `Add ${splitCount} codes` : "Add item"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 
@@ -235,6 +223,12 @@ export function ItemEditor() {
   };
 
   const body = draft ? specs.flatMap((s, i) => {
+    // A login's sign-ins and codes can repeat: one panel each, with "Add another".
+    if (draft.type === "login") {
+      if (s.key === "username") return [<SignInRows key="signins" fields={draft.fields} edit={editFields} itemType="login" />];
+      if (s.key === "password") return [];
+      if (s.kind === "totp") return [<CodeRows key="codes" fields={draft.fields} edit={editFields} />];
+    }
     // Expiry month and year sit side by side.
     if (s.key === "expMonth") {
       const year = specs[i + 1];
@@ -257,7 +251,7 @@ export function ItemEditor() {
           {TYPE_ORDER.map((type) => {
             const { icon: Icon, hint } = TYPE_META[type];
             return (
-              <button key={type} type="button" onClick={() => { const d = blank(type); setDraft(d); setInitial(JSON.stringify(d)); }} className="pressable group flex items-center gap-4 rounded-lg border border-hairline bg-raised px-4 py-3 text-left shadow-e1 hover:bg-hover pointer-coarse:py-3.5">
+              <button key={type} type="button" onClick={() => { const d = blank(type); setDraft(d); setInitial(canon(d)); }} className="pressable group flex items-center gap-4 rounded-lg border border-hairline bg-raised px-4 py-3 text-left shadow-e1 hover:bg-hover pointer-coarse:py-3.5">
                 <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-pane shadow-e1 group-hover:text-brass-ink"><Icon className="size-5" aria-hidden /></span>
                 <span className="min-w-0">
                   <span className="block font-semibold">{TYPE_LABEL[type]}</span>
@@ -271,15 +265,6 @@ export function ItemEditor() {
 
       {draft && (
         <form className="flex flex-col gap-4 pt-1" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-          {discard && (
-            <div role="alertdialog" aria-label="Discard changes" className="flex flex-wrap items-center gap-3 rounded-lg border border-ember/40 bg-danger/10 px-4 py-3">
-              <p className="min-w-0 flex-1 text-[0.95em]">Discard your changes?</p>
-              <Button onClick={() => setDiscard(false)}>Keep editing</Button>
-              <Button variant="danger" onClick={closeEditor}>Discard</Button>
-            </div>
-          )}
-          {error && <p role="alert" className="rounded-lg border border-ember/40 bg-danger/10 px-4 py-3 text-[0.95em]">{error}</p>}
-
           {splitCount <= 1 && (
             <Field label="Title">
               {({ id }) => <TextInput id={id} data-autofocus={!editing || undefined} value={draft.title} onChange={(e) => set("title", e.target.value)} maxLength={256} placeholder={TITLE_HINT[draft.type]} />}

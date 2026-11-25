@@ -598,6 +598,43 @@ mod tests {
     }
 
     #[test]
+    fn sign_ins_and_codes_added_on_two_devices_merge_per_slot() {
+        let base = login(&[("username", "ana"), ("password", "pw-1111111")], 10);
+        // the phone adds a second sign-in, the laptop a first code and a third code slot
+        let mut phone = base.clone();
+        phone.fields.insert("username#2".into(), "work".into());
+        phone
+            .fields
+            .insert("password#2".into(), "work-pw-1111".into());
+        phone.updated_at = 20;
+        let mut laptop = base.clone();
+        laptop
+            .fields
+            .insert("totp".into(), "JBSWY3DPEHPK3PXP".into());
+        laptop
+            .fields
+            .insert("totp#3".into(), "ONSWG4TFOQYTEMZU".into());
+        laptop.updated_at = 30;
+        let m = merge(Some(&base), &phone, &laptop).unwrap();
+        assert!(m.conflicts.is_empty(), "{:?}", m.conflicts);
+        for k in ["username#2", "password#2", "totp", "totp#3"] {
+            assert!(m.payload.fields.contains_key(k), "{k}");
+        }
+
+        // both devices put a different code into the same free slot: the newer one wins and the
+        // clash is reported by key (the older value stays in the version history)
+        let mut a = base.clone();
+        a.fields.insert("totp#2".into(), "JBSWY3DPEHPK3PXP".into());
+        a.updated_at = 40;
+        let mut b = base.clone();
+        b.fields.insert("totp#2".into(), "ONSWG4TFOQYTEMZU".into());
+        b.updated_at = 50;
+        let m = merge(Some(&base), &a, &b).unwrap();
+        assert_eq!(m.conflicts, ["totp#2"]);
+        assert_eq!(m.payload.fields["totp#2"], "ONSWG4TFOQYTEMZU");
+    }
+
+    #[test]
     fn a_field_both_changed_differently_takes_the_newer_and_says_so() {
         let base = login(&[("password", "old")], 10);
         let mut local = base.clone();

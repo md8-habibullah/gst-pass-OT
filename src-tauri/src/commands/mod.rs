@@ -414,13 +414,56 @@ pub async fn vault_unlock(state: State<'_, AppState>, password: String) -> CmdRe
     run(&state, move |c| c.unlock(password)).await
 }
 
+/// The Lock button. An account with a quick-unlock PIN stays open in memory, out of reach, and its PIN shows it again;
+/// an account without one is wiped. Read `vault_status` (`resumable`) afterwards to see which it was.
 #[tauri::command]
 pub async fn vault_lock(state: State<'_, AppState>) -> CmdResult<()> {
+    run(&state, |c| {
+        c.lock_for_now();
+        Ok(())
+    })
+    .await
+}
+
+/// "Log out": every open vault is wiped, the ones waiting behind a PIN too. The saved accounts stay.
+#[tauri::command]
+pub async fn vault_lock_all(state: State<'_, AppState>) -> CmdResult<()> {
     run(&state, |c| {
         c.lock();
         Ok(())
     })
     .await
+}
+
+/// The selected account's PIN, to show its vault again while it is still open in memory (`wrong_pin`, `pin_locked`).
+#[tauri::command]
+pub async fn vault_unlock_pin(state: State<'_, AppState>, pin: String) -> CmdResult<()> {
+    run(&state, move |c| c.unlock_with_pin(pin)).await
+}
+
+/// Type the master password in a vault that was opened with the PIN, so sensitive actions work again.
+#[tauri::command]
+pub async fn vault_elevate(state: State<'_, AppState>, password: String) -> CmdResult<()> {
+    run(&state, move |c| c.elevate(password)).await
+}
+
+/// Give the selected account a quick-unlock PIN, or change it. Needs the master password.
+#[tauri::command]
+pub async fn account_pin_set(
+    state: State<'_, AppState>,
+    password: String,
+    pin: String,
+) -> CmdResult<ProfileInfo> {
+    run(&state, move |c| c.account_pin_set(password, pin)).await
+}
+
+/// Take the selected account's PIN away. Needs the master password.
+#[tauri::command]
+pub async fn account_pin_remove(
+    state: State<'_, AppState>,
+    password: String,
+) -> CmdResult<ProfileInfo> {
+    run(&state, move |c| c.account_pin_remove(password)).await
 }
 
 #[tauri::command]
@@ -644,8 +687,12 @@ pub async fn totp_now(
     state: State<'_, AppState>,
     id: String,
     password: Option<String>,
+    key: Option<String>,
 ) -> CmdResult<TotpNow> {
-    run(&state, move |c| c.totp_now(&id, password)).await
+    run(&state, move |c| {
+        c.totp_now_of(&id, key.as_deref(), password)
+    })
+    .await
 }
 
 // ------------------------------------------------------------------ backup targets (Phase 4a)
@@ -764,6 +811,11 @@ pub fn invoke_handler<R: tauri::Runtime>(
         vault_export_file,
         vault_unlock,
         vault_lock,
+        vault_lock_all,
+        vault_unlock_pin,
+        vault_elevate,
+        account_pin_set,
+        account_pin_remove,
         vault_change_password,
         item_list,
         prefs_get,

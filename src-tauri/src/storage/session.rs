@@ -100,6 +100,14 @@ struct Unlocked {
     imports: ImportStash,
     /// The sum made for the last permanent delete that asked for one (one at a time; a new one replaces it).
     purge_sum: Option<PurgeSum>,
+    /// Parked: the vault is still open in memory but out of reach. Every call answers `locked` until the account PIN
+    /// brings it back (`quick.rs`). The keys are still held, which is exactly what the idle timer, a logout and five
+    /// wrong PINs end.
+    parked: bool,
+    /// Opened again with the PIN, not the master password: everything sensitive still asks for the master password.
+    limited: bool,
+    /// Wrong PINs since it was parked.
+    wrong_pins: u8,
 }
 
 impl Unlocked {
@@ -109,7 +117,23 @@ impl Unlocked {
             tokens: Vec::new(),
             imports: ImportStash::default(),
             purge_sum: None,
+            parked: false,
+            limited: false,
+            wrong_pins: 0,
         }
+    }
+
+    /// Out of reach: nothing that was half done survives (edit tokens, picked import files, the delete sum).
+    /// The count of wrong PINs restarts only when the vault goes from shown to parked, never while it is already parked:
+    /// otherwise Lock, or choosing the account again, would give four more tries and the fifth would never come.
+    fn park(&mut self) {
+        if !self.parked {
+            self.wrong_pins = 0;
+        }
+        self.parked = true;
+        self.tokens.clear();
+        self.imports = ImportStash::default();
+        self.purge_sum = None;
     }
 
     /// Use up the sum for `id`: `Ok` only for the right answer, and the sum is gone either way.
@@ -265,8 +289,9 @@ impl Session {
 
     fn with_unlocked<T>(&self, f: impl FnOnce(&mut Unlocked) -> Result<T>) -> Result<T> {
         match &mut *self.guard() {
-            State::Unlocked(u) => f(u),
-            State::Locked => Err(StorageError::Locked),
+            State::Unlocked(u) if !u.parked => f(u),
+            // parked behind the PIN counts as locked for everything
+            State::Unlocked(_) | State::Locked => Err(StorageError::Locked),
         }
     }
 
@@ -303,7 +328,8 @@ impl Session {
             Some(password) => self.gated(password, pre, op),
             None => self.with_unlocked(|u| {
                 pre(u)?;
-                if u.vault.requires_reprompt(id)? {
+                // a vault opened with the PIN asks for the master password for every item, flagged or not
+                if u.limited || u.vault.requires_reprompt(id)? {
                     return Err(StorageError::PasswordRequired);
                 }
                 op(u)
@@ -321,17 +347,21 @@ impl Session {
     // ------------------------------------------------------------------ vault lifecycle
 
     pub fn status(&self) -> Result<VaultStatus> {
-        let (unlocked, damaged, revision, reconciling, remote_damaged) = match &*self.guard() {
-            State::Unlocked(u) => (
-                true,
-                u.vault.damaged_items(),
-                u.vault.sync_revision(),
-                u.vault.backup_reconciling(),
-                u.vault.remote_damaged(),
-            ),
-            State::Locked => (false, 0, 0, false, 0),
-        };
-        let exists = unlocked || self.vault_file_has_bundle()?;
+        let (unlocked, damaged, revision, reconciling, remote_damaged, parked, limited) =
+            match &*self.guard() {
+                State::Unlocked(u) if u.parked => (false, 0, 0, false, 0, true, false),
+                State::Unlocked(u) => (
+                    true,
+                    u.vault.damaged_items(),
+                    u.vault.sync_revision(),
+                    u.vault.backup_reconciling(),
+                    u.vault.remote_damaged(),
+                    false,
+                    u.limited,
+                ),
+                State::Locked => (false, 0, 0, false, 0, false, false),
+            };
+        let exists = unlocked || parked || self.vault_file_has_bundle()?;
         Ok(VaultStatus {
             exists,
             unlocked,
@@ -340,6 +370,8 @@ impl Session {
             sync_revision: revision,
             reconciling,
             remote_damaged,
+            resumable: parked,
+            limited,
         })
     }
 
@@ -392,6 +424,83 @@ impl Session {
     /// Drop the root key, the index and every edit token (all wiped on drop).
     pub fn lock(&self) {
         *self.guard() = State::Locked;
+    }
+
+    /// Put the open vault out of reach but keep it open in memory, so the account PIN can show it again.
+    /// `false` when nothing is open (a locked vault stays locked).
+    pub fn park(&self) -> bool {
+        match &mut *self.guard() {
+            State::Unlocked(u) => {
+                u.park();
+                true
+            }
+            State::Locked => false,
+        }
+    }
+
+    /// Is the vault open in memory but out of reach (waiting for the PIN)?
+    pub fn is_parked(&self) -> bool {
+        matches!(&*self.guard(), State::Unlocked(u) if u.parked)
+    }
+
+    /// The PIN was right: the parked vault is shown again, **limited** until the master password is typed.
+    pub fn resume(&self) -> Result<()> {
+        match &mut *self.guard() {
+            State::Unlocked(u) if u.parked => {
+                u.parked = false;
+                u.limited = true;
+                u.wrong_pins = 0;
+                Ok(())
+            }
+            _ => Err(StorageError::Locked),
+        }
+    }
+
+    /// The PIN was wrong. After [`crate::storage::quick::MAX_WRONG_PINS`] in a row the vault is closed for good (keys wiped).
+    pub fn note_wrong_pin(&self) -> StorageError {
+        let mut g = self.guard();
+        let State::Unlocked(u) = &mut *g else {
+            return StorageError::Locked;
+        };
+        if !u.parked {
+            return StorageError::Locked;
+        }
+        u.wrong_pins = u.wrong_pins.saturating_add(1);
+        if u.wrong_pins >= super::quick::MAX_WRONG_PINS {
+            *g = State::Locked;
+            return StorageError::PinLocked;
+        }
+        StorageError::WrongPin {
+            left: super::quick::MAX_WRONG_PINS - u.wrong_pins,
+        }
+    }
+
+    /// Opened with the PIN and not yet with the master password?
+    pub fn is_limited(&self) -> bool {
+        matches!(&*self.guard(), State::Unlocked(u) if !u.parked && u.limited)
+    }
+
+    /// Refuse a sensitive change unless the master password opened this vault (or was typed since).
+    pub fn require_full(&self) -> Result<()> {
+        self.with_unlocked(|u| {
+            if u.limited {
+                Err(StorageError::MasterRequired)
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    /// Type the master password in a vault that was opened with the PIN: it stops being limited.
+    pub fn elevate(&self, password: String) -> Result<()> {
+        self.gated(
+            password,
+            |_| Ok(()),
+            |u| {
+                u.limited = false;
+                Ok(())
+            },
+        )
     }
 
     pub fn change_password(&self, old_password: String, new_password: String) -> Result<()> {
@@ -510,11 +619,21 @@ impl Session {
 
     /// The current one-time code. An item with the re-prompt flag needs the master password for it too.
     pub fn totp_now(&self, id: &str, password: Option<String>) -> Result<TotpNow> {
+        self.totp_now_of(id, None, password)
+    }
+
+    /// The same for one of several codes on the item (`totp#2` …).
+    pub fn totp_now_of(
+        &self,
+        id: &str,
+        key: Option<&str>,
+        password: Option<String>,
+    ) -> Result<TotpNow> {
         self.gated_item(
             id,
             password,
             |u| u.vault.require_active(id),
-            |u| u.vault.totp_now(id),
+            |u| u.vault.totp_now_of(id, key),
         )
     }
 
@@ -687,7 +806,8 @@ impl Session {
 
     /// Search the items (see `vault_search.rs` for what is and is not looked at).
     pub fn item_search(&self, query: &str, old_versions: bool) -> Result<Vec<SearchHit>> {
-        self.with_unlocked(|u| u.vault.search(query, old_versions))
+        // a vault opened with the PIN treats every item as asking for the master password, so no note text is compared
+        self.with_unlocked(|u| u.vault.search(query, old_versions, u.limited))
     }
 
     // ------------------------------------------------------------------ folders
@@ -754,6 +874,8 @@ impl Session {
     }
 
     fn backup_save(&self, id: Option<&str>, input: BackupTargetInput) -> Result<BackupTargetView> {
+        // changing where the vault is copied to needs the master password, not just the PIN
+        self.require_full()?;
         let (prepared, runtime) = self.with_unlocked(|u| {
             Ok((
                 u.vault.backup_prepare(id, &input)?,
@@ -766,10 +888,12 @@ impl Session {
     }
 
     pub fn backup_remove(&self, id: &str) -> Result<()> {
+        self.require_full()?;
         self.with_unlocked(|u| u.vault.backup_remove(id))
     }
 
     pub fn backup_set_master(&self, id: &str) -> Result<()> {
+        self.require_full()?;
         self.with_unlocked(|u| u.vault.backup_set_master(id))
     }
 

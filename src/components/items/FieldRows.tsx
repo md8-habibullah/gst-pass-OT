@@ -90,7 +90,7 @@ export function RevealToggle({ revealed, onReveal, onHide, asks = false }: { rev
  * An item that is set to ask for the master password again does not show a live code. It reports `locked` instead, and
  * `unlock()` asks for the password and shows the code for its own 30 seconds (or whatever the period is), then locks again.
  */
-export function useTotp(id: string, enabled: boolean, title = "this item") {
+export function useTotp(id: string, enabled: boolean, title = "this item", key?: string) {
   const [now, setNow] = useState<TotpNow | null>(null);
   const [tick, setTick] = useState(() => Date.now());
   const [failed, setFailed] = useState<string | null>(null);
@@ -106,7 +106,7 @@ export function useTotp(id: string, enabled: boolean, title = "this item") {
     setFailed(null);
     async function load() {
       try {
-        const t = await be().totpNow(id);
+        const t = await be().totpNow(id, undefined, key);
         if (!alive) return;
         setNow(t);
         setFailed(null);
@@ -120,16 +120,16 @@ export function useTotp(id: string, enabled: boolean, title = "this item") {
     }
     void load();
     return () => { alive = false; clearTimeout(timer); clearTimeout(relock.current); };
-  }, [id, enabled]);
+  }, [id, enabled, key]);
 
   const unlock = useCallback(async () => {
-    const t = await withItemPassword({ reason: `Show the one-time code for “${title}”.`, confirmLabel: "Show code", run: (pw) => be().totpNow(id, pw) });
+    const t = await withItemPassword({ reason: `Show the one-time code for “${title}”.`, confirmLabel: "Show code", run: (pw) => be().totpNow(id, pw, key) });
     if (!t) return;
     setNow(t);
     setLocked(false);
     clearTimeout(relock.current);
     relock.current = setTimeout(() => { setNow(null); setLocked(true); }, Math.max(0, t.validUntilMs - Date.now()));
-  }, [id, title]);
+  }, [id, title, key]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -167,12 +167,12 @@ function NeighbourCodes({ now, soon, onCopy }: { now: TotpNow; soon: boolean; on
   );
 }
 
-export function TotpValue({ id, title, onCopy }: { id: string; title: string; onCopy: (code: string) => Promise<void> }) {
-  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(id, true, title);
-  if (failed) return <FieldRow label="One-time code">{<span className="text-ember">{failed}</span>}</FieldRow>;
+export function TotpValue({ id, title, onCopy, fieldKey, label = "One-time code" }: { id: string; title: string; onCopy: (code: string) => Promise<void>; fieldKey?: string; label?: string }) {
+  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(id, true, title, fieldKey);
+  if (failed) return <FieldRow label={label}>{<span className="text-ember">{failed}</span>}</FieldRow>;
   if (locked) {
     return (
-      <FieldRow label="One-time code">
+      <FieldRow label={label}>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-mist">Hidden. This item asks for your master password.</span>
           <Button className="min-h-8" icon={<KeyRound className="size-3.5" />} onClick={() => void unlock().catch(() => undefined)}>Show code</Button>
@@ -183,8 +183,8 @@ export function TotpValue({ id, title, onCopy }: { id: string; title: string; on
   const tone = ringTone(seconds);
   return (
     <FieldRow
-      label="One-time code"
-      actions={<CopyButton label="Copy one-time code" disabled={!now} onCopy={() => (now ? onCopy(now.code) : undefined)} />}
+      label={label}
+      actions={<CopyButton label={`Copy ${label.toLowerCase()}`} disabled={!now} onCopy={() => (now ? onCopy(now.code) : undefined)} />}
     >
       <div className="flex items-center gap-4">
         <span

@@ -12,7 +12,7 @@
 //!
 //! Lock order: the gate's `attempt` lock, then `ops`, `registry`, `active` (`app.rs`).
 
-use super::{relock, Active, AppCore};
+use super::{relock, Active, AppCore, Parked};
 use crate::gate::settings::AppSettings;
 use crate::gate::wipe::{self, NoObserver, WipeObserver, WipePlan, WipeReport};
 use crate::gate::{GateConfigInput, GateCore, GateOutcome, GateStatus, LockVault};
@@ -29,12 +29,20 @@ pub(super) fn open_gate(
     dir: &Path,
     cfg: &SessionConfig,
     active: &Arc<Mutex<Option<Active>>>,
+    parked: &Parked,
 ) -> Result<GateCore> {
     let active = Arc::clone(active);
+    let parked = Arc::clone(parked);
+    // The inactivity timer, leaving the app for too long and the app lock all end here: nothing stays open in memory,
+    // not even an account that was only waiting behind its PIN.
     let lock_vault: LockVault = Arc::new(move || {
         let session = relock(&active).as_ref().map(|a| Arc::clone(&a.session));
         if let Some(session) = session {
             session.lock();
+        }
+        let waiting: Vec<_> = relock(&parked).drain().map(|(_, s)| s).collect();
+        for s in waiting {
+            s.lock();
         }
     });
     GateCore::open(dir, &cfg.kdf, lock_vault)
@@ -98,6 +106,16 @@ impl AppCore {
     }
 
     pub fn app_settings_set(&self, settings: AppSettings) -> Result<AppSettings> {
+        // how long the app stays open before it locks is a protection: not for a vault opened with the PIN only, and not
+        // while a vault waits behind its PIN
+        if let Some((_, session)) = self.active_session() {
+            if session.is_parked() {
+                return Err(StorageError::Locked);
+            }
+            if session.is_limited() {
+                return Err(StorageError::MasterRequired);
+            }
+        }
         self.gate.set_settings(settings)
     }
 
@@ -178,6 +196,10 @@ impl AppCore {
         let open = relock(&self.active).take();
         if let Some(a) = open {
             a.session.lock();
+        }
+        let waiting: Vec<_> = relock(&self.parked).drain().map(|(_, s)| s).collect();
+        for s in waiting {
+            s.lock();
         }
         let plan = {
             let reg = self.reg();
