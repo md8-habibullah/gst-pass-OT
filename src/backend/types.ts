@@ -21,7 +21,17 @@ export interface ProfileInfo {
   lastUsedAt: number | null;
   /** The built-in demo vault ("Hexis123"). Absent for every other account. */
   demo?: boolean;
+  /** The account has a quick-unlock PIN. Absent when it has none. */
+  hasPin?: boolean;
+  /** Its vault is still open in memory behind the PIN: the PIN opens it right now. Absent otherwise. */
+  resumable?: boolean;
 }
+
+/** A PIN is 4 to 64 characters, the same as the app lock's credential (the core checks it, too). */
+export const PIN_MIN = 4;
+export const PIN_MAX = 64;
+/** Wrong PINs in a row before the open vault is closed and only the master password works. */
+export const PIN_TRIES = 5;
 
 /** Light or dark colours; `system` follows the device's own setting. */
 export type Theme = "system" | "light" | "dark";
@@ -85,6 +95,10 @@ export interface VaultStatus {
   reconciling?: boolean;
   /** Objects on the backup that failed authentication during a pull and were ignored (never applied). */
   remoteDamaged?: number;
+  /** Locked, but still open in memory behind the account's PIN (`unlockPin` opens it). */
+  resumable?: boolean;
+  /** Opened with the PIN only: secrets and settings ask for the master password (`elevate` lifts it). */
+  limited?: boolean;
 }
 
 export interface ItemSummary {
@@ -96,6 +110,8 @@ export interface ItemSummary {
   tags: string[];
   folder: string | null;
   hasTotp: boolean;
+  /** Keys of the item's one-time codes in order (`totp`, `totp#2` …): what `totpNow` takes. */
+  codeKeys: string[];
   createdAt: number;
   updatedAt: number;
   version: number;
@@ -217,6 +233,12 @@ export type ErrorCode =
   | "remote"
   /** The item asks for the master password again and none was sent. */
   | "password_required"
+  /** The PIN was wrong. The message says how many tries are left. */
+  | "wrong_pin"
+  /** Too many wrong PINs: the vault was closed and only the master password opens it. */
+  | "pin_locked"
+  /** The vault was opened with the PIN; this action needs the master password (`elevate` first). */
+  | "master_required"
   /** The answer to the sum on the last "erase everything" step was wrong. */
   | "wrong_answer"
   | "unknown";
@@ -427,7 +449,21 @@ export interface Backend {
   restoreProfileFromBackup(displayName: string, input: BackupTargetInput): Promise<ProfileInfo>;
 
   unlock(password: string): Promise<void>;
+  /**
+   * The Lock button. An account with a PIN stays open in memory out of reach (its PIN shows it again); one without is
+   * wiped. Read `status().resumable` afterwards to see which it was.
+   */
   lock(): Promise<void>;
+  /** "Log out": every open vault is wiped, those waiting behind a PIN too. The saved accounts stay. */
+  lockAll(): Promise<void>;
+  /** The selected account's PIN, while its vault is still open behind it (`wrong_pin`, `pin_locked`, `locked`). */
+  unlockPin(pin: string): Promise<void>;
+  /** Type the master password in a vault opened with the PIN: secrets and settings work again until it locks. */
+  elevate(password: string): Promise<void>;
+  /** Give the open account a PIN, or change it. Needs the master password. */
+  setAccountPin(password: string, pin: string): Promise<ProfileInfo>;
+  /** Take the PIN away. Needs the master password. */
+  removeAccountPin(password: string): Promise<ProfileInfo>;
   changePassword(oldPassword: string, newPassword: string): Promise<void>;
   /** Native save dialog opened by the core. `null` when the user cancels. */
   exportVaultFile(password: string): Promise<{ path: string } | null>;
@@ -465,7 +501,8 @@ export interface Backend {
   restoreVersion(id: string, version: number, password?: string): Promise<ItemSummary>;
 
   /** An item with `reprompt` needs the master password for its one-time code too. */
-  totpNow(id: string, password?: string): Promise<TotpNow>;
+  /** The current code. `key` picks one of several codes on the item (`totp`, `totp#2` …); omitted, the first. */
+  totpNow(id: string, password?: string, key?: string): Promise<TotpNow>;
 
   // backups
   listBackups(): Promise<BackupTargetView[]>;
@@ -567,6 +604,42 @@ export interface FieldSpec {
   label: string;
   kind: FieldKind;
   placeholder?: string;
+  /** Stored more than once as `key`, `key#2` … `key#10` (a login's sign-ins and codes). */
+  repeats?: boolean;
+}
+
+/** How many sign-ins and how many one-time codes one login holds (mirrors MAX_INSTANCES in the core). */
+export const MAX_INSTANCES = 10;
+
+/** `totp` is `{ base: "totp", n: 1 }`, `totp#3` is `{ base: "totp", n: 3 }`; any other spelling is not a stored key. */
+export function parseFieldKey(key: string): { base: string; n: number } | null {
+  const i = key.indexOf("#");
+  if (i < 0) return { base: key, n: 1 };
+  const rest = key.slice(i + 1);
+  if (!/^[1-9]\d{0,2}$/.test(rest) || Number(rest) < 2) return null;
+  return { base: key.slice(0, i), n: Number(rest) };
+}
+
+/** The stored key of instance `n` of a field. */
+export const instanceKey = (base: string, n: number): string => (n <= 1 ? base : `${base}#${n}`);
+
+/** Every stored instance of one field, lowest number first. */
+export function instancesOf(fields: Record<string, string>, base: string): { n: number; key: string; value: string }[] {
+  const out: { n: number; key: string; value: string }[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    const p = parseFieldKey(key);
+    if (p && p.base === base) out.push({ n: p.n, key, value });
+  }
+  return out.sort((a, b) => a.n - b.n);
+}
+
+/** The schema entry a stored key belongs to (`totp#2` belongs to `totp` where the type repeats it). */
+export function specOf(type: ItemType, key: string): FieldSpec | null {
+  const p = parseFieldKey(key);
+  if (!p) return null;
+  const spec = FIELD_SCHEMA[type].find((f) => f.key === p.base);
+  if (!spec) return null;
+  return p.n === 1 || (spec.repeats && p.n <= MAX_INSTANCES) ? spec : null;
 }
 
 const TOTP_SPEC: FieldSpec = {
@@ -575,13 +648,14 @@ const TOTP_SPEC: FieldSpec = {
   kind: "totp",
   placeholder: "Paste a link or setup key, or scan a QR code",
 };
+const REPEATING_TOTP: FieldSpec = { ...TOTP_SPEC, repeats: true };
 
 export const FIELD_SCHEMA: Record<ItemType, FieldSpec[]> = {
   login: [
-    { key: "username", label: "Username", kind: "text", placeholder: "name@example.com" },
-    { key: "password", label: "Password", kind: "password" },
+    { key: "username", label: "Username", kind: "text", placeholder: "name@example.com", repeats: true },
+    { key: "password", label: "Password", kind: "password", repeats: true },
     { key: "url", label: "Website", kind: "url", placeholder: "https://example.com" },
-    TOTP_SPEC,
+    REPEATING_TOTP,
     { key: "notes", label: "Notes", kind: "note" },
   ],
   card: [

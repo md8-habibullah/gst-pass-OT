@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
-import { Camera, CircleAlert, CircleCheck, Eye, EyeOff, ImageUp, Info, ScanLine } from "lucide-react";
+import { Camera, CircleAlert, CircleCheck, Eye, EyeOff, ImageUp, Info, ScanLine, X } from "lucide-react";
 import { canScanWithCamera, decodeQrFromImage, openCameraSettings, ScanError, scanWithCamera } from "../../lib/scan";
 import { describeOtp, parseOtpInput, type OtpAccount, type OtpParse } from "../../lib/otp";
 import { Button, IconButton } from "../ui/Button";
@@ -15,10 +15,12 @@ export interface TotpInputProps {
   /** Called when a link or QR code names the service, so the editor can fill empty fields. */
   onIdentified?: (account: OtpAccount) => void;
   autoFocus?: boolean;
+  /** Another code on the same item can be taken out: shows a Remove button beside the label. */
+  onRemove?: () => void;
 }
 
 /** Everything a person might hand us for a one-time code: a setup key, an otpauth link, a QR image or a camera scan. */
-export function TotpInput({ label, value, onChange, canSplit, onIdentified, autoFocus }: TotpInputProps) {
+export function TotpInput({ label, value, onChange, canSplit, onIdentified, autoFocus, onRemove }: TotpInputProps) {
   const [shown, setShown] = useState(false);
   const [note, setNote] = useState<{ tone: "error" | "info"; text: string } | null>(null);
   const [needsSettings, setNeedsSettings] = useState(false);
@@ -44,6 +46,11 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
     const parsed = parseOtpInput(text);
     if (parsed.kind === "export" && !canSplit) {
       setNote({ tone: "error", text: `That is a multi-account export. Add it from New, Code only, and ${brandName()} will split it into one item per account.` });
+      return;
+    }
+    // Something that is not a code (a web address, a Wi-Fi code …) never replaces what is in the box.
+    if (parsed.kind === "error" || parsed.kind === "empty") {
+      setNote({ tone: "error", text: parsed.kind === "error" ? `That is not a one-time code. ${parsed.message}` : "That scan was empty." });
       return;
     }
     onChange(parsed.kind === "ok" ? parsed.account.value : text.trim());
@@ -88,7 +95,11 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
 
   const shortKey = parse.kind === "ok" && parse.account.shortKey;
   return (
-    <Field label={label} error={parse.kind === "error" ? parse.message : note?.tone === "error" ? note.text : null}>
+    <Field
+      label={label}
+      error={parse.kind === "error" ? parse.message : note?.tone === "error" ? note.text : null}
+      trailing={onRemove ? <button type="button" onClick={onRemove} className="pressable rounded-sm px-1.5 py-1 text-[0.86em] font-medium text-mist hover:text-ember pointer-coarse:min-h-10">Remove</button> : undefined}
+    >
       {({ id, describedBy, invalid }) => (
         <div className="flex flex-col gap-2.5">
           <div className="relative">
@@ -105,16 +116,24 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
               onChange={(e) => { setNote(null); onChange(e.target.value); }}
               onPaste={onPaste}
               maxLength={8192}
-              className="pr-11"
+              className={value ? "pr-[4.75rem] pointer-coarse:pr-[6.5rem]" : "pr-11 pointer-coarse:pr-14"}
             />
-            <IconButton label={shown ? "Hide the setup key" : "Show the setup key"} size="sm" className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setShown((v) => !v)}>
-              {shown ? <EyeOff className="size-[17px]" /> : <Eye className="size-[17px]" />}
-            </IconButton>
+            <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center">
+              {value && (
+                <IconButton label="Clear this code" size="sm" onClick={() => { setNote(null); onChange(""); setShown(false); }}>
+                  <X className="size-[17px]" />
+                </IconButton>
+              )}
+              <IconButton label={shown ? "Hide the setup key" : "Show the setup key"} size="sm" onClick={() => setShown((v) => !v)}>
+                {shown ? <EyeOff className="size-[17px]" /> : <Eye className="size-[17px]" />}
+              </IconButton>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          {/* Ways to fill the box. They go away once it has a value; clear it to scan again. */}
+          <div className={`flex flex-wrap gap-2 ${value && !needsSettings ? "hidden" : ""}`}>
             {mobile && (
-              <Button variant="key" busy={busy} icon={<Camera className="size-4" />} onClick={() => void scan()}>
+              <Button variant="quiet" busy={busy} icon={<Camera className="size-4" />} onClick={() => void scan()}>
                 Scan QR code
               </Button>
             )}
@@ -158,7 +177,7 @@ export function TotpInput({ label, value, onChange, canSplit, onIdentified, auto
           {parse.kind === "empty" && !note && (
             <p className="flex items-start gap-2 text-[0.86em] text-fog">
               <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              <span>Any of these work: the setup key, an otpauth:// link, a link containing the key, a Google Authenticator export link, or a screenshot of the QR code.</span>
+              <span>A setup key, an otpauth:// link, a Google Authenticator export or a picture of the QR code all work.</span>
             </p>
           )}
         </div>

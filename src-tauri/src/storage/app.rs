@@ -32,9 +32,11 @@ use super::vault::search::SearchHit;
 use crate::crypto::{now_millis, VaultKeyBundle};
 use crate::gate::GateCore;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 /// How long a flush on exit or backgrounding may take in total, across all targets.
 pub const EXIT_FLUSH: Duration = Duration::from_secs(8);
@@ -54,6 +56,9 @@ struct Active {
     id: String,
     session: Arc<Session>,
 }
+
+/// Open-but-out-of-reach sessions of accounts that were switched away from (see [`AppCore::parked`]).
+type Parked = Arc<Mutex<HashMap<String, Arc<Session>>>>;
 
 /// Result of a vault export: where the file was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -87,6 +92,10 @@ pub struct AppCore {
     registry: Mutex<Registry>,
     /// Shared with the idle timer's thread (`gate_api::open_gate`), which locks the vault.
     active: Arc<Mutex<Option<Active>>>,
+    /// Accounts that were left (by switching) while their vault was open and they have a quick-unlock PIN: still open
+    /// in memory, out of reach, until their PIN shows them again, the idle timer ends or the app closes.
+    /// Lock order: `active`, then `parked`.
+    parked: Parked,
     /// Stage 1 (the optional app gate), the attempt counter, the idle timer and the wipe's
     /// in-memory half (`crate::gate`, glued in `app/gate_api.rs`).
     gate: GateCore,
@@ -122,7 +131,8 @@ impl AppCore {
         prepare_dir(dir)?;
         let registry = Registry::load(dir)?;
         let active = Arc::new(Mutex::new(None));
-        let gate = gate_api::open_gate(dir, &cfg, &active)?;
+        let parked: Parked = Arc::new(Mutex::new(HashMap::new()));
+        let gate = gate_api::open_gate(dir, &cfg, &active, &parked)?;
         // From here on every timestamp is checked UTC when there is such a time (see `crate::clock`).
         crate::crypto::install_time_source(|| crate::clock::TrustedClock::global().now_ms());
         let device = super::device::load(dir);
@@ -137,6 +147,7 @@ impl AppCore {
             ops: Mutex::new(()),
             registry: Mutex::new(registry),
             active,
+            parked,
             gate,
             device: Mutex::new(device),
         })
@@ -187,16 +198,37 @@ impl AppCore {
             .ok_or(StorageError::Locked)
     }
 
-    /// Make `session` the selected one, wiping whatever was selected before.
-    fn activate(&self, id: String, session: Session) {
+    /// Make `session` the selected one. Whatever was selected before is wiped, unless its account has a quick-unlock PIN and
+    /// its vault is open: then it is parked (still open in memory, out of reach) so its PIN can bring it back.
+    fn activate(&self, id: String, session: Arc<Session>) {
+        // The registry comes before `active` in the lock order, so ask it first.
+        let keep_old = {
+            let old_id = relock(&self.active).as_ref().map(|a| a.id.clone());
+            old_id.is_some_and(|i| self.reg().get(&i).is_some_and(|e| e.pin.is_some()))
+        };
         let mut active = relock(&self.active);
         if let Some(old) = active.take() {
-            old.session.lock();
+            if keep_old && old.session.park() {
+                relock(&self.parked).insert(old.id, old.session);
+            } else {
+                old.session.lock();
+            }
         }
-        *active = Some(Active {
-            id,
-            session: Arc::new(session),
-        });
+        *active = Some(Active { id, session });
+    }
+
+    /// Wipe every open vault: the selected one and every parked one.
+    fn lock_all(&self) {
+        let session = relock(&self.active)
+            .as_ref()
+            .map(|a| Arc::clone(&a.session));
+        if let Some(s) = session {
+            s.lock();
+        }
+        let parked: Vec<Arc<Session>> = relock(&self.parked).drain().map(|(_, s)| s).collect();
+        for s in parked {
+            s.lock();
+        }
     }
 
     // ------------------------------------------------------------------ profiles
@@ -205,8 +237,14 @@ impl AppCore {
         let selected = self.active_session().map(|(id, _)| id);
         let mut list = self.reg().list(selected.as_deref());
         let demo = relock(&self.device).demo_profile.clone();
+        let parked: Vec<String> = relock(&self.parked).keys().cloned().collect();
+        let active_parked = self
+            .active_session()
+            .filter(|(_, s)| s.is_parked())
+            .map(|(id, _)| id);
         for p in &mut list.profiles {
             p.demo = demo.as_deref() == Some(p.id.as_str());
+            p.resumable = parked.contains(&p.id) || active_parked.as_deref() == Some(p.id.as_str());
         }
         Ok(list)
     }
@@ -238,6 +276,7 @@ impl AppCore {
             created_at: now,
             last_used_at: Some(now),
             dir: dir_rel,
+            pin: None,
         };
         let info = entry.info();
         if let Err(e) = self.reg().add(entry) {
@@ -246,7 +285,7 @@ impl AppCore {
             discard_folder(&self.dir, &folder);
             return Err(e);
         }
-        self.activate(id, session);
+        self.activate(id, Arc::new(session));
         Ok(info)
     }
 
@@ -267,9 +306,18 @@ impl AppCore {
             };
             // Remembering the last account is a convenience: never block a login on it.
             let _ = reg.touch(id);
-            self.new_session(path)
+            Arc::new(self.new_session(path))
         };
+        // The account being left goes first (parked when it has a PIN), so choosing the same account again finds it.
         self.activate(id.to_string(), session);
+        let mut active = relock(&self.active);
+        if let Some(back) = relock(&self.parked).remove(id) {
+            if let Some(fresh) = active.as_mut().filter(|a| a.id == id) {
+                // still open behind its PIN: that session, not the empty one just made
+                fresh.session.lock();
+                fresh.session = back;
+            }
+        }
         Ok(())
     }
 
@@ -315,6 +363,9 @@ impl AppCore {
                 if let Some(a) = active.take() {
                     a.session.lock();
                 }
+            }
+            if let Some(s) = relock(&self.parked).remove(id) {
+                s.lock();
             }
         }
         self.delete_profile_files(&entry)?;
@@ -388,7 +439,7 @@ impl AppCore {
         let result = self.import_into(&src, &folder, &id, &name, &dir_rel);
         match result {
             Ok(info) => {
-                self.activate(id, self.new_session(folder.join(VAULT_FILE)));
+                self.activate(id, Arc::new(self.new_session(folder.join(VAULT_FILE))));
                 Ok(Some(info))
             }
             Err(e) => {
@@ -445,6 +496,7 @@ impl AppCore {
             created_at: now,
             last_used_at: Some(now),
             dir: dir_rel.to_string(),
+            pin: None,
         };
         let info = entry.info();
         self.reg().add(entry)?;
@@ -505,7 +557,7 @@ impl AppCore {
         let folder = self.dir.join(&dir_rel);
         match self.restore_into_folder(&cfg, &folder, &id, &name, &dir_rel) {
             Ok(info) => {
-                self.activate(id, self.new_session(folder.join(VAULT_FILE)));
+                self.activate(id, Arc::new(self.new_session(folder.join(VAULT_FILE))));
                 Ok(info)
             }
             Err(e) => {
@@ -538,6 +590,7 @@ impl AppCore {
             created_at: now,
             last_used_at: Some(now),
             dir: dir_rel.to_string(),
+            pin: None,
         };
         let info = entry.info();
         self.reg().add(entry)?;
@@ -642,10 +695,15 @@ impl AppCore {
                 sync_revision: 0,
                 reconciling: false,
                 remote_damaged: 0,
+                resumable: false,
+                limited: false,
             }),
             Some((id, session)) => {
                 let mut st = session.status()?;
-                st.profile = self.reg().get(&id).map(Entry::info).map(|p| self.marked(p));
+                st.profile = self.reg().get(&id).map(Entry::info).map(|mut p| {
+                    p.resumable = st.resumable;
+                    self.marked(p)
+                });
                 Ok(st)
             }
         }
@@ -658,10 +716,77 @@ impl AppCore {
         Ok(())
     }
 
+    /// Wipe every open vault: the selected one and every one parked behind a PIN. This is what the inactivity timer,
+    /// leaving the app for too long, the app lock, "Log out" and quitting do.
     pub fn lock(&self) {
-        if let Some((_, session)) = self.active_session() {
-            session.lock();
+        self.lock_all();
+    }
+
+    /// The Lock button: when the account has a quick-unlock PIN the vault stays open in memory, out of reach, and the PIN
+    /// shows it again (`true`). Without a PIN it is wiped, as with [`lock`](Self::lock) (`false`).
+    pub fn lock_for_now(&self) -> bool {
+        let Some((id, session)) = self.active_session() else {
+            return false;
+        };
+        let has_pin = self.reg().get(&id).is_some_and(|e| e.pin.is_some());
+        if has_pin && session.park() {
+            return true;
         }
+        session.lock();
+        false
+    }
+
+    /// The account PIN, typed on the lock screen. Right: the vault that is still open in memory is shown again,
+    /// limited (everything sensitive asks for the master password). Wrong: `wrong_pin` with the tries left, and after the
+    /// fifth the vault is wiped (`pin_locked`). The Argon2id check runs with no lock held.
+    pub fn unlock_with_pin(&self, pin: String) -> Result<()> {
+        let pin = Zeroizing::new(pin);
+        let (id, session) = self.active_session().ok_or(StorageError::Locked)?;
+        if !session.is_parked() {
+            return Err(StorageError::Locked);
+        }
+        let stored = self
+            .reg()
+            .get(&id)
+            .and_then(|e| e.pin.clone())
+            .ok_or(StorageError::Locked)?;
+        if super::quick::matches(&pin, &stored)? {
+            session.resume()?;
+            let _ = self.reg().touch(&id);
+            Ok(())
+        } else {
+            Err(session.note_wrong_pin())
+        }
+    }
+
+    /// Type the master password in a vault that was opened with the PIN: it is no longer limited.
+    pub fn elevate(&self, password: String) -> Result<()> {
+        self.session()?.elevate(password)
+    }
+
+    /// Give the open account a quick-unlock PIN (or change it). Needs the master password every time, and the vault open.
+    pub fn account_pin_set(&self, password: String, pin: String) -> Result<ProfileInfo> {
+        let pin = Zeroizing::new(pin);
+        let (id, session) = self.active_session().ok_or(StorageError::Locked)?;
+        // The cheap checks first, so a PIN that cannot be used never costs an Argon2id run.
+        if let Some(problem) = super::quick::problem(&pin) {
+            return Err(StorageError::invalid(problem));
+        }
+        session.confirm_password(password)?;
+        let hash = super::quick::hash(&pin, &self.cfg.kdf)?;
+        let info = self.reg().set_pin(&id, Some(hash))?;
+        Ok(self.marked(info))
+    }
+
+    /// Take the PIN away (needs the master password). Nothing stays parked for the account afterwards.
+    pub fn account_pin_remove(&self, password: String) -> Result<ProfileInfo> {
+        let (id, session) = self.active_session().ok_or(StorageError::Locked)?;
+        session.confirm_password(password)?;
+        let info = self.reg().set_pin(&id, None)?;
+        if let Some(s) = relock(&self.parked).remove(&id) {
+            s.lock();
+        }
+        Ok(self.marked(info))
     }
 
     pub fn change_password(&self, old_password: String, new_password: String) -> Result<()> {
@@ -808,6 +933,16 @@ impl AppCore {
     pub fn totp_now(&self, id: &str, password: Option<String>) -> Result<TotpNow> {
         self.session()?.totp_now(id, password)
     }
+
+    /// The code of one of the item's several codes (`key` is `totp`, `totp#2` …).
+    pub fn totp_now_of(
+        &self,
+        id: &str,
+        key: Option<&str>,
+        password: Option<String>,
+    ) -> Result<TotpNow> {
+        self.session()?.totp_now_of(id, key, password)
+    }
 }
 
 #[path = "app_drive.rs"]
@@ -818,6 +953,9 @@ impl Drop for AppCore {
     fn drop(&mut self) {
         if let Some(active) = relock(&self.active).take() {
             active.session.lock();
+        }
+        for (_, s) in relock(&self.parked).drain() {
+            s.lock();
         }
     }
 }

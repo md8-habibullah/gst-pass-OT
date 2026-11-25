@@ -18,6 +18,15 @@ pub enum StorageError {
     VaultExists,
     #[error("Wrong master password.")]
     WrongPassword,
+    /// The account PIN was wrong; `left` tries remain before the PIN stops working until the master password is used.
+    #[error("That PIN is not right. Tries left: {left}.")]
+    WrongPin { left: u8 },
+    /// Too many wrong PINs: the open vault was closed and only the master password opens it now.
+    #[error("Too many wrong PINs. Enter your master password.")]
+    PinLocked,
+    /// This needs the master password, and the vault was opened with the PIN only.
+    #[error("This needs your master password. The PIN is not enough for it.")]
+    MasterRequired,
     /// The item is marked "ask for the master password again" and the call carried none.
     #[error("This item asks for your master password.")]
     PasswordRequired,
@@ -62,6 +71,9 @@ impl StorageError {
             Self::NoVault => "no_vault",
             Self::VaultExists => "vault_exists",
             Self::WrongPassword => "wrong_password",
+            Self::WrongPin { .. } => "wrong_pin",
+            Self::PinLocked => "pin_locked",
+            Self::MasterRequired => "master_required",
             Self::PasswordRequired => "password_required",
             Self::WrongAnswer => "wrong_answer",
             Self::NotFound => "not_found",

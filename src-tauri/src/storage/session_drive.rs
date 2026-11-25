@@ -92,9 +92,15 @@ impl Session {
         )
     }
 
-    /// The decrypted bytes for the preview. The decryption runs without the state lock.
+    /// The decrypted bytes for the preview. The decryption runs without the state lock. A vault opened with the account PIN
+    /// refuses (`master_required`): attachments are as sensitive as notes, which also stay sealed there.
     pub fn file_read(&self, id: &str) -> Result<Zeroizing<Vec<u8>>> {
-        let ticket = self.with_unlocked(|u| u.vault.file_read_ticket(id))?;
+        let ticket = self.with_unlocked(|u| {
+            if u.limited {
+                return Err(StorageError::MasterRequired);
+            }
+            u.vault.file_read_ticket(id)
+        })?;
         drive::read_to_memory(&ticket)
     }
 

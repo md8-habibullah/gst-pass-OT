@@ -400,6 +400,9 @@ impl ImportedEntry {
             }
             custom_fields.push(c);
         }
+        if item_type == ItemType::Login {
+            restore_instances(&mut fields, &mut custom_fields);
+        }
         if custom_fields.len() > MAX_CUSTOM_FIELDS {
             warnings.push(format!(
                 "\u{201c}{label}\u{201d} has more than {MAX_CUSTOM_FIELDS} custom fields; the extra ones were left out."
@@ -761,6 +764,40 @@ pub fn same_account(a: &AccountKey, b: &AccountKey) -> bool {
             .any(|x| b.names.iter().any(|y| names_alike(x, y)))
 }
 
+/// Hexis writes a login's second and later sign-ins and codes as extra fields named
+/// `Username 2`, `Password 2` and `One-time code 2` (the last two hidden), because other apps have
+/// one of each. Reading such a file back puts them in their own places again. A field only moves
+/// when its slot is free and, for a code, when its value is a usable code; anything else stays a
+/// custom field.
+fn restore_instances(fields: &mut BTreeMap<String, String>, custom: &mut Vec<CustomField>) {
+    custom.retain(|c| {
+        let Some((label, n)) = c.name.rsplit_once(' ') else {
+            return true;
+        };
+        let (base, secret) = match label {
+            "Username" => ("username", false),
+            "Password" => ("password", true),
+            "One-time code" => ("totp", true),
+            _ => return true,
+        };
+        let Some(n) = n
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (2..=crate::storage::model::MAX_INSTANCES).contains(n))
+        else {
+            return true;
+        };
+        let key = crate::storage::model::instance_key(base, n);
+        let usable = (c.hidden || !secret)
+            && !fields.contains_key(&key)
+            && (base != "totp" || crate::storage::model::totp_account(&c.value).is_ok());
+        if usable {
+            fields.insert(key, c.value.clone());
+        }
+        !usable
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -959,18 +996,31 @@ mod tests {
     }
 
     #[test]
-    fn extra_codes_are_kept_as_hidden_fields() {
+    fn extra_codes_become_the_logins_further_codes() {
         let mut e = login();
         e.add_totp("JBSWY3DPEHPK3PXP");
         e.add_totp("GEZDGNBVGY3TQOJQ");
         let d = e.to_draft().draft;
         assert_eq!(d.fields["totp"], "JBSWY3DPEHPK3PXP");
-        let f = d
+        assert_eq!(d.fields["totp#2"], "GEZDGNBVGY3TQOJQ");
+        assert!(d.custom_fields.iter().all(|f| f.name != "One-time code 2"));
+    }
+
+    #[test]
+    fn extra_codes_of_a_card_stay_hidden_fields() {
+        // a card has no code field, so its first and further codes are kept as hidden fields
+        let mut e = ImportedEntry::new(EntryKind::Card, "Visa");
+        e.add_totp("JBSWY3DPEHPK3PXP");
+        e.add_totp("GEZDGNBVGY3TQOJQ");
+        let d = e.to_draft().draft;
+        assert_eq!(d.item_type, ItemType::Card);
+        let codes: Vec<_> = d
             .custom_fields
             .iter()
-            .find(|f| f.name == "One-time code 2")
-            .unwrap();
-        assert!(f.hidden);
+            .filter(|f| f.name.starts_with("One-time code"))
+            .collect();
+        assert_eq!(codes.len(), 2);
+        assert!(codes.iter().all(|f| f.hidden));
     }
 
     #[test]

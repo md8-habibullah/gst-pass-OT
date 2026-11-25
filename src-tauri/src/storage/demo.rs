@@ -314,6 +314,16 @@ pub fn items(now: u64, fill: Fill<'_>) -> Vec<BatchItem> {
         (655, 9),
     );
     m.out[aws].draft.reprompt = true;
+    // the root user is a second sign-in with its own password and its own one-time code
+    let root_password = m.password(20);
+    let root_code = m.otpauth("Amazon Web Services", "root", 16);
+    for (key, value) in [
+        ("username#2", "hexis-root".to_string()),
+        ("password#2", root_password),
+        ("totp#2", root_code),
+    ] {
+        m.out[aws].draft.fields.insert(key.into(), value);
+    }
     m.out[aws]
         .draft
         .custom_fields
@@ -561,6 +571,10 @@ mod tests {
                 .count()
                 >= 8
         );
+        // one login shows several sign-ins and codes
+        assert!(v.iter().any(|i| {
+            i.draft.fields.contains_key("password#2") && i.draft.fields.contains_key("totp#2")
+        }));
     }
 
     #[test]

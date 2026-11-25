@@ -3,6 +3,7 @@ import { FileWarning } from "lucide-react";
 import type { FileEntry } from "../../backend";
 import { MAX_FILE_LABEL, previewKind } from "../../lib/files";
 import { be } from "../../state/app";
+import { withMaster } from "../reprompt/Reprompt";
 import { Spinner } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 
@@ -35,8 +36,10 @@ export function FilePreview({ file, onClose }: { file: FileEntry | null; onClose
     setLoaded(null); setError(null);
     const kind = previewKind(file);
     if (kind === "none") { setLoaded({ kind: "none" }); return; }
-    be().fileRead(file.id).then((buf) => {
+    // a vault opened with the PIN asks for the master password before a file is shown
+    withMaster("Preview this file.", () => be().fileRead(file.id)).then((buf) => {
       if (!alive) return;
+      if (!buf) { setError("The master password is needed to preview this file."); return; }
       if (kind === "image") { url = URL.createObjectURL(new Blob([buf], { type: file.mime ?? "image/*" })); setLoaded({ kind: "image", url }); }
       else if (kind === "text") setLoaded({ kind: "text", text: new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(0, TEXT_LIMIT)), cut: buf.byteLength > TEXT_LIMIT });
       else setLoaded({ kind: "pdf", bytes: buf });

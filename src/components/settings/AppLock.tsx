@@ -10,6 +10,7 @@ import { be, pushToast, refreshGate } from "../../state/app";
 import { app } from "../../state/app";
 import { useStore } from "../../state/store";
 import { GridPad } from "../gate/GridPad";
+import { withMaster } from "../reprompt/Reprompt";
 import { Button } from "../ui/Button";
 import { Field, Segmented, Select, Switch, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
@@ -184,7 +185,10 @@ export function AppLockGroup({ heading = true }: { heading?: boolean }) {
     if (!prev) return;
     const wanted = { ...prev, ...next };
     setSettings(wanted);
-    try { setSettings(await be().appSettingsSet(wanted)); } catch { setSettings(prev); pushToast({ kind: "error", text: "Could not change the lock timer." }); }
+    try {
+      const saved = await withMaster("Change the lock timer.", () => be().appSettingsSet(wanted));
+      setSettings(saved ?? prev); // cancelled: the timer stays as it was
+    } catch { setSettings(prev); pushToast({ kind: "error", text: "Could not change the lock timer." }); }
   }
 
   return (
@@ -197,7 +201,7 @@ export function AppLockGroup({ heading = true }: { heading?: boolean }) {
         >
           <Button icon={<ScanFace className="size-4" />} onClick={() => setOpen(true)} disabled={!gate}>{gate?.enabled ? "Change" : "Set up"}</Button>
         </Row>
-        <Row title="Lock an open vault after" description="No taps or typing for this long and the vault key is wiped from memory. You will need the master password again.">
+        <Row title="Lock an open vault after" description="No taps or typing for this long and every vault key is wiped from memory, the ones waiting behind a PIN too. You will need the master password again.">
           {settings && (
             <Select aria-label="Lock after no activity for" value={settings.lockAfterMinutes} onChange={(e) => void change({ lockAfterMinutes: Number(e.target.value) as AppSettings["lockAfterMinutes"] })}>
               {LOCK_AFTER_MINUTES.map((m) => <option key={m} value={m}>{idleLabel(m)}</option>)}

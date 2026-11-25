@@ -147,8 +147,9 @@ fn matches(pieces: &[Piece], words: &[String]) -> Option<Vec<String>> {
 }
 
 impl Vault {
-    /// Search the active items (see the module notes for what is and is not compared).
-    pub fn search(&self, query: &str, old_versions: bool) -> Result<Vec<SearchHit>> {
+    /// Search the active items (see the module notes for what is and is not compared). `limited` (the vault was opened
+    /// with the account PIN) searches as if every item asked for the master password again: no note text is compared.
+    pub fn search(&self, query: &str, old_versions: bool, limited: bool) -> Result<Vec<SearchHit>> {
         let words = words_of(query)?;
         if words.is_empty() {
             return Ok(Vec::new());
@@ -156,7 +157,7 @@ impl Vault {
         let mut hits: Vec<SearchHit> = Vec::new();
         for row in self.store.all_item_rows()? {
             let reprompt = match self.index.get(&row.id) {
-                Some(IndexEntry::Active(s)) => s.reprompt,
+                Some(IndexEntry::Active(s)) => s.reprompt || limited,
                 _ => continue, // trashed, or unreadable: never searched
             };
             // A damaged item is skipped here exactly as at unlock; the vault reports it elsewhere.
@@ -267,6 +268,22 @@ mod tests {
             found(&p, false, "   ").is_some(),
             "no words match everything; the caller turns that into no query"
         );
+    }
+
+    #[test]
+    fn every_sign_in_is_searched_but_no_password_or_code() {
+        let p = payload(
+            ItemType::Login,
+            &[
+                ("username", "first@example.com"),
+                ("username#2", "second@example.com"),
+                ("password#2", "hunter2-second-horse"),
+                ("totp#2", "ONSWG4TFOQYTEMZU"),
+            ],
+        );
+        assert_eq!(found(&p, false, "second@example").unwrap(), ["Username"]);
+        assert!(found(&p, false, "hunter2-second").is_none());
+        assert!(found(&p, false, "ONSWG4TFOQYTEMZU").is_none());
     }
 
     #[test]

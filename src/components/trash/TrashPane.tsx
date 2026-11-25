@@ -11,6 +11,7 @@ import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
 import { useLayout } from "../../lib/layout";
+import { AccountBar } from "../shell/AccountMenu";
 import { FilterChips } from "../shell/FilterChips";
 
 /** Trash list: only the title and when it was deleted (spec: nothing else is visible or openable). */
@@ -21,7 +22,10 @@ export function TrashList() {
   return (
     <section aria-label="Trash" className="flex min-h-0 flex-1 flex-col">
       <div className="px-4 pt-[calc(1rem+var(--safe-top))] pb-3 min-[720px]:pt-4">
-        <h2 className="font-display text-[1.45rem] leading-none font-semibold">Trash</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-display text-[1.45rem] leading-none font-semibold">Trash</h2>
+          <AccountBar />
+        </div>
         <p className="mt-2 text-[0.93em] text-mist">Deleted items wait here until you restore them or delete them forever. Nothing is removed automatically.</p>
         {layout !== "wide" && <div className="mt-3"><FilterChips /></div>}
       </div>

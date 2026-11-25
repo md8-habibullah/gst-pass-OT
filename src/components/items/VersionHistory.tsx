@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown, Eye, History, RotateCcw } from "lucide-react";
-import { FIELD_SCHEMA, type ItemDraft, type VersionEntry } from "../../backend";
+import { FIELD_SCHEMA, instancesOf, type ItemDraft, type VersionEntry } from "../../backend";
+import { groupSignIns } from "../../lib/instances";
 import { EVENT_LABEL, exactTime, fieldName, plural, relativeTime } from "../../lib/format";
 import { be, pushToast, refresh } from "../../state/app";
 import { withItemPassword } from "../reprompt/Reprompt";
@@ -41,14 +42,18 @@ function Snapshot({ draft, version, onClose, onRestore, current }: { draft: Item
             <dt className="text-[0.86em] font-medium text-fog">Title</dt>
             <dd className="mt-0.5 font-semibold">{draft.title}</dd>
           </div>
-          {FIELD_SCHEMA[draft.type].filter((s) => draft.fields[s.key]).map((s) => (
-            <div key={s.key} className="px-4 py-3">
-              <dt className="text-[0.86em] font-medium text-fog">{s.label}</dt>
+          {groupSignIns(FIELD_SCHEMA[draft.type].flatMap((s) => {
+            // a login can hold several sign-ins and codes: "Password 1", "Password 2"
+            const stored = instancesOf(draft.fields, s.key).filter((x) => x.value);
+            return stored.map((x, i) => ({ key: x.key, label: stored.length > 1 ? `${s.label} ${i + 1}` : s.label, kind: s.kind, value: x.value }));
+          })).map((f) => (
+            <div key={f.key} className="px-4 py-3">
+              <dt className="text-[0.86em] font-medium text-fog">{f.label}</dt>
               <dd className="mt-0.5">
-                {s.kind === "password" ? <PasswordText value={draft.fields[s.key]!} />
-                  : s.kind === "totp" ? <span className="text-mist">One-time code setup is saved with this version.</span>
-                  : s.kind === "note" ? <span className="font-mono text-[0.97em] leading-6 break-words whitespace-pre-wrap">{draft.fields[s.key]}</span>
-                  : <span className="break-all">{draft.fields[s.key]}</span>}
+                {f.kind === "password" ? <PasswordText value={f.value} />
+                  : f.kind === "totp" ? <span className="text-mist">One-time code setup is saved with this version.</span>
+                  : f.kind === "note" ? <span className="font-mono text-[0.97em] leading-6 break-words whitespace-pre-wrap">{f.value}</span>
+                  : <span className="break-all">{f.value}</span>}
               </dd>
             </div>
           ))}

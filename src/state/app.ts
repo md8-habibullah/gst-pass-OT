@@ -87,6 +87,8 @@ export interface AppState {
   generator: GenOptions;
   /** Last value of the core's pull counter. When it moves, a pull from the backup changed local data and the lists reload. */
   syncRevision: number;
+  /** The open vault was opened with the account PIN: secrets and settings ask for the master password (`elevate` lifts it). */
+  limited: boolean;
 }
 
 export const app = createStore<AppState>({
@@ -113,6 +115,7 @@ export const app = createStore<AppState>({
   syncRevision: 0,
   generator: { ...DEFAULT_GEN },
   clipboardClear: 30,
+  limited: false,
 });
 
 /**
@@ -138,7 +141,7 @@ export function be(): Backend {
 
 const EMPTY_VAULT: Partial<AppState> = {
   items: [], trash: [], folders: [], folder: null, selectedId: null, query: "", filters: NO_FILTERS, includeOld: false, deep: null, filter: "all",
-  toasts: [], justUnlocked: false, searchOnOpen: false, generator: { ...DEFAULT_GEN },
+  toasts: [], justUnlocked: false, searchOnOpen: false, generator: { ...DEFAULT_GEN }, limited: false,
 };
 
 /** Re-reads the account list and decides which lock-screen view to start from. No vault at all: make the built-in one. */
@@ -264,7 +267,7 @@ async function preload(): Promise<void> {
   const status = await be().status();
   // keep the demo flag even from an older core that does not put it on the status
   const known = app.get().profiles.find((p) => p.id === status.profile?.id);
-  patch({ profile: status.profile ? { ...status.profile, ...(known?.demo ? { demo: true } : {}) } : app.get().profile, syncRevision: status.syncRevision ?? 0 });
+  patch({ profile: status.profile ? { ...status.profile, ...(known?.demo ? { demo: true } : {}) } : app.get().profile, syncRevision: status.syncRevision ?? 0, limited: status.limited === true });
   const damaged = status.damagedItems ?? 0;
   if (damaged > 0) {
     pushToast({
@@ -284,13 +287,56 @@ export function enterApp(): void {
 
 export async function selectProfile(id: string): Promise<void> {
   await be().selectProfile(id);
+  // The account that was open is kept behind its PIN (or wiped) by the core, and the chosen one may be waiting behind its own.
+  await refreshProfiles();
   const profile = app.get().profiles.find((p) => p.id === id) ?? null;
   patch({ ...EMPTY_VAULT, profile, phase: "locked" });
 }
 
+/** Switch to another account. The one that is open is kept behind its PIN, or locked when it has none. */
+export async function switchAccount(id: string): Promise<void> {
+  await flushGenerator();
+  await selectProfile(id);
+}
+
+/** Log out: every vault is wiped, those waiting behind a PIN too, and the account list shows. Nothing is deleted. */
+export async function logOut(): Promise<void> {
+  await flushGenerator();
+  await be().lockAll();
+  await refreshProfiles();
+  const s = app.get();
+  patch({ ...EMPTY_VAULT, profile: null, phase: s.profiles.length === 0 ? "welcome" : "picker" });
+  if (s.profiles.length === 1) await selectProfile(s.profiles[0]!.id);
+}
+
+/** The account's PIN on the lock screen: it shows the vault that is still open behind it, limited. */
+export async function unlockWithPin(pin: string): Promise<void> {
+  await be().unlockPin(pin);
+  await preload();
+}
+
+/** The master password, typed in a vault opened with the PIN: secrets and settings work until it locks again. */
+export async function elevate(password: string): Promise<void> {
+  await be().elevate(password);
+  patch({ limited: false });
+}
+
+/** Give the open account a PIN, or change it (master password needed). */
+export async function setAccountPin(password: string, pin: string): Promise<void> {
+  const info = await be().setAccountPin(password, pin);
+  await refreshProfiles();
+  patch({ profile: { ...(app.get().profile ?? info), ...info } });
+}
+
+/** Take the PIN away (master password needed). */
+export async function removeAccountPin(password: string): Promise<void> {
+  await be().removeAccountPin(password);
+  await refreshProfiles();
+}
+
 /** Back to the account chooser (locks whatever is open). */
 export async function showPicker(): Promise<void> {
-  if (backend) await backend.lock();
+  if (backend) await backend.lock(); // kept behind its PIN when the account has one
   await refreshProfiles();
   const s = app.get();
   patch({ ...EMPTY_VAULT, profile: null, phase: s.profiles.length === 0 ? "welcome" : "picker" });
@@ -474,6 +520,7 @@ export async function refreshGate(): Promise<GateStatus> {
 /** "Lock app": back to Stage 1 when it is on, otherwise to the vault's password prompt. */
 export async function lockApp(): Promise<void> {
   await be().gateClose();
+  await refreshProfiles().catch(() => undefined); // closing the app lock wipes every vault, the ones behind a PIN too
   const gate = await be().gateStatus();
   patch({ ...EMPTY_VAULT, gate, phase: gate.enabled && !gate.open ? "gate" : "locked" });
 }
@@ -496,6 +543,8 @@ export async function syncAfterCoreLock(): Promise<boolean> {
   const [status, gate] = await Promise.all([b.status(), b.gateStatus()]);
   if (app.get().phase !== "ready") return false;
   if (!status.unlocked) {
+    // locked by the core's timer: nothing waits behind a PIN any more, and the lock screen must not offer it
+    await refreshProfiles().catch(() => undefined);
     patch({ ...EMPTY_VAULT, gate, phase: gate.enabled && !gate.open ? "gate" : "locked" });
     remoteDamagedShown = 0;
     return false;
@@ -523,6 +572,8 @@ export async function syncAfterCoreLock(): Promise<boolean> {
 export async function lockVault(): Promise<void> {
   await flushGenerator();
   await be().lock();
+  // an account with a PIN now waits behind it: the lock screen asks for the PIN first
+  await refreshProfiles();
   patch({ ...EMPTY_VAULT, phase: "locked" });
 }
 

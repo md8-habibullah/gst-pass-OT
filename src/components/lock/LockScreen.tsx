@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { DUR, tween } from "../../lib/motion";
-import { ArrowLeft, ChevronRight, CloudDownload, Eye, EyeOff, FileLock2, Plus, ShieldPlus, UsersRound } from "lucide-react";
+import { ArrowLeft, ChevronRight, CloudDownload, Eye, EyeOff, FileLock2, KeyRound, Plus, ShieldPlus, UsersRound } from "lucide-react";
 import { BackendError } from "../../backend";
 import { relativeTime } from "../../lib/format";
 import { app, be, enterApp, isLabelledDemo, openDemo, selectProfile, showPicker, unlock } from "../../state/app";
@@ -13,6 +13,7 @@ import { Button, IconButton } from "../ui/Button";
 import { Field, TextInput } from "../ui/Inputs";
 import { CreateFlow } from "./CreateFlow";
 import { ImportFlow, RestoreFlow } from "./JoinFlows";
+import { PinForm } from "./PinForm";
 import { Door, DoorCard } from "./Door";
 import { VaultMark } from "./VaultMark";
 
@@ -54,7 +55,7 @@ function Picker({ onAdd }: { onAdd: () => void }) {
               <Avatar title={p.displayName} size={42} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{p.displayName}</span>
-                <span className="block text-[0.86em] text-mist">{isLabelledDemo(device, p) ? "Demo vault. Opens without a password." : p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</span>
+                <span className="block text-[0.86em] text-mist">{isLabelledDemo(device, p) ? "Demo vault. Opens without a password." : p.resumable ? "Locked. Its PIN opens it." : p.lastUsedAt ? `Last opened ${relativeTime(p.lastUsedAt)}` : "Not opened yet"}</span>
               </span>
               <ChevronRight className="size-4 shrink-0 text-fog" aria-hidden />
             </button>
@@ -75,6 +76,12 @@ function UnlockForm({ busyExternal, onUnlocked }: { busyExternal: boolean; onUnl
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  // The PIN is the first choice while the account's vault is still open behind it; the master password is always there.
+  const [master, setMaster] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pinAvailable = profile?.resumable === true && profile.hasPin === true;
+  const usePin = pinAvailable && !master;
+  useEffect(() => { setMaster(false); setNotice(null); }, [profile?.id]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -94,8 +101,31 @@ function UnlockForm({ busyExternal, onUnlocked }: { busyExternal: boolean; onUnl
     }
   }
 
+  const another = (
+    <div className="mt-4 flex flex-col items-center gap-1 border-t border-hairline pt-3">
+      {pinAvailable && (
+        <Button variant="ghost" icon={<KeyRound className="size-4" />} onClick={() => { setMaster(!master); setNotice(null); }}>
+          {master ? "Use the PIN instead" : "Use the master password instead"}
+        </Button>
+      )}
+      <Button variant="ghost" icon={<UsersRound className="size-4" />} onClick={() => void showPicker()}>
+        {profileCount > 1 ? `Not ${profile?.displayName ?? "you"}? Choose another account` : "Add or switch account"}
+      </Button>
+    </div>
+  );
+
+  if (usePin) {
+    return (
+      <>
+        <PinForm busyExternal={busyExternal} onUnlocked={onUnlocked} onGone={(why) => { setNotice(why); setMaster(true); }} />
+        {another}
+      </>
+    );
+  }
+
   return (
     <div key={shake} className={shake > 0 ? "animate-shake" : ""}>
+      {notice && <p role="status" className="mb-4 rounded-lg border border-hairline bg-raised px-3.5 py-2.5 text-[0.93em] text-mist">{notice}</p>}
       <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         <Field label="Master password" error={error}>
           {({ id, describedBy, invalid }) => (
@@ -112,11 +142,7 @@ function UnlockForm({ busyExternal, onUnlocked }: { busyExternal: boolean; onUnl
         </Button>
         {busy && <p className="-mt-1 text-center text-[0.86em] text-fog">Deriving your key with Argon2id. This takes a moment on purpose.</p>}
       </form>
-      <div className="mt-4 flex justify-center border-t border-hairline pt-3">
-        <Button variant="ghost" icon={<UsersRound className="size-4" />} onClick={() => void showPicker()}>
-          {profileCount > 1 ? `Not ${profile?.displayName ?? "you"}? Choose another account` : "Add or switch account"}
-        </Button>
-      </div>
+      {another}
     </div>
   );
 }
@@ -171,7 +197,7 @@ export function LockScreen() {
     : phase === "picker" && adding ? { title: "Add an account", text: "Each account is its own vault with its own master password." }
     : phase === "picker" ? { title: "Choose an account", text: "Each account is its own vault with its own master password." }
     : demoUnlock ? { title: profile?.displayName ?? brandName, text: "" }
-    : { title: profile?.displayName ?? brandName, text: "Your vault is locked." };
+    : { title: profile?.displayName ?? brandName, text: profile?.resumable && profile.hasPin ? "Locked. Its PIN opens it again." : "Your vault is locked." };
   const wide = flow === "restore";
   const unlockView = phase === "locked" && !flow;
 

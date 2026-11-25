@@ -12,11 +12,12 @@ import { Button, IconButton } from "../ui/Button";
 import { TextInput } from "../ui/Inputs";
 import { CountdownRing } from "../ui/Ring";
 import { useLayout } from "../../lib/layout";
+import { AccountBar } from "../shell/AccountMenu";
 import { useTotp } from "./FieldRows";
 import { viewItem } from "./actions";
 
-function CodeTile({ item }: { item: ItemSummary }) {
-  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(item.id, true, item.title);
+function CodeTile({ item, codeKey, ordinal }: { item: ItemSummary; codeKey: string; /** 1-based place among the item's codes; 0 when it has just one */ ordinal: number }) {
+  const { now, failed, locked, unlock, remainingMs, seconds } = useTotp(item.id, true, item.title, codeKey);
   const tone = ringTone(seconds);
   const codeOnly = item.type === "totp";
   async function copy() {
@@ -24,19 +25,19 @@ function CodeTile({ item }: { item: ItemSummary }) {
     if (!now) return;
     try {
       await copyText(now.code);
-      pushToast({ kind: "success", text: `Code for ${item.title} copied.` });
+      pushToast({ kind: "success", text: `Code${ordinal ? ` ${ordinal}` : ""} for ${item.title} copied.` });
     } catch {
       pushToast({ kind: "error", text: "Copying was blocked on this device." });
     }
   }
   return (
     <li className="relative">
-      <button type="button" onClick={() => void copy()} disabled={!now && !locked} aria-label={now ? `Copy code for ${item.title}` : locked ? `Show code for ${item.title}. It asks for your master password.` : `${item.title}, loading`} className="pressable surface flex w-full items-center gap-3.5 rounded-lg py-3.5 pr-14 pl-4 text-left hover:bg-raised/70 pointer-coarse:py-4">
+      <button type="button" onClick={() => void copy()} disabled={!now && !locked} aria-label={now ? `Copy code${ordinal ? ` ${ordinal}` : ""} for ${item.title}` : locked ? `Show code${ordinal ? ` ${ordinal}` : ""} for ${item.title}. It asks for your master password.` : `${item.title}, loading`} className="pressable surface flex w-full items-center gap-3.5 rounded-lg py-3.5 pr-14 pl-4 text-left hover:bg-raised/70 pointer-coarse:py-4">
         <Avatar title={item.title} size={42} />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="min-w-0 truncate font-semibold">{item.title}</span>
-            <span className="shrink-0 rounded-full border border-hairline-strong px-2 py-px text-[0.76em] text-mist">{codeOnly ? "Code only" : "In a login"}</span>
+            <span className="shrink-0 rounded-full border border-hairline-strong px-2 py-px text-[0.76em] text-mist">{codeOnly ? "Code only" : ordinal ? `In a login, code ${ordinal}` : "In a login"}</span>
           </span>
           <span className="block truncate text-[0.86em] text-mist">{item.subtitle ?? "Tap to copy"}</span>
           <span className={`mt-1 block font-mono text-[1.55rem] leading-8 font-medium tracking-[0.08em] tabular-nums ${tone === "critical" ? "text-ember" : "text-frost"}`}>
@@ -78,6 +79,7 @@ export function CodesView() {
           <p className="mt-2 text-[0.93em] text-mist">Every one-time code in your vault: code-only items and the codes saved inside logins. They are generated on this device.</p>
         </div>
         {!compact && <Button variant="key" icon={<Plus className="size-4" />} onClick={() => openNewItem("totp")}>Add code</Button>}
+        <AccountBar className="-mt-1.5 -mr-1" />
       </div>
       {all.length > 4 && (
         <div className="px-5 pb-3">
@@ -104,7 +106,11 @@ export function CodesView() {
           <p className="px-6 pt-14 text-center text-mist">No code matches “{query}”.</p>
         ) : (
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
-            {shown.map((i) => <CodeTile key={i.id} item={i} />)}
+            {shown.flatMap((i) => {
+              // A login can hold several codes: a tile each, in the order they are stored.
+              const keys = i.codeKeys.length ? i.codeKeys : ["totp"];
+              return keys.map((k, n) => <CodeTile key={`${i.id}:${k}`} item={i} codeKey={k} ordinal={keys.length > 1 ? n + 1 : 0} />);
+            })}
           </ul>
         )}
       </div>

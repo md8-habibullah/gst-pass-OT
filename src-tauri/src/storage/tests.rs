@@ -1030,6 +1030,49 @@ fn purge_erases_every_row_of_the_item_and_only_that_item() {
 // ============================================================ TOTP
 
 #[test]
+fn a_login_with_two_codes_gives_each_its_own_code_and_refuses_a_wrong_key() {
+    let fx = Fx::new();
+    let mut d = login("Amazon", "pw-amazon-1");
+    d.fields.insert("totp".into(), "JBSWY3DPEHPK3PXP".into());
+    d.fields.insert("totp#2".into(), "ONSWG4TFOQYTEMZU".into());
+    d.fields
+        .insert("username#2".into(), "work@example.com".into());
+    d.fields
+        .insert("password#2".into(), "work-pw-123456".into());
+    let sum = fx.s.item_create(d).unwrap();
+    assert!(sum.has_totp);
+
+    let first = fx.s.totp_now(&sum.id, None).unwrap();
+    let by_key = |k: &str| fx.s.totp_now_of(&sum.id, Some(k), None);
+    assert_eq!(by_key("totp").unwrap().code, first.code);
+    let second = by_key("totp#2").unwrap();
+    assert_eq!(second.code.len(), 6);
+    assert_ne!(second.code, first.code, "different seeds, different codes");
+    // only a code field can be asked for: not a password, not a number that is not stored
+    for bad in ["password#2", "totp#3", "totp#1", "url", "nope"] {
+        assert_eq!(code(by_key(bad)), "invalid_input", "{bad}");
+    }
+
+    // the masked view carries both sign-ins and both codes, and no secret
+    let view = fx.s.item_get(&sum.id).unwrap();
+    let keys: Vec<&str> = view.fields.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "username",
+            "username#2",
+            "password",
+            "password#2",
+            "url",
+            "totp",
+            "totp#2"
+        ]
+    );
+    let json = serde_json::to_string(&view).unwrap();
+    assert!(!json.contains("work-pw-123456") && !json.contains("ONSWG4TFOQYTEMZU"));
+}
+
+#[test]
 fn totp_codes_are_computed_in_rust_and_the_secret_stays_inside() {
     let fx = Fx::new();
     let mut d = login("Cloud", "pw-cloud-11");

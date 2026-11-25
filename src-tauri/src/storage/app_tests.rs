@@ -1401,6 +1401,7 @@ fn clone_is_password_gated_and_never_returns_secrets() {
         keys,
         [
             "archived",
+            "codeKeys",
             "createdAt",
             "favorite",
             "folder",
@@ -1770,4 +1771,537 @@ fn import_never_modifies_the_chosen_file() {
     fx.app.item_create(login("new", "pw")).unwrap();
     assert_eq!(bytes(&file), before, "the original file is only ever read");
     assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 1);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The account PIN: the middle layer. It only shows a vault that is still open in memory; the master password is needed
+// to open one from nothing and for everything sensitive.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const PIN: &str = "4829-pin";
+
+/// An account named `name` with a PIN, unlocked, holding one login.
+fn with_pin(fx: &Fx, name: &str, password: &str) -> String {
+    let info = fx.app.profile_create(name, password.into()).unwrap();
+    fx.app.item_create(login("kept", "pw-kept")).unwrap();
+    let got = fx.app.account_pin_set(password.into(), PIN.into()).unwrap();
+    assert!(got.has_pin);
+    info.id
+}
+
+fn a_target() -> super::BackupTargetInput {
+    super::BackupTargetInput {
+        name: "t".into(),
+        endpoint: Some("https://s3.example.net".into()),
+        region: "r".into(),
+        bucket: "b".into(),
+        prefix: "p".into(),
+        access_key_id: "AKIA0001".into(),
+        secret_access_key: "secret-0001".into(),
+        path_style: true,
+        enabled: true,
+        master: false,
+        share_in_master: false,
+    }
+}
+
+#[test]
+fn setting_a_pin_needs_the_master_password_and_a_usable_pin() {
+    let fx = Fx::new();
+    fx.app.profile_create("A", PW.into()).unwrap();
+    assert_eq!(
+        code(fx.app.account_pin_set(WRONG.into(), PIN.into())),
+        "wrong_password"
+    );
+    assert_eq!(
+        code(fx.app.account_pin_set(PW.into(), "abc".into())),
+        "invalid_input"
+    );
+    assert!(!fx.app.profile_list().unwrap().profiles[0].has_pin);
+    let info = fx.app.account_pin_set(PW.into(), PIN.into()).unwrap();
+    assert!(info.has_pin && !info.resumable);
+    assert!(fx.app.profile_list().unwrap().profiles[0].has_pin);
+    // locked: nothing can be set
+    fx.app.lock();
+    assert_eq!(
+        code(fx.app.account_pin_set(PW.into(), PIN.into())),
+        "locked"
+    );
+    assert_eq!(code(fx.app.account_pin_remove(PW.into())), "locked");
+}
+
+#[test]
+fn the_pin_is_stored_only_as_a_hash_and_survives_a_restart_without_opening_anything() {
+    let mut fx = Fx::new();
+    let id = with_pin(&fx, "A", PW);
+    let registry = std::fs::read_to_string(fx.root().join("profiles.json")).unwrap();
+    assert!(
+        registry.contains("$argon2id$"),
+        "the PIN is an Argon2id hash"
+    );
+    assert!(!registry.contains(PIN), "the PIN itself is never written");
+    // no file of the account holds it either
+    for entry in walkdir_files(fx.root()) {
+        assert!(!contains(&bytes(&entry), PIN), "{entry:?} holds the PIN");
+    }
+    fx.app.lock_for_now();
+    fx.restart();
+    fx.app.profile_select(&id).unwrap();
+    let st = fx.app.status().unwrap();
+    assert!(
+        !st.unlocked && !st.resumable,
+        "nothing stays open across a restart"
+    );
+    assert!(st.profile.unwrap().has_pin);
+    assert_eq!(
+        code(fx.app.unlock_with_pin(PIN.into())),
+        "locked",
+        "the PIN opens nothing from disk"
+    );
+    fx.app.unlock(PW.into()).unwrap();
+    assert!(
+        !fx.app.status().unwrap().limited,
+        "the master password opens it fully"
+    );
+}
+
+fn walkdir_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn lock_with_a_pin_parks_the_vault_and_the_pin_shows_it_limited() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    assert!(
+        fx.app.lock_for_now(),
+        "an account with a PIN stays open in memory"
+    );
+    let st = fx.app.status().unwrap();
+    assert!(!st.unlocked && st.resumable && !st.limited);
+    // out of reach: every call answers locked, whatever it is
+    assert_eq!(code(fx.app.item_list()), "locked");
+    assert_eq!(code(fx.app.prefs_get()), "locked");
+    assert_eq!(code(fx.app.backup_list()), "locked");
+    assert_eq!(code(fx.app.backup_add(a_target())), "locked");
+    // a wrong PIN says how many tries are left
+    match fx.app.unlock_with_pin("0000-no".into()) {
+        Err(StorageError::WrongPin { left }) => assert_eq!(left, 4),
+        other => panic!("expected wrong_pin, got {other:?}"),
+    }
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    let st = fx.app.status().unwrap();
+    assert!(st.unlocked && st.limited && !st.resumable);
+    assert_eq!(fx.app.item_list().unwrap().len(), 1, "the list is there");
+    // a second use of the same PIN needs a new Lock first
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+}
+
+#[test]
+fn a_vault_opened_with_the_pin_refuses_every_sensitive_thing_until_the_master_password() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    let item = fx.app.item_list().unwrap().remove(0);
+    fx.app.lock_for_now();
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+
+    // secrets: never without the master password, flagged or not
+    assert_eq!(
+        code(fx.app.item_reveal(&item.id, None)),
+        "password_required"
+    );
+    assert_eq!(
+        code(fx.app.item_begin_edit(&item.id, None)),
+        "password_required"
+    );
+    // settings of backups, sync and the app's own lock
+    assert_eq!(code(fx.app.backup_add(a_target())), "master_required");
+    assert_eq!(
+        code(fx.app.backup_update("nope", a_target())),
+        "master_required"
+    );
+    assert_eq!(code(fx.app.backup_remove("nope")), "master_required");
+    assert_eq!(code(fx.app.backup_set_master("nope")), "master_required");
+    assert_eq!(
+        code(fx.app.app_settings_set(Default::default())),
+        "master_required"
+    );
+    // the master password still works on each, and a wrong one is a wrong password
+    assert_eq!(
+        code(fx.app.item_reveal(&item.id, Some(WRONG.into()))),
+        "wrong_password"
+    );
+    assert!(fx.app.item_reveal(&item.id, Some(PW.into())).is_ok());
+    // a secret key is only ever shown against the master password (there is no PIN form of this call at all)
+    assert!(fx.app.backup_reveal_secret("nope", WRONG.into()).is_err());
+    // typing the master password lifts the limit for this open vault
+    assert_eq!(code(fx.app.elevate(WRONG.into())), "wrong_password");
+    assert!(fx.app.status().unwrap().limited);
+    fx.app.elevate(PW.into()).unwrap();
+    assert!(!fx.app.status().unwrap().limited);
+    assert!(fx.app.item_reveal(&item.id, None).is_ok());
+    assert_eq!(code(fx.app.backup_remove("nope")), "not_found");
+    assert!(fx.app.app_settings_set(Default::default()).is_ok());
+}
+
+#[test]
+fn locking_and_reopening_with_the_pin_makes_it_limited_again() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app.elevate(PW.into()).unwrap();
+    fx.app.lock_for_now();
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    assert!(
+        fx.app.status().unwrap().limited,
+        "a full unlock does not carry over a Lock"
+    );
+}
+
+#[test]
+fn five_wrong_pins_close_the_vault_for_good_and_only_the_master_password_opens_it() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    for left in (1..=4).rev() {
+        match fx.app.unlock_with_pin("1111-no".into()) {
+            Err(StorageError::WrongPin { left: l }) => assert_eq!(l, left),
+            other => panic!("expected wrong_pin, got {other:?}"),
+        }
+    }
+    assert_eq!(code(fx.app.unlock_with_pin("1111-no".into())), "pin_locked");
+    let st = fx.app.status().unwrap();
+    assert!(!st.unlocked && !st.resumable, "the key is gone");
+    // even the right PIN is useless now
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+    assert_eq!(code(fx.app.item_list()), "locked");
+    fx.app.unlock(PW.into()).unwrap();
+    assert_eq!(fx.app.item_list().unwrap().len(), 1);
+    assert!(!fx.app.status().unwrap().limited);
+}
+
+#[test]
+fn the_right_pin_resets_the_count_of_wrong_ones() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    for _ in 0..4 {
+        assert_eq!(code(fx.app.unlock_with_pin("1111-no".into())), "wrong_pin");
+    }
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    fx.app.lock_for_now();
+    for _ in 0..4 {
+        assert_eq!(code(fx.app.unlock_with_pin("1111-no".into())), "wrong_pin");
+    }
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+}
+
+#[test]
+fn an_account_without_a_pin_is_wiped_by_lock_and_a_pin_opens_nothing() {
+    let fx = Fx::new();
+    fx.app.profile_create("A", PW.into()).unwrap();
+    assert!(!fx.app.lock_for_now(), "no PIN: wiped");
+    let st = fx.app.status().unwrap();
+    assert!(!st.unlocked && !st.resumable);
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+    fx.app.unlock(PW.into()).unwrap();
+    assert!(!fx.app.status().unwrap().limited);
+}
+
+#[test]
+fn switching_away_parks_an_account_with_a_pin_and_wipes_one_without() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    let b = fx.app.profile_create("B", PW2.into()).unwrap(); // A is parked now
+    let list = fx.app.profile_list().unwrap();
+    let get = |id: &str| list.profiles.iter().find(|p| p.id == id).unwrap().clone();
+    assert!(get(&a).resumable, "A waits behind its PIN");
+    assert!(!get(&b.id).resumable);
+    // B's items are all the screen can reach; A's are not mixed in
+    assert!(fx.app.item_list().unwrap().is_empty());
+
+    // back to A: the PIN, not the master password
+    fx.app.profile_select(&a).unwrap();
+    assert!(fx.app.status().unwrap().resumable);
+    assert_eq!(code(fx.app.item_list()), "locked");
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    assert_eq!(fx.app.item_list().unwrap()[0].title, "kept");
+    assert!(fx.app.status().unwrap().limited);
+
+    // B had no PIN, so it was wiped when A was chosen: only the master password opens it
+    fx.app.profile_select(&b.id).unwrap();
+    let st = fx.app.status().unwrap();
+    assert!(!st.unlocked && !st.resumable);
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+    assert_eq!(
+        code(fx.app.unlock(PW.into())),
+        "wrong_password",
+        "A's password is not B's"
+    );
+    fx.app.unlock(PW2.into()).unwrap();
+    assert!(fx.app.item_list().unwrap().is_empty());
+}
+
+#[test]
+fn one_accounts_pin_never_opens_another_account() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    let b = fx.app.profile_create("B", PW2.into()).unwrap();
+    fx.app.item_create(login("b-only", "pw-b")).unwrap();
+    fx.app
+        .account_pin_set(PW2.into(), "9876-other".into())
+        .unwrap();
+    fx.app.lock_for_now(); // B parked
+                           // A is parked as well; choosing A and typing B's PIN fails and does not touch B
+    fx.app.profile_select(&a).unwrap();
+    assert_eq!(
+        code(fx.app.unlock_with_pin("9876-other".into())),
+        "wrong_pin"
+    );
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    let titles: Vec<String> = fx
+        .app
+        .item_list()
+        .unwrap()
+        .into_iter()
+        .map(|i| i.title)
+        .collect();
+    assert_eq!(titles, vec!["kept".to_string()], "A shows only A's items");
+    fx.app.profile_select(&b.id).unwrap();
+    fx.app.unlock_with_pin("9876-other".into()).unwrap();
+    let titles: Vec<String> = fx
+        .app
+        .item_list()
+        .unwrap()
+        .into_iter()
+        .map(|i| i.title)
+        .collect();
+    assert_eq!(titles, vec!["b-only".to_string()]);
+}
+
+#[test]
+fn log_out_and_the_idle_lock_wipe_every_parked_vault_too() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    fx.app.profile_create("B", PW2.into()).unwrap(); // A parked
+    assert!(fx
+        .app
+        .profile_list()
+        .unwrap()
+        .profiles
+        .iter()
+        .any(|p| p.resumable));
+    fx.app.lock(); // what Log out and the timers call
+    assert!(
+        fx.app
+            .profile_list()
+            .unwrap()
+            .profiles
+            .iter()
+            .all(|p| !p.resumable),
+        "nothing waits behind a PIN any more"
+    );
+    fx.app.profile_select(&a).unwrap();
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+    fx.app.unlock(PW.into()).unwrap();
+    assert_eq!(
+        fx.app.item_list().unwrap().len(),
+        1,
+        "the saved data is still there"
+    );
+}
+
+#[test]
+fn removing_the_pin_needs_the_master_password_and_wipes_what_it_kept() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    assert_eq!(
+        code(fx.app.account_pin_remove(WRONG.into())),
+        "wrong_password"
+    );
+    assert!(fx.app.profile_list().unwrap().profiles[0].has_pin);
+    fx.app.profile_create("B", PW2.into()).unwrap(); // A parked
+    fx.app.profile_select(&a).unwrap();
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    // limited: the PIN cannot remove itself, the master password can (it is checked, not the PIN)
+    let info = fx.app.account_pin_remove(PW.into()).unwrap();
+    assert!(!info.has_pin);
+    fx.app.lock_for_now();
+    assert!(
+        !fx.app.status().unwrap().resumable,
+        "without a PIN the Lock wipes"
+    );
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+}
+
+#[test]
+fn changing_the_pin_replaces_the_old_one() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app
+        .account_pin_set(PW.into(), "7777-new-pin".into())
+        .unwrap();
+    fx.app.lock_for_now();
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "wrong_pin");
+    fx.app.unlock_with_pin("7777-new-pin".into()).unwrap();
+}
+
+#[test]
+fn removing_an_account_wipes_it_even_while_parked_and_deletes_only_its_own_files() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    let b = fx.app.profile_create("B", PW2.into()).unwrap(); // A parked
+    fx.app.profile_select(&a).unwrap();
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    // removal always asks the master password and the typed confirmation, a PIN is not enough
+    assert_eq!(
+        code(fx.app.profile_remove(&a, WRONG.into(), "A")),
+        "wrong_password"
+    );
+    fx.app.profile_remove(&a, PW.into(), "A").unwrap();
+    assert!(fx
+        .app
+        .profile_list()
+        .unwrap()
+        .profiles
+        .iter()
+        .all(|p| p.id != a));
+    assert!(fx
+        .app
+        .profile_list()
+        .unwrap()
+        .profiles
+        .iter()
+        .any(|p| p.id == b.id));
+}
+
+#[test]
+fn the_pin_layer_never_changes_what_a_wrong_password_does() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    // the master password still opens the parked account from nothing, and is a full unlock
+    assert_eq!(code(fx.app.unlock(WRONG.into())), "wrong_password");
+    fx.app.unlock(PW.into()).unwrap();
+    let st = fx.app.status().unwrap();
+    assert!(st.unlocked && !st.limited && !st.resumable);
+}
+
+#[test]
+fn locking_or_choosing_the_account_again_never_gives_back_the_wrong_pin_tries() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    for left in (1..=4).rev() {
+        match fx.app.unlock_with_pin("1111-no".into()) {
+            Err(StorageError::WrongPin { left: l }) => assert_eq!(l, left),
+            other => panic!("expected wrong_pin, got {other:?}"),
+        }
+    }
+    // the Lock button again, then choosing the same account again (what "Not you? Choose another account" does): the
+    // vault is already parked, so neither may start the count over
+    assert!(fx.app.lock_for_now(), "still waiting behind its PIN");
+    fx.app.profile_select(&a).unwrap();
+    assert!(fx.app.status().unwrap().resumable);
+    assert!(fx.app.lock_for_now());
+    fx.app.profile_select(&a).unwrap();
+    assert_eq!(
+        code(fx.app.unlock_with_pin("1111-no".into())),
+        "pin_locked",
+        "the fifth wrong PIN in a row still closes the vault"
+    );
+    assert!(!fx.app.status().unwrap().resumable);
+    assert_eq!(code(fx.app.unlock_with_pin(PIN.into())), "locked");
+    fx.app.unlock(PW.into()).unwrap();
+}
+
+#[test]
+fn switching_to_another_account_and_back_never_gives_back_the_wrong_pin_tries() {
+    let fx = Fx::new();
+    let a = with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    for _ in 0..4 {
+        assert_eq!(code(fx.app.unlock_with_pin("1111-no".into())), "wrong_pin");
+    }
+    // another account is chosen and A is chosen again: A is parked the whole time
+    fx.app.profile_create("B", PW2.into()).unwrap();
+    fx.app.profile_select(&a).unwrap();
+    assert_eq!(code(fx.app.unlock_with_pin("1111-no".into())), "pin_locked");
+}
+
+#[test]
+fn a_vault_opened_with_the_pin_keeps_attachments_and_note_text_sealed() {
+    let fx = Fx::new();
+    let info = fx.app.profile_create("A", PW.into()).unwrap();
+    let _ = info;
+    fx.app
+        .item_create(draft(
+            ItemType::Login,
+            "Kept",
+            &[
+                ("username", "ana"),
+                ("password", "pw-1"),
+                ("notes", "zebra-alarm-code-4471"),
+            ],
+        ))
+        .unwrap();
+    let src = fx.outside();
+    let file = src.path().join("scan.txt");
+    std::fs::write(&file, b"the attachment text").unwrap();
+    fx.picker.queue_files(vec![file]);
+    let entry = fx.app.file_add(None).unwrap().unwrap().remove(0);
+    fx.app.account_pin_set(PW.into(), PIN.into()).unwrap();
+
+    // opened with the master password: the preview and the search work as always
+    assert_eq!(
+        &**fx.app.file_read(&entry.id).unwrap(),
+        b"the attachment text"
+    );
+    assert_eq!(fx.app.item_search("zebra-alarm", false).unwrap().len(), 1);
+
+    fx.app.lock_for_now();
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    assert_eq!(
+        code(fx.app.file_read(&entry.id)),
+        "master_required",
+        "an attachment is a secret"
+    );
+    assert!(
+        fx.app.item_search("zebra-alarm", false).unwrap().is_empty(),
+        "note text is not searchable on the PIN, so it cannot be probed"
+    );
+    assert!(fx.app.item_search("zebra-alarm", true).unwrap().is_empty());
+    // titles, usernames and the rest of the plain text still are
+    assert_eq!(fx.app.item_search("Kept", false).unwrap().len(), 1);
+
+    fx.app.elevate(PW.into()).unwrap();
+    assert_eq!(
+        &**fx.app.file_read(&entry.id).unwrap(),
+        b"the attachment text"
+    );
+    assert_eq!(fx.app.item_search("zebra-alarm", false).unwrap().len(), 1);
+}
+
+#[test]
+fn the_lock_timers_cannot_change_while_the_vault_waits_behind_its_pin() {
+    let fx = Fx::new();
+    with_pin(&fx, "A", PW);
+    fx.app.lock_for_now();
+    assert_eq!(code(fx.app.app_settings_set(Default::default())), "locked");
+    fx.app.unlock_with_pin(PIN.into()).unwrap();
+    assert_eq!(
+        code(fx.app.app_settings_set(Default::default())),
+        "master_required"
+    );
 }

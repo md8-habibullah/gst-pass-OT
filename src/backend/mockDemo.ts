@@ -45,6 +45,11 @@ export function demoSeeds(): DemoSeed[] {
     login("Coinbase", gmail, "https://www.coinbase.com/signin", "Finance", ["crypto"], "Coinbase", 421, 5),
     login("Cloudflare", gmail, "https://dash.cloudflare.com/login", "Dev", ["code"], "Cloudflare", 390, 33),
   ];
+  // the AWS root user is a second sign-in with its own password and its own one-time code
+  const aws = out.find((s) => s.draft.title === "AWS Console")!;
+  aws.draft.fields["username#2"] = "hexis-root";
+  aws.draft.fields["password#2"] = password(20);
+  aws.draft.fields["totp#2"] = `otpauth://totp/Amazon%20Web%20Services:root?secret=${pick(B32, 16)}&issuer=Amazon%20Web%20Services&period=30&digits=6`;
   out[2]!.draft.favorite = true;
   out[0]!.draft.favorite = true;
   out[10]!.draft.reprompt = true;

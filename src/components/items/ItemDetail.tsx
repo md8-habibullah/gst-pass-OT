@@ -3,6 +3,7 @@ import { ArchiveRestore, ArrowLeft, EyeOff, ExternalLink, KeyRound, MoreHorizont
 import { TYPE_LABEL, type ItemDraft, type ItemView } from "../../backend";
 import { copyText } from "../../lib/clipboard";
 import { exactTime, relativeTime } from "../../lib/format";
+import { groupSignIns } from "../../lib/instances";
 import { shortUrl, urlsOf } from "../../lib/urls";
 import { be, pushToast, app } from "../../state/app";
 import { useStore } from "../../state/store";
@@ -153,9 +154,9 @@ export function ItemDetail({ id, onBack }: { id: string; onBack?: () => void }) 
       )}
 
       <div className="surface overflow-hidden rounded-lg">
-        {view.fields.filter((f) => f.hasValue).map((f) => {
+        {groupSignIns(view.fields.filter((f) => f.hasValue)).map((f) => {
           const shown = secrets?.fields[f.key];
-          if (f.kind === "totp") return <TotpValue key={f.key} id={id} title={title} onCopy={(c) => copyPlain("One-time code", c)} />;
+          if (f.kind === "totp") return <TotpValue key={f.key} id={id} title={title} fieldKey={f.key} label={f.label} onCopy={(c) => copyPlain(f.label, c)} />;
           // Several web addresses: a row each, so any one can be opened or copied.
           if (f.kind === "url" && f.value && urlsOf(f.value).length > 1) {
             const urls = urlsOf(f.value);

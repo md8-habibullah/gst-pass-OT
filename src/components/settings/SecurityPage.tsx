@@ -8,6 +8,7 @@ import { StrengthMeter } from "../lock/StrengthMeter";
 import { Button } from "../ui/Button";
 import { Field, Segmented, TextInput } from "../ui/Inputs";
 import { Sheet } from "../ui/Sheet";
+import { AccountPinRow } from "./AccountPin";
 import { Group, Row } from "./parts";
 
 function ChangePassword({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -60,6 +61,7 @@ function ChangePassword({ open, onClose }: { open: boolean; onClose: () => void 
 export function SecurityPage() {
   const clipboardClear = useStore(app, (s) => s.clipboardClear);
   const demo = useStore(app, (s) => s.profile?.demo === true);
+  const hasPin = useStore(app, (s) => s.profile?.hasPin === true);
   const [changing, setChanging] = useState(false);
   const [removing, setRemoving] = useState(false);
   return (
@@ -71,8 +73,9 @@ export function SecurityPage() {
         <Row title="Master password" description="Re-encrypts only the key that guards your vault, so it is quick.">
           <Button icon={<KeyRound className="size-4" />} onClick={() => setChanging(true)}>Change</Button>
         </Row>
+        <AccountPinRow />
         {!demo && (
-          <Row title="Lock the vault" description="Wipes the vault key from memory. You will need your master password to open it again.">
+          <Row title="Lock the vault" description={hasPin ? "Closes the vault. Your PIN opens it again until the lock timer ends; after that, the master password." : "Wipes the vault key from memory. You will need your master password to open it again."}>
             <Button icon={<Lock className="size-4" />} onClick={() => void lockVault()}>Lock now</Button>
           </Row>
         )}

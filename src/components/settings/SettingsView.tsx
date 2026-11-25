@@ -9,6 +9,7 @@ import { useBackHandler } from "../../state/back";
 import { useBrandName } from "../../state/brand";
 import { useStore } from "../../state/store";
 import { setSettingsPage, ui, type SettingsPageId } from "../../state/ui";
+import { AccountBar } from "../shell/AccountMenu";
 import { SETTINGS_CHILDREN } from "../shell/nav";
 import { IconButton } from "../ui/Button";
 import { AboutPage } from "./AboutPage";
@@ -101,10 +102,11 @@ function PageBox({ category, back, onBack }: { category: Category; back: boolean
           {back && (
             <IconButton label="Back to settings" className="-ml-2 shrink-0" onClick={onBack}><ArrowLeft className="size-5" /></IconButton>
           )}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h2 className="font-display text-[1.45rem] leading-[1.2] font-medium tracking-[-0.005em]">{category.title}</h2>
             {!back && <p className="mt-1 text-[0.93em] text-mist">{category.about}</p>}
           </div>
+          <AccountBar className="-mt-1 -mr-1" />
         </div>
         <PageContent id={category.id} />
       </div>
@@ -134,7 +136,10 @@ export function SettingsView() {
     return (
       <section aria-label="Settings" className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
         <div className="mx-auto flex w-full max-w-[40rem] flex-col gap-4 px-5 pt-[calc(1rem+var(--safe-top))] pb-28">
-          <h2 className="font-display text-[1.45rem] leading-none font-medium">Settings</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-display text-[1.45rem] leading-none font-medium">Settings</h2>
+            <AccountBar className="-my-1 -mr-1" />
+          </div>
           <ul className="surface overflow-hidden rounded-lg">
             {CATEGORIES.map((c) => (
               <li key={c.id} className="border-b border-hairline last:border-b-0">
